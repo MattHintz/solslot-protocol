@@ -143,7 +143,9 @@ TOKEN_TAIL_HASH = POOL_TOKEN_TAIL_MOD.get_tree_hash()
 # Deed metadata
 PAR_VALUE = 100_000
 ASSET_CLASS = 1
-PROPERTY_ID = b"PROP-001"
+PROPERTY_ID = bytes32(b"\x08" * 32)
+COLLECTION_ID_CANON = bytes32(b"\x09" * 32)
+SHARE_PPM = 1_000_000
 JURISDICTION = b"US-CA"
 ROYALTY_BPS = 200
 
@@ -198,7 +200,13 @@ SETTLEMENT_AMOUNT = 95_000  # settlement payout in mojos (≤ PAR_VALUE)
 # ─────────────────────────────────────────────────────────────────────
 # Curry helpers
 # ─────────────────────────────────────────────────────────────────────
-def curry_pool(pool_status=POOL_ACTIVE, tvl=0, deed_count=0) -> Program:
+def curry_pool(
+    pool_status=POOL_ACTIVE,
+    tvl=0,
+    deed_count=0,
+    total_pool_token_supply=0,
+    treasury_reserve_tokens=0,
+) -> Program:
     return POOL_INNER_MOD.curry(
         POOL_MOD_HASH,
         POOL_SINGLETON_STRUCT,
@@ -211,6 +219,8 @@ def curry_pool(pool_status=POOL_ACTIVE, tvl=0, deed_count=0) -> Program:
         pool_status,
         tvl,
         deed_count,
+        total_pool_token_supply,
+        treasury_reserve_tokens,
     )
 
 
@@ -231,6 +241,8 @@ def curry_deed() -> Program:
         PAR_VALUE,
         ASSET_CLASS,
         PROPERTY_ID,
+        COLLECTION_ID_CANON,
+        SHARE_PPM,
         JURISDICTION,
         ROYALTY_PUZHASH,
         ROYALTY_BPS,
@@ -512,7 +524,12 @@ class TestPhase5Deposit:
         ])
         conds = self.pool_inner.run(sol).as_python()
 
-        expected_new = curry_pool(pool_status=POOL_ACTIVE, tvl=PAR_VALUE, deed_count=1)
+        expected_new = curry_pool(
+            pool_status=POOL_ACTIVE,
+            tvl=PAR_VALUE,
+            deed_count=1,
+            total_pool_token_supply=self.expected_token_amount,
+        )
         assert conds[0][1] == expected_new.get_tree_hash(), "Pool state recreation mismatch"
 
     def test_pool_deed_message_match(self):
@@ -624,7 +641,12 @@ class TestPhase6Redeem:
 
     def setup_method(self):
         # Pool state: 1 deed deposited
-        self.pool_inner = curry_pool(pool_status=POOL_ACTIVE, tvl=PAR_VALUE, deed_count=1)
+        self.pool_inner = curry_pool(
+            pool_status=POOL_ACTIVE,
+            tvl=PAR_VALUE,
+            deed_count=1,
+            total_pool_token_supply=PAR_VALUE,
+        )
         self.deed_inner = curry_deed()
         self.tail = curry_tail()
         self.pool_inner_ph = self.pool_inner.get_tree_hash()
@@ -851,8 +873,8 @@ BURN_INNER_PUZHASH = bytes32(b"\x00" * 32)  # dead inner puzzle = burn
 
 
 @pytest.mark.skip(
-    reason="v2 governance refactor — settlement message format unchanged but gov-side "
-           "construction differs. Re-port in Step D."
+    reason="v2 governance refactor plus release-set-bound SETTLE message; "
+           "legacy count-only settlement E2E needs a full re-port in Step D."
 )
 class TestPhase8Settlement:
     """Batch settlement: governance approves splitxch root → pool creates
@@ -866,10 +888,20 @@ class TestPhase8Settlement:
         self.gov_inner = curry_gov(proposal_hash=0)
         self.gov_inner_ph = self.gov_inner.get_tree_hash()
         # Pool with 1 deed deposited
-        self.pool_inner_1 = curry_pool(pool_status=POOL_ACTIVE, tvl=PAR_VALUE, deed_count=1)
+        self.pool_inner_1 = curry_pool(
+            pool_status=POOL_ACTIVE,
+            tvl=PAR_VALUE,
+            deed_count=1,
+            total_pool_token_supply=PAR_VALUE,
+        )
         self.pool_inner_1_ph = self.pool_inner_1.get_tree_hash()
         # Pool with 2 deeds deposited
-        self.pool_inner_2 = curry_pool(pool_status=POOL_ACTIVE, tvl=PAR_VALUE * 2, deed_count=2)
+        self.pool_inner_2 = curry_pool(
+            pool_status=POOL_ACTIVE,
+            tvl=PAR_VALUE * 2,
+            deed_count=2,
+            total_pool_token_supply=PAR_VALUE * 2,
+        )
         self.pool_inner_2_ph = self.pool_inner_2.get_tree_hash()
         # Batch params
         self.splitxch_root = bytes32(b"\xf0" * 32)
@@ -1184,7 +1216,12 @@ class TestFullLifecycleRoundTrip:
         assert pool_deposit_msg == deed_deposit_recv, "Phase 5: Pool↔Deed deposit message mismatch"
 
         # Pool state after deposit: TVL=PAR_VALUE, DEED_COUNT=1
-        expected_pool_1 = curry_pool(pool_status=POOL_ACTIVE, tvl=PAR_VALUE, deed_count=1)
+        expected_pool_1 = curry_pool(
+            pool_status=POOL_ACTIVE,
+            tvl=PAR_VALUE,
+            deed_count=1,
+            total_pool_token_supply=PAR_VALUE,
+        )
         assert pool_deposit_conds[0][1] == expected_pool_1.get_tree_hash(), \
             "Pool state after deposit mismatch"
 
@@ -1247,7 +1284,12 @@ class TestFullLifecycleRoundTrip:
             [deed_id_1, par_value_1, DEPOSITOR_PUZHASH, TOKEN_COIN_ID],
         ])
         conds = pool_0.run(sol).as_python()
-        pool_1 = curry_pool(pool_status=POOL_ACTIVE, tvl=par_value_1, deed_count=1)
+        pool_1 = curry_pool(
+            pool_status=POOL_ACTIVE,
+            tvl=par_value_1,
+            deed_count=1,
+            total_pool_token_supply=par_value_1,
+        )
         assert conds[0][1] == pool_1.get_tree_hash(), "State after deposit 1"
 
         # ── Deposit deed 2 ──
@@ -1257,7 +1299,12 @@ class TestFullLifecycleRoundTrip:
             [deed_id_2, par_value_2, DEPOSITOR_PUZHASH, bytes32(b"\xa6" * 32)],
         ])
         conds = pool_1.run(sol).as_python()
-        pool_2 = curry_pool(pool_status=POOL_ACTIVE, tvl=par_value_1 + par_value_2, deed_count=2)
+        pool_2 = curry_pool(
+            pool_status=POOL_ACTIVE,
+            tvl=par_value_1 + par_value_2,
+            deed_count=2,
+            total_pool_token_supply=par_value_1 + par_value_2,
+        )
         assert conds[0][1] == pool_2.get_tree_hash(), "State after deposit 2"
 
         # ── Redeem deed 1 ──
@@ -1267,7 +1314,12 @@ class TestFullLifecycleRoundTrip:
             [deed_id_1, par_value_1, VAULT_LAUNCHER_ID, LAUNCHER_PUZZLE_HASH, TOKEN_COIN_ID],
         ])
         conds = pool_2.run(sol).as_python()
-        pool_3 = curry_pool(pool_status=POOL_ACTIVE, tvl=par_value_2, deed_count=1)
+        pool_3 = curry_pool(
+            pool_status=POOL_ACTIVE,
+            tvl=par_value_2,
+            deed_count=1,
+            total_pool_token_supply=par_value_2,
+        )
         assert conds[0][1] == pool_3.get_tree_hash(), (
             f"State after redeem 1: TVL should be {par_value_2}, deed_count=1"
         )
@@ -1373,7 +1425,12 @@ class TestFullLifecycleRoundTrip:
         deed_deposit_recv = extract_cond(deed_deposit_conds, 67)[2]
         assert pool_deposit_msg == deed_deposit_recv, "Phase 5: Pool↔Deed deposit mismatch"
 
-        expected_pool_1 = curry_pool(pool_status=POOL_ACTIVE, tvl=PAR_VALUE, deed_count=1)
+        expected_pool_1 = curry_pool(
+            pool_status=POOL_ACTIVE,
+            tvl=PAR_VALUE,
+            deed_count=1,
+            total_pool_token_supply=PAR_VALUE,
+        )
         assert pool_deposit_conds[0][1] == expected_pool_1.get_tree_hash(), \
             "Pool state after deposit mismatch"
 
@@ -1441,7 +1498,12 @@ class TestFullLifecycleRoundTrip:
             [deed_id_1, par_value_1, DEPOSITOR_PUZHASH, TOKEN_COIN_ID],
         ])
         conds = pool_0.run(sol).as_python()
-        pool_1 = curry_pool(pool_status=POOL_ACTIVE, tvl=par_value_1, deed_count=1)
+        pool_1 = curry_pool(
+            pool_status=POOL_ACTIVE,
+            tvl=par_value_1,
+            deed_count=1,
+            total_pool_token_supply=par_value_1,
+        )
         assert conds[0][1] == pool_1.get_tree_hash(), "State after deposit 1"
 
         # ── Deposit deed 2 ──
@@ -1451,7 +1513,12 @@ class TestFullLifecycleRoundTrip:
             [deed_id_2, par_value_2, DEPOSITOR_PUZHASH, bytes32(b"\xa6" * 32)],
         ])
         conds = pool_1.run(sol).as_python()
-        pool_2 = curry_pool(pool_status=POOL_ACTIVE, tvl=par_value_1 + par_value_2, deed_count=2)
+        pool_2 = curry_pool(
+            pool_status=POOL_ACTIVE,
+            tvl=par_value_1 + par_value_2,
+            deed_count=2,
+            total_pool_token_supply=par_value_1 + par_value_2,
+        )
         assert conds[0][1] == pool_2.get_tree_hash(), "State after deposit 2"
 
         # ── Batch settle all deeds ──
@@ -1809,7 +1876,12 @@ class TestPhase10VaultCoSpend:
         assert vault_ann_content == expected_vault_ann, "Vault deposit announcement wrong"
 
         # ── Step 2: Pool redeem (which the vault receive step 3 asserts) ──
-        pool_inner_1 = curry_pool(pool_status=POOL_ACTIVE, tvl=PAR_VALUE, deed_count=1)
+        pool_inner_1 = curry_pool(
+            pool_status=POOL_ACTIVE,
+            tvl=PAR_VALUE,
+            deed_count=1,
+            total_pool_token_supply=PAR_VALUE,
+        )
         pool_inner_1_ph = pool_inner_1.get_tree_hash()
         pool_redeem_sol = Program.to([
             POOL_COIN_ID, pool_inner_1_ph, 1,

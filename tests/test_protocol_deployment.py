@@ -19,14 +19,18 @@ import json
 from pathlib import Path
 
 import pytest
+from chia.consensus.condition_tools import (
+    conditions_dict_for_solution,
+    pkm_pairs_for_conditions_dict,
+)
 from chia.types.blockchain_format.coin import Coin
-from chia.types.blockchain_format.program import Program
+from chia.types.blockchain_format.program import INFINITE_COST, Program
 from chia.wallet.cat_wallet.cat_utils import CAT_MOD_HASH
 from chia.wallet.derive_keys import master_sk_to_wallet_sk_unhardened
 from chia.wallet.puzzles.p2_delegated_puzzle_or_hidden_puzzle import (
     DEFAULT_HIDDEN_PUZZLE_HASH,
+    MOD as P2_DELEGATED_MOD,
     calculate_synthetic_secret_key,
-    puzzle_for_pk,
 )
 from chia.wallet.puzzles.singleton_top_layer_v1_1 import (
     SINGLETON_LAUNCHER_HASH,
@@ -77,8 +81,10 @@ class _FakeFaucet:
         synth_sk = calculate_synthetic_secret_key(wallet_sk, DEFAULT_HIDDEN_PUZZLE_HASH)
         wallet_pk = wallet_sk.get_g1()
         self.key = type("FaucetKey", (), {
+            "wallet_sk": wallet_sk,
+            "wallet_pk": wallet_pk,
             "synthetic_sk": synth_sk,
-            "puzzle": puzzle_for_pk(wallet_pk),
+            "puzzle": Program.from_bytes(bytes(P2_DELEGATED_MOD)).curry(wallet_pk),
         })()
         self.address_puzzle_hash = bytes32(self.key.puzzle.get_tree_hash())
         # testnet11 AGG_SIG_ME data (matches populis_api.faucet)
@@ -315,6 +321,50 @@ class TestBundleBuilder:
         assert len(bytes(result.spend_bundle.aggregated_signature)) == 96
         # And not the zero element (real signatures from 4 spends)
         assert bytes(result.spend_bundle.aggregated_signature) != bytes(G2Element())
+
+    def test_bundle_aggregate_signature_verifies_against_emitted_conditions(self, faucet):
+        pgt_coin = _make_faucet_coin(faucet, PGT_GENESIS, DEFAULT_PGT_TOTAL_SUPPLY)
+        pool_coin = _make_faucet_coin(faucet, POOL_GENESIS, 100)
+        did_coin = _make_faucet_coin(faucet, DID_GENESIS, 100)
+        gov_coin = _make_faucet_coin(faucet, GOV_GENESIS, 100)
+        plan = ProtocolDeploymentPlan(
+            network="testnet11",
+            params=ProtocolDeploymentParams(),
+            faucet_inner_puzhash=faucet.address_puzzle_hash,
+            pgt_genesis_coin_id=pgt_coin.name(),
+            pool_genesis_coin_id=pool_coin.name(),
+            did_genesis_coin_id=did_coin.name(),
+            gov_genesis_coin_id=gov_coin.name(),
+        )
+        result = build_deployment_bundle(
+            plan=plan, faucet=faucet,
+            pgt_coin=pgt_coin, pool_coin=pool_coin,
+            did_coin=did_coin, gov_coin=gov_coin,
+        )
+
+        pks = []
+        messages = []
+        for coin_spend in result.spend_bundle.coin_spends:
+            conditions = conditions_dict_for_solution(
+                Program.from_bytes(bytes(coin_spend.puzzle_reveal)),
+                Program.from_bytes(bytes(coin_spend.solution)),
+                INFINITE_COST,
+            )
+            for pk, message in pkm_pairs_for_conditions_dict(
+                conditions,
+                coin_spend.coin,
+                faucet.agg_sig_me_data,
+            ):
+                pks.append(pk)
+                messages.append(message)
+
+        assert len(pks) == 4
+        assert all(pk == faucet.key.wallet_pk for pk in pks)
+        assert AugSchemeMPL.aggregate_verify(
+            pks,
+            messages,
+            result.spend_bundle.aggregated_signature,
+        )
 
     def test_bundle_coin_mismatch_rejected(self, faucet):
         """Bundle builder must reject coins whose name doesn't match the plan."""

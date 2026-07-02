@@ -16,9 +16,9 @@ State machine semantics are unchanged from V1:
 What this module exposes:
 
   * State + transition constants matching the .clsp file.
-  * ``compute_proposal_data_hash`` \u2014 unchanged from V1; the off-chain
-    canonical hash that pins the proposal's immutable fields
-    (property_id, par_value, royalty_bps, quorum_threshold).
+  * ``compute_proposal_data_hash`` \u2014 the off-chain canonical hash that
+    pins the proposal's immutable fields, including Pool Economic V2
+    collection and deed-share metadata.
   * ``compute_binding_hash`` \u2014 the 32-byte value the curve-specific
     member verifier signs over.  Binds the signature to the specific
     transition_case + new_state_version + PROPOSAL_DATA_HASH so a
@@ -81,29 +81,35 @@ def mint_proposal_inner_v2_mod_hash() -> bytes32:
 
 
 # \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
-# Proposal data hash \u2014 unchanged from V1.
+# Proposal data hash \u2014 Pool Economic V2 immutable mint terms.
 # \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 
 
 def compute_proposal_data_hash(
     *,
     property_id_canon: bytes32,
+    collection_id_canon: bytes32,
+    share_ppm: int,
     par_value_mojos: int,
     royalty_bps: int,
     quorum_threshold: int,
 ) -> bytes32:
     """Deterministic 32-byte commitment over a proposal's immutable fields.
 
-    Wire-compatible with ``mint_proposal_driver.compute_proposal_data_hash``
-    so off-chain consumers don't need to know whether they're looking
-    at a V1 or V2 proposal singleton when re-deriving the data hash.
-
-    See V1 docstring for the full design rationale.
+    The V2 tuple is:
+      (property_id_canon, collection_id_canon, share_ppm,
+       par_value_mojos, royalty_bps, quorum_threshold)
     """
     if len(property_id_canon) != 32:
         raise ValueError(
             f"property_id_canon must be 32 bytes, got {len(property_id_canon)}"
         )
+    if len(collection_id_canon) != 32:
+        raise ValueError(
+            f"collection_id_canon must be 32 bytes, got {len(collection_id_canon)}"
+        )
+    if share_ppm <= 0 or share_ppm > 1_000_000:
+        raise ValueError(f"share_ppm must be in 1..1_000_000, got {share_ppm}")
     if par_value_mojos < 0:
         raise ValueError(f"par_value_mojos must be \u2265 0, got {par_value_mojos}")
     if royalty_bps < 0:
@@ -113,7 +119,14 @@ def compute_proposal_data_hash(
             f"quorum_threshold must be \u2265 0, got {quorum_threshold}"
         )
     program = Program.to(
-        [property_id_canon, par_value_mojos, royalty_bps, quorum_threshold]
+        [
+            property_id_canon,
+            collection_id_canon,
+            share_ppm,
+            par_value_mojos,
+            royalty_bps,
+            quorum_threshold,
+        ]
     )
     return bytes32(program.get_tree_hash())
 

@@ -45,9 +45,9 @@ def build_fixture() -> dict[str, Any]:
 
     Coverage:
       * ``mod_hash`` \u2014 pinned uncurried tree hash of the V2 puzzle.
-      * ``proposal_data_hash`` \u2014 sha256tree of (property_id, par,
-        royalty_bps, quorum_threshold).  Three cases varying each
-        field individually.
+      * ``proposal_data_hash`` \u2014 sha256tree of (property_id,
+        collection_id, share_ppm, par, royalty_bps, quorum_threshold).
+        Three cases varying the proposal terms.
       * ``binding_hash`` \u2014 sha256tree of (transition_case,
         new_state_version, proposal_data_hash).  Cases for each
         transition / version combination.
@@ -65,14 +65,20 @@ def build_fixture() -> dict[str, Any]:
     # cross-curve TS bug is obvious.
     OWNER_HASH = bytes32(b"\xAA" * 32)
     GOV_HASH = bytes32(b"\xBB" * 32)
+    COLLECTION_A = bytes32(b"\x12" * 32)
+    COLLECTION_B = bytes32(b"\x23" * 32)
     PROP_HASH_A = compute_proposal_data_hash(
         property_id_canon=bytes32(b"\x11" * 32),
+        collection_id_canon=COLLECTION_A,
+        share_ppm=750_000,
         par_value_mojos=100_000,
         royalty_bps=250,
         quorum_threshold=1_000_000,
     )
     PROP_HASH_B = compute_proposal_data_hash(
         property_id_canon=bytes32(b"\x22" * 32),
+        collection_id_canon=COLLECTION_B,
+        share_ppm=500_000,
         par_value_mojos=500_000,
         royalty_bps=500,
         quorum_threshold=2_000_000,
@@ -91,6 +97,8 @@ def build_fixture() -> dict[str, Any]:
             {
                 "input": {
                     "property_id_canon": _hex(bytes32(b"\x11" * 32)),
+                    "collection_id_canon": _hex(COLLECTION_A),
+                    "share_ppm": 750_000,
                     "par_value_mojos": 100_000,
                     "royalty_bps": 250,
                     "quorum_threshold": 1_000_000,
@@ -100,6 +108,8 @@ def build_fixture() -> dict[str, Any]:
             {
                 "input": {
                     "property_id_canon": _hex(bytes32(b"\x22" * 32)),
+                    "collection_id_canon": _hex(COLLECTION_B),
+                    "share_ppm": 500_000,
                     "par_value_mojos": 500_000,
                     "royalty_bps": 500,
                     "quorum_threshold": 2_000_000,
@@ -109,6 +119,8 @@ def build_fixture() -> dict[str, Any]:
             {
                 "input": {
                     "property_id_canon": _hex(bytes32(b"\x33" * 32)),
+                    "collection_id_canon": _hex(bytes32(b"\x34" * 32)),
+                    "share_ppm": 1,
                     "par_value_mojos": 1,
                     "royalty_bps": 0,
                     "quorum_threshold": 0,
@@ -116,6 +128,8 @@ def build_fixture() -> dict[str, Any]:
                 "expected": _hex(
                     compute_proposal_data_hash(
                         property_id_canon=bytes32(b"\x33" * 32),
+                        collection_id_canon=bytes32(b"\x34" * 32),
+                        share_ppm=1,
                         par_value_mojos=1,
                         royalty_bps=0,
                         quorum_threshold=0,

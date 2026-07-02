@@ -1,4 +1,28 @@
-"""Python driver for mint_proposal_inner.clsp (A.1).
+"""Python driver for mint_proposal_inner.clsp (A.1) — DEPRECATED.
+
+.. deprecated:: Phase 9-Hermes-D
+
+    This V1 driver is superseded by
+    :mod:`populis_puzzles.mint_proposal_v2_driver`, which targets the
+    MIPS-pluggable :file:`mint_proposal_inner_v2.clsp`.  V2 replaces
+    V1's hard-coded BLS ``OWNER_PUBKEY`` / ``GOV_PUBKEY`` with
+    CHIP-0043 member tree hashes so a single deployment can mix BLS,
+    Eip712Member (EVM), passkey, etc. member types.
+
+    State-machine semantics (DRAFT → APPROVED / CANCELLED) are
+    identical between V1 and V2; only the auth surface differs.
+
+    All new mint-proposal work — including Phase 4 publish flow,
+    Phase 5 execute flow, and the future APPROVED → EXECUTED cross-
+    coin coordination link with ``governance_singleton_inner.clsp``
+    — uses V2 exclusively.
+
+    V1 remains in :data:`populis_puzzles.PUZZLE_FILENAMES` to avoid a
+    frozen-checksum bump in this brick; a future "V1 mint-proposal
+    retirement" brick will remove it atomically with a checksum
+    refreeze.
+
+    Importing this module emits a :class:`DeprecationWarning`.
 
 Each Populis mint proposal is a per-proposal singleton coin whose
 state evolves through the puzzle's state machine.  The launcher_id is
@@ -11,11 +35,6 @@ V1 scope (matches the puzzle):
        │ owner-sig
        ▼
     CANCELLED
-
-V2 work (deferred):
-  * APPROVED → EXECUTED, gated by ASSERT_COIN_ANNOUNCEMENT from the
-    actual PGT-driven mint.
-  * APPROVED → CANCELLED via governance.
 
 What this module exposes:
   * State + transition constants matching the .clsp file.
@@ -32,12 +51,21 @@ What this module exposes:
 """
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
 
 from chia.types.blockchain_format.program import Program
 from chia_rs.sized_bytes import bytes32
 
 from populis_puzzles import load_puzzle
+
+warnings.warn(
+    "populis_puzzles.mint_proposal_driver (V1) is deprecated; use "
+    "populis_puzzles.mint_proposal_v2_driver instead. See the module "
+    "docstring for migration notes.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 
 # ─── Constants (kept in lock-step with mint_proposal_inner.clsp) ──────────

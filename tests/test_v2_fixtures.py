@@ -84,6 +84,9 @@ def test_fixture_covers_all_helpers() -> None:
     assert fixture["admins_hash"], "admins_hash cases must be non-empty"
     assert fixture["pending_ops_hash"], "pending_ops_hash cases must be non-empty"
     assert fixture["inner_puzzle_hash"], "inner_puzzle_hash cases must be non-empty"
+    assert fixture["roster_update_binding_hash"], (
+        "roster_update_binding_hash cases must be non-empty"
+    )
     assert fixture["singleton_full_puzzle_hash"], (
         "singleton_full_puzzle_hash cases must be non-empty"
     )

@@ -1,24 +1,22 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;; Property Registry Singleton (A.4) — append-only on-chain log of
+;;; Property Registry Singleton (A.4) — uniqueness-enforced on-chain log of
 ;;; registered Populis property identifiers.
 ;;;
-;;; Replaces (in concert with A.1) the off-chain ``MintProposalStore``
-;;; SQLite table's role as the canonical record of "which properties
-;;; have been minted".  Each registration spend emits a permanent
-;;; CREATE_PUZZLE_ANNOUNCEMENT carrying the canonicalised property id;
-;;; the matching A.1 mint_proposal singleton ASSERTs that announcement
-;;; before transitioning to APPROVED, so a mint cannot be approved
-;;; for a property whose registration has not been recorded on-chain.
+;;; Replaces the off-chain ``MintProposalStore`` SQLite table's uniqueness
+;;; role for the registry itself.  Each registration spend emits a permanent
+;;; CREATE_PUZZLE_ANNOUNCEMENT carrying the canonicalised property id.  The
+;;; mint-publish/proposal flow must consume that registry record in a separate
+;;; cross-coin binding step before the local store can be retired as a mint
+;;; gating source.
 ;;;
-;;; Phase 3 V1 scope: append-only log.  The puzzle does NOT enforce
-;;; *global* uniqueness on-chain (i.e. it cannot reject a duplicate
-;;; property_id at consensus time without knowing the full history of
-;;; prior registrations).  Off-chain uniqueness via
-;;; ``MintProposalStore.create()`` (POP-CANON-014 fix) remains the
-;;; primary guard.  Phase 3.5 work (deferred): extend curried state
-;;; with a sorted-Merkle-tree root of registered ids and require
-;;; non-membership proofs on every registration, making duplicates
-;;; consensus-impossible.
+;;; A4 hardening: the registry state carries
+;;; ``REGISTERED_IDS_ROOT = sha256tree(registered_ids)``.  Each spend
+;;; supplies the current ``registered_ids`` list as a full-set witness,
+;;; proves ``property_id_canon`` is absent, then recreates the singleton
+;;; with ``sha256tree((property_id_canon . registered_ids))``.  This is
+;;; intentionally O(n) for alpha, but it makes duplicate registration
+;;; consensus-impossible.  A future sparse/sorted Merkle witness can
+;;; compress the witness without changing the uniqueness invariant.
 ;;;
 ;;; Curried parameters:
 ;;;   SELF_MOD_HASH           — tree hash of THIS module (for self-recurry).
@@ -26,6 +24,8 @@
 ;;;                             new properties.  In production this is
 ;;;                             the operator team's governance key
 ;;;                             (typically the same as A.3's GOV_PUBKEY).
+;;;   REGISTERED_IDS_ROOT     — sha256tree of the current registered-id
+;;;                             list.  The newest id is at the head.
 ;;;   REGISTRY_VERSION        — uint, monotonically increases with each
 ;;;                             registration.  Doubles as both replay
 ;;;                             protection AND the registered-count.
@@ -37,23 +37,28 @@
 ;;;                             stripped human id; canonicalisation
 ;;;                             happens in the API/driver — the puzzle
 ;;;                             treats it as opaque bytes32).
+;;;   registered_ids          — current registered-id list whose
+;;;                             sha256tree must equal REGISTERED_IDS_ROOT.
+;;;                             Every entry must be bytes32, count must
+;;;                             equal REGISTRY_VERSION, and
+;;;                             property_id_canon must not be present.
 ;;;   new_registry_version    — uint, must equal REGISTRY_VERSION + 1
 ;;;                             (no skipping; preserves count semantics).
 ;;;
 ;;; Output conditions:
 ;;;   AGG_SIG_ME GOV_PUBKEY <message>
 ;;;     Governance authorises this registration.  Message commits to
-;;;     property_id_canon AND new_registry_version, so a stolen
-;;;     signature from one registration cannot be replayed against a
-;;;     different property.
+;;;     property_id_canon, current root, new root, and new_registry_version,
+;;;     so a stolen signature from one registration cannot be replayed
+;;;     against a different property or registry state.
 ;;;
 ;;;   CREATE_COIN <new_inner_puzhash> my_amount
 ;;;     Recreate self with version bumped.  Singleton wrapper morphs.
 ;;;
 ;;;   CREATE_PUZZLE_ANNOUNCEMENT <PROTOCOL_PREFIX || property_id_canon>
-;;;     The permanent on-chain record of this registration.  Other
-;;;     coins (the A.1 mint_proposal singleton) ASSERT this exact
-;;;     announcement during their DRAFT → APPROVED transition.
+;;;     The permanent on-chain record of this registration.  The
+;;;     mint-publish/proposal flow must bind to this record in the follow-up
+;;;     cross-coin integration brick.
 ;;;
 ;;;   ASSERT_MY_AMOUNT my_amount
 ;;;     Defensive identity check.
@@ -63,10 +68,12 @@
   (
     SELF_MOD_HASH
     GOV_PUBKEY
+    REGISTERED_IDS_ROOT
     REGISTRY_VERSION
     ;; --- solution ---
     my_amount
     property_id_canon
+    registered_ids
     new_registry_version
   )
 
@@ -77,21 +84,43 @@
   ;; ─── Self-recurry ────────────────────────────────────────────────────
 
   (defun-inline new-inner-puzhash
-      (SELF_MOD_HASH GOV_PUBKEY new_registry_version)
+      (SELF_MOD_HASH GOV_PUBKEY new_registered_ids_root new_registry_version)
     (curry_hashes SELF_MOD_HASH
       (sha256 1 SELF_MOD_HASH)
       (sha256 1 GOV_PUBKEY)
+      (sha256 1 new_registered_ids_root)
       (sha256 1 new_registry_version)
+    )
+  )
+
+  ;; ─── Registered-id witness helpers ──────────────────────────────────
+
+  (defun count-list (lst)
+    (if lst
+      (+ 1 (count-list (r lst)))
+      0
+    )
+  )
+
+  (defun all-b32-atoms (lst)
+    (if lst
+      (if (is-size-b32 (f lst))
+        (all-b32-atoms (r lst))
+        ()
+      )
+      1
     )
   )
 
   ;; ─── Signing message ─────────────────────────────────────────────────
   ;;
-  ;; Binds the governance signature to BOTH the property id AND the
-  ;; new version.  Signers cannot replay a signature meant for one
-  ;; (property, version) pair against a different one.
-  (defun-inline signing-message (property_id_canon new_registry_version)
-    (sha256tree (list property_id_canon new_registry_version))
+  ;; Binds the governance signature to the property id, current root,
+  ;; computed new root, and new version.  Signers cannot replay a
+  ;; signature meant for one registry state against another.
+  (defun-inline signing-message
+      (property_id_canon registered_ids_root new_registered_ids_root new_registry_version)
+    (sha256tree
+      (list property_id_canon registered_ids_root new_registered_ids_root new_registry_version))
   )
 
   ;; ─── Main ────────────────────────────────────────────────────────────
@@ -99,9 +128,14 @@
   (assert
     (is-uint64 my_amount)
     (is-size-b32 SELF_MOD_HASH)
+    (is-size-b32 REGISTERED_IDS_ROOT)
     (is-size-b32 property_id_canon)
     (is-uint64 new_registry_version)
     (is-uint64 REGISTRY_VERSION)
+    (all-b32-atoms registered_ids)
+    (= REGISTERED_IDS_ROOT (sha256tree registered_ids))
+    (= REGISTRY_VERSION (count-list registered_ids))
+    (not (atom-in-list property_id_canon registered_ids))
     ;; BLS G1 pubkey size guard (POP-CANON-018).
     (is-size-bls-g1 GOV_PUBKEY)
     ;; Version bumps by EXACTLY 1.  This makes new_registry_version
@@ -109,18 +143,26 @@
     ;; indexers that want to spot gaps.
     (= new_registry_version (+ REGISTRY_VERSION 1))
     (list
-      ;; Governance authorises.  Message binds property_id + version.
+      ;; Governance authorises.  Message binds property id, current root,
+      ;; computed new root, and version.
       (list AGG_SIG_ME GOV_PUBKEY
-        (signing-message property_id_canon new_registry_version))
+        (signing-message
+          property_id_canon
+          REGISTERED_IDS_ROOT
+          (sha256tree (c property_id_canon registered_ids))
+          new_registry_version))
 
       ;; Recreate self with bumped version.
       (list CREATE_COIN
-        (new-inner-puzhash SELF_MOD_HASH GOV_PUBKEY new_registry_version)
+        (new-inner-puzhash
+          SELF_MOD_HASH
+          GOV_PUBKEY
+          (sha256tree (c property_id_canon registered_ids))
+          new_registry_version)
         my_amount)
 
-      ;; The permanent on-chain registration record.  A.1's
-      ;; mint_proposal singleton asserts this exact announcement
-      ;; during its DRAFT → APPROVED transition.
+      ;; The permanent on-chain registration record.  Mint publish/proposal
+      ;; spends bind to this in the follow-up cross-coin integration brick.
       (list CREATE_PUZZLE_ANNOUNCEMENT
         (concat PROTOCOL_PREFIX property_id_canon))
 

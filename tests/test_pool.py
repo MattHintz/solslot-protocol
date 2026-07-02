@@ -11,10 +11,26 @@ Tests run curried puzzles via Program.run() to verify:
   8. REMARK driver hints present
   9. State recreation via curry_hashes (CREATE_COIN with new inner puzzle hash)
 """
+import hashlib
+
 import pytest
 from chia.types.blockchain_format.program import Program
 from chia.wallet.puzzles.load_clvm import load_clvm
+from chia.wallet.util.curry_and_treehash import (
+    calculate_hash_of_quoted_mod_hash,
+    curry_and_treehash,
+)
 from chia_rs.sized_bytes import bytes32
+
+from populis_puzzles.pgt_driver import deed_releases_hash
+from populis_puzzles.pool_economics_v2 import (
+    CollectionNavEvidence,
+    PoolEconomicState,
+    build_reserve_acquisition_spec,
+    build_specific_deed_swap_spec,
+    build_true_redemption_spec,
+    token_settlement_payment_message,
+)
 
 POOL_INNER_MOD: Program = load_clvm(
     "pool_singleton_inner.clsp",
@@ -41,6 +57,12 @@ POOL_SPEND_REDEEM = 2
 POOL_SPEND_SETTLEMENT = 3
 POOL_SPEND_GOVERNANCE = 4
 POOL_SPEND_GENERATE_OFFER = 5
+POOL_SPEND_V2_SPECIFIC_DEED_SWAP = 6
+POOL_SPEND_V2_TRUE_REDEMPTION = 7
+POOL_SPEND_V2_RESERVE_ACQUISITION = 8
+POOL_V2_SPECIFIC_DEED_SWAP_TAG = 0x53574150
+POOL_V2_TRUE_REDEMPTION_TAG = 0x5244454D
+POOL_V2_RESERVE_ACQUISITION_TAG = 0x41435152
 
 POOL_ACTIVE = 1
 POOL_FROZEN = 0
@@ -48,8 +70,23 @@ POOL_FROZEN = 0
 # Protocol prefix
 PROTOCOL_PREFIX = b"\x50"
 
+# Condition codes used in settlement assertions.
+REMARK = 1
+CREATE_COIN = 51
+ASSERT_COIN_ANNOUNCEMENT = 61
+CREATE_PUZZLE_ANNOUNCEMENT = 62
+ASSERT_PUZZLE_ANNOUNCEMENT = 63
+SEND_MESSAGE = 66
+RECEIVE_MESSAGE = 67
 
-def curry_pool(pool_status=POOL_ACTIVE, tvl=0, deed_count=0) -> Program:
+
+def curry_pool(
+    pool_status=POOL_ACTIVE,
+    tvl=0,
+    deed_count=0,
+    total_pool_token_supply=0,
+    treasury_reserve_tokens=0,
+) -> Program:
     """Curry pool with MOD_HASH, immutable params, and mutable state."""
     return POOL_INNER_MOD.curry(
         MOD_HASH,
@@ -63,6 +100,8 @@ def curry_pool(pool_status=POOL_ACTIVE, tvl=0, deed_count=0) -> Program:
         pool_status,
         tvl,
         deed_count,
+        total_pool_token_supply,
+        treasury_reserve_tokens,
     )
 
 
@@ -73,6 +112,53 @@ def make_pool_solution(my_id, my_inner_puzhash, my_amount,
         my_id, my_inner_puzhash, my_amount,
         spend_case, params_list,
     ])
+
+
+def atom_int(value) -> int:
+    return int.from_bytes(value, "big") if isinstance(value, bytes) else int(value)
+
+
+def settlement_message(splitxch_root, total_amount, deed_count, releases) -> bytes:
+    return PROTOCOL_PREFIX + Program.to([
+        b"SETT",
+        splitxch_root,
+        total_amount,
+        deed_count,
+        deed_releases_hash(releases),
+    ]).get_tree_hash()
+
+
+def old_count_only_settlement_message(splitxch_root, total_amount, deed_count) -> bytes:
+    return PROTOCOL_PREFIX + Program.to([
+        b"SETT",
+        splitxch_root,
+        total_amount,
+        deed_count,
+    ]).get_tree_hash()
+
+
+def computed_p2_vault_ph(vault_launcher_id: bytes32) -> bytes32:
+    quoted_mod = calculate_hash_of_quoted_mod_hash(P2_VAULT_MOD_HASH)
+    return bytes32(
+        curry_and_treehash(
+            quoted_mod,
+            hashlib.sha256(b"\x01" + bytes(SINGLETON_MOD_HASH)).digest(),
+            hashlib.sha256(b"\x01" + bytes(vault_launcher_id)).digest(),
+            hashlib.sha256(b"\x01" + bytes(LAUNCHER_PUZZLE_HASH)).digest(),
+        )
+    )
+
+
+def computed_cat_offer_puzzle_hash() -> bytes32:
+    quoted_mod = calculate_hash_of_quoted_mod_hash(CAT_MOD_HASH)
+    return bytes32(
+        curry_and_treehash(
+            quoted_mod,
+            hashlib.sha256(b"\x01" + bytes(CAT_MOD_HASH)).digest(),
+            hashlib.sha256(b"\x01" + bytes(TOKEN_TAIL_HASH)).digest(),
+            OFFER_MOD_HASH,
+        )
+    )
 
 
 class TestPoolDeposit:
@@ -143,7 +229,12 @@ class TestPoolDeposit:
         conditions = result.as_python()
 
         # The CREATE_COIN puzzle hash should match a pool curried with new state
-        expected_new = curry_pool(pool_status=POOL_ACTIVE, tvl=deed_par_value, deed_count=1)
+        expected_new = curry_pool(
+            pool_status=POOL_ACTIVE,
+            tvl=deed_par_value,
+            deed_count=1,
+            total_pool_token_supply=deed_par_value,
+        )
         assert conditions[0][1] == expected_new.get_tree_hash()
 
 
@@ -151,7 +242,12 @@ class TestPoolRedeem:
     """Test SPEND CASE 2 — REDEEM."""
 
     def test_redeem_active_returns_conditions(self):
-        curried = curry_pool(pool_status=POOL_ACTIVE, tvl=100000, deed_count=1)
+        curried = curry_pool(
+            pool_status=POOL_ACTIVE,
+            tvl=100000,
+            deed_count=1,
+            total_pool_token_supply=100000,
+        )
         my_id = bytes32(b"\x11" * 32)
         my_inner_puzhash = curried.get_tree_hash()
         deed_id = bytes32(b"\xdd" * 32)
@@ -261,6 +357,683 @@ class TestPoolGenerateOffer:
         )
         with pytest.raises(ValueError):
             curried.run(sol)
+
+
+class TestPoolV2SpecificDeedSwap:
+    """Test SPEND CASE 6 — Pool Economic V2 specific deed swap."""
+
+    def test_specific_deed_swap_binds_nav_deed_payment_fanout_and_fees(self):
+        state = PoolEconomicState(
+            total_nav_locked_mojos=1_000_000_000,
+            deed_count=10,
+            total_pool_token_supply=800_000_000,
+            treasury_reserve_tokens=200_000_000,
+        )
+        curried = curry_pool(
+            pool_status=POOL_ACTIVE,
+            tvl=state.total_nav_locked_mojos,
+            deed_count=state.deed_count,
+            total_pool_token_supply=state.total_pool_token_supply,
+            treasury_reserve_tokens=state.treasury_reserve_tokens,
+        )
+        my_id = bytes32(b"\x11" * 32)
+        my_inner_puzhash = curried.get_tree_hash()
+        deed_id = bytes32(b"\xd1" * 32)
+        collection_id = bytes32(b"\xa1" * 32)
+        nav_root = bytes32(b"\xc3" * 32)
+        nav_registry_coin_id = bytes32(b"\xc1" * 32)
+        nav_registry_puzzle_hash = bytes32(b"\xc2" * 32)
+        buyer_vault_launcher_id = bytes32(b"\xee" * 32)
+        treasury_reserve_puzhash = bytes32(b"\xf1" * 32)
+        protocol_treasury_puzhash = bytes32(b"\xf2" * 32)
+        governance_rewards_puzhash = bytes32(b"\xf3" * 32)
+        governance_rewards_root = bytes32(b"\xf4" * 32)
+        share_ppm = 250_000
+        collection_nav_mojos = 1_000_000_000
+        registry_version = 7
+        p2_vault = computed_p2_vault_ph(buyer_vault_launcher_id)
+        evidence = CollectionNavEvidence(
+            registry_coin_id=nav_registry_coin_id,
+            registry_puzzle_hash=nav_registry_puzzle_hash,
+            collection_id_canon=collection_id,
+            nav_value_mojos=collection_nav_mojos,
+            collection_nav_root=nav_root,
+            registry_version=registry_version,
+        )
+        spec = build_specific_deed_swap_spec(
+            state,
+            deed_id=deed_id,
+            p2_vault_puzzle_hash=p2_vault,
+            collection_id_canon=collection_id,
+            share_ppm=share_ppm,
+            nav_evidence=evidence,
+            treasury_reserve_puzhash=treasury_reserve_puzhash,
+            protocol_treasury_puzhash=protocol_treasury_puzhash,
+            governance_rewards_puzhash=governance_rewards_puzhash,
+            governance_rewards_root=governance_rewards_root,
+        )
+
+        sol = make_pool_solution(
+            my_id,
+            my_inner_puzhash,
+            1,
+            POOL_SPEND_V2_SPECIFIC_DEED_SWAP,
+            [
+                deed_id,
+                collection_id,
+                share_ppm,
+                collection_nav_mojos,
+                nav_root,
+                registry_version,
+                nav_registry_coin_id,
+                nav_registry_puzzle_hash,
+                buyer_vault_launcher_id,
+                LAUNCHER_PUZZLE_HASH,
+                treasury_reserve_puzhash,
+                protocol_treasury_puzhash,
+                governance_rewards_puzhash,
+                governance_rewards_root,
+            ],
+        )
+        conditions = curried.run(sol).as_python()
+
+        assert len(conditions) == 10
+        assert atom_int(conditions[0][0]) == CREATE_COIN
+        expected_next = curry_pool(
+            pool_status=POOL_ACTIVE,
+            tvl=spec.next_state.total_nav_locked_mojos,
+            deed_count=spec.next_state.deed_count,
+            total_pool_token_supply=spec.next_state.total_pool_token_supply,
+            treasury_reserve_tokens=spec.next_state.treasury_reserve_tokens,
+        )
+        assert conditions[0][1] == expected_next.get_tree_hash()
+
+        assert atom_int(conditions[1][0]) == ASSERT_PUZZLE_ANNOUNCEMENT
+        assert conditions[1][1] == hashlib.sha256(
+            bytes(nav_registry_puzzle_hash) + spec.required_nav_evidence_message
+        ).digest()
+
+        assert atom_int(conditions[2][0]) == ASSERT_COIN_ANNOUNCEMENT
+        assert conditions[2][1] == hashlib.sha256(bytes(deed_id) + spec.deed_message).digest()
+
+        assert atom_int(conditions[3][0]) == ASSERT_PUZZLE_ANNOUNCEMENT
+        expected_payment_message = token_settlement_payment_message(my_id, spec.token_outputs)
+        assert conditions[3][1] == hashlib.sha256(
+            bytes(computed_cat_offer_puzzle_hash()) + bytes(expected_payment_message)
+        ).digest()
+
+        assert atom_int(conditions[4][0]) == CREATE_PUZZLE_ANNOUNCEMENT
+        assert conditions[4][1] == spec.pool_action_message
+
+        assert atom_int(conditions[5][0]) == SEND_MESSAGE
+        assert conditions[5][1] == bytes([0x10])
+        assert conditions[5][2] == PROTOCOL_PREFIX + Program.to([
+            POOL_SPEND_REDEEM,
+            deed_id,
+            p2_vault,
+        ]).get_tree_hash()
+
+        assert atom_int(conditions[6][0]) == REMARK
+        assert conditions[6][1] == PROTOCOL_PREFIX
+        assert atom_int(conditions[6][2]) == POOL_V2_SPECIFIC_DEED_SWAP_TAG
+        assert atom_int(conditions[6][3]) == spec.next_state.total_nav_locked_mojos
+        assert atom_int(conditions[6][4]) == spec.next_state.deed_count
+        assert atom_int(conditions[6][5]) == spec.next_state.total_pool_token_supply
+        assert atom_int(conditions[6][6]) == spec.next_state.treasury_reserve_tokens
+        assert atom_int(conditions[6][7]) == spec.quote.fee_split.protocol_fee_tokens
+        assert atom_int(conditions[6][8]) == spec.quote.fee_split.governance_fee_tokens
+
+    def test_specific_deed_swap_rejects_invalid_rewards_root(self):
+        curried = curry_pool(
+            pool_status=POOL_ACTIVE,
+            tvl=1_000_000_000,
+            deed_count=10,
+            total_pool_token_supply=800_000_000,
+            treasury_reserve_tokens=200_000_000,
+        )
+        sol = make_pool_solution(
+            bytes32(b"\x11" * 32),
+            curried.get_tree_hash(),
+            1,
+            POOL_SPEND_V2_SPECIFIC_DEED_SWAP,
+            [
+                bytes32(b"\xd1" * 32),
+                bytes32(b"\xa1" * 32),
+                250_000,
+                1_000_000_000,
+                bytes32(b"\xc3" * 32),
+                7,
+                bytes32(b"\xc1" * 32),
+                bytes32(b"\xc2" * 32),
+                bytes32(b"\xee" * 32),
+                LAUNCHER_PUZZLE_HASH,
+                bytes32(b"\xf1" * 32),
+                bytes32(b"\xf2" * 32),
+                bytes32(b"\xf3" * 32),
+                b"\xf4" * 31,
+            ],
+        )
+        with pytest.raises(ValueError):
+            curried.run(sol)
+
+
+class TestPoolV2TrueRedemption:
+    """Test SPEND CASE 7 — Pool Economic V2 true redemption."""
+
+    def test_true_redemption_binds_nav_deed_metadata_and_melt_authorization(self):
+        state = PoolEconomicState(
+            total_nav_locked_mojos=1_000_000_000,
+            deed_count=10,
+            total_pool_token_supply=800_000_000,
+            treasury_reserve_tokens=200_000_000,
+        )
+        curried = curry_pool(
+            pool_status=POOL_ACTIVE,
+            tvl=state.total_nav_locked_mojos,
+            deed_count=state.deed_count,
+            total_pool_token_supply=state.total_pool_token_supply,
+            treasury_reserve_tokens=state.treasury_reserve_tokens,
+        )
+        my_id = bytes32(b"\x11" * 32)
+        my_inner_puzhash = curried.get_tree_hash()
+        deed_id = bytes32(b"\xd1" * 32)
+        collection_id = bytes32(b"\xa1" * 32)
+        nav_root = bytes32(b"\xc3" * 32)
+        nav_registry_coin_id = bytes32(b"\xc1" * 32)
+        nav_registry_puzzle_hash = bytes32(b"\xc2" * 32)
+        vault_launcher_id = bytes32(b"\xee" * 32)
+        token_coin_id = bytes32(b"\xe1" * 32)
+        share_ppm = 250_000
+        collection_nav_mojos = 1_000_000_000
+        registry_version = 7
+        p2_vault = computed_p2_vault_ph(vault_launcher_id)
+        evidence = CollectionNavEvidence(
+            registry_coin_id=nav_registry_coin_id,
+            registry_puzzle_hash=nav_registry_puzzle_hash,
+            collection_id_canon=collection_id,
+            nav_value_mojos=collection_nav_mojos,
+            collection_nav_root=nav_root,
+            registry_version=registry_version,
+        )
+        spec = build_true_redemption_spec(
+            state,
+            deed_id=deed_id,
+            p2_vault_puzzle_hash=p2_vault,
+            collection_id_canon=collection_id,
+            share_ppm=share_ppm,
+            nav_evidence=evidence,
+            token_coin_id=token_coin_id,
+        )
+
+        sol = make_pool_solution(
+            my_id,
+            my_inner_puzhash,
+            1,
+            POOL_SPEND_V2_TRUE_REDEMPTION,
+            [
+                deed_id,
+                collection_id,
+                share_ppm,
+                collection_nav_mojos,
+                nav_root,
+                registry_version,
+                nav_registry_coin_id,
+                nav_registry_puzzle_hash,
+                vault_launcher_id,
+                LAUNCHER_PUZZLE_HASH,
+                token_coin_id,
+            ],
+        )
+        conditions = curried.run(sol).as_python()
+
+        assert len(conditions) == 10
+        assert atom_int(conditions[0][0]) == CREATE_COIN
+        expected_next = curry_pool(
+            pool_status=POOL_ACTIVE,
+            tvl=spec.next_state.total_nav_locked_mojos,
+            deed_count=spec.next_state.deed_count,
+            total_pool_token_supply=spec.next_state.total_pool_token_supply,
+            treasury_reserve_tokens=spec.next_state.treasury_reserve_tokens,
+        )
+        assert conditions[0][1] == expected_next.get_tree_hash()
+
+        assert atom_int(conditions[1][0]) == ASSERT_PUZZLE_ANNOUNCEMENT
+        assert conditions[1][1] == hashlib.sha256(
+            bytes(nav_registry_puzzle_hash) + spec.required_nav_evidence_message
+        ).digest()
+
+        assert atom_int(conditions[2][0]) == ASSERT_COIN_ANNOUNCEMENT
+        assert conditions[2][1] == hashlib.sha256(bytes(deed_id) + spec.deed_message).digest()
+
+        assert atom_int(conditions[3][0]) == CREATE_PUZZLE_ANNOUNCEMENT
+        assert conditions[3][1] == spec.token_authorizations[0].announcement_message
+
+        assert atom_int(conditions[4][0]) == CREATE_PUZZLE_ANNOUNCEMENT
+        assert conditions[4][1] == spec.pool_action_message
+
+        assert atom_int(conditions[5][0]) == SEND_MESSAGE
+        assert conditions[5][1] == bytes([0x10])
+        assert conditions[5][2] == PROTOCOL_PREFIX + Program.to([
+            POOL_SPEND_REDEEM,
+            deed_id,
+            p2_vault,
+        ]).get_tree_hash()
+
+        assert atom_int(conditions[6][0]) == REMARK
+        assert conditions[6][1] == PROTOCOL_PREFIX
+        assert atom_int(conditions[6][2]) == POOL_V2_TRUE_REDEMPTION_TAG
+        assert atom_int(conditions[6][3]) == spec.next_state.total_nav_locked_mojos
+        assert atom_int(conditions[6][4]) == spec.next_state.deed_count
+        assert atom_int(conditions[6][5]) == spec.next_state.total_pool_token_supply
+        assert atom_int(conditions[6][6]) == spec.next_state.treasury_reserve_tokens
+
+    def test_true_redemption_rejects_invalid_share(self):
+        curried = curry_pool(
+            pool_status=POOL_ACTIVE,
+            tvl=1_000_000_000,
+            deed_count=10,
+            total_pool_token_supply=800_000_000,
+            treasury_reserve_tokens=200_000_000,
+        )
+        sol = make_pool_solution(
+            bytes32(b"\x11" * 32),
+            curried.get_tree_hash(),
+            1,
+            POOL_SPEND_V2_TRUE_REDEMPTION,
+            [
+                bytes32(b"\xd1" * 32),
+                bytes32(b"\xa1" * 32),
+                0,
+                1_000_000_000,
+                bytes32(b"\xc3" * 32),
+                7,
+                bytes32(b"\xc1" * 32),
+                bytes32(b"\xc2" * 32),
+                bytes32(b"\xee" * 32),
+                LAUNCHER_PUZZLE_HASH,
+                bytes32(b"\xe1" * 32),
+            ],
+        )
+        with pytest.raises(ValueError):
+            curried.run(sol)
+
+    def test_true_redemption_rejects_reserve_above_total_supply(self):
+        curried = curry_pool(
+            pool_status=POOL_ACTIVE,
+            tvl=1_000_000_000,
+            deed_count=10,
+            total_pool_token_supply=800_000_000,
+            treasury_reserve_tokens=900_000_000,
+        )
+        sol = make_pool_solution(
+            bytes32(b"\x11" * 32),
+            curried.get_tree_hash(),
+            1,
+            POOL_SPEND_V2_TRUE_REDEMPTION,
+            [
+                bytes32(b"\xd1" * 32),
+                bytes32(b"\xa1" * 32),
+                250_000,
+                1_000_000_000,
+                bytes32(b"\xc3" * 32),
+                7,
+                bytes32(b"\xc1" * 32),
+                bytes32(b"\xc2" * 32),
+                bytes32(b"\xee" * 32),
+                LAUNCHER_PUZZLE_HASH,
+                bytes32(b"\xe1" * 32),
+            ],
+        )
+        with pytest.raises(ValueError):
+            curried.run(sol)
+
+
+class TestPoolV2ReserveAcquisition:
+    """Test SPEND CASE 8 — Pool Economic V2 reserve-funded acquisition."""
+
+    def test_reserve_acquisition_uses_reserve_and_mints_shortfall(self):
+        state = PoolEconomicState(
+            total_nav_locked_mojos=1_000_000_000,
+            deed_count=10,
+            total_pool_token_supply=800_000_000,
+            treasury_reserve_tokens=200_000_000,
+        )
+        curried = curry_pool(
+            pool_status=POOL_ACTIVE,
+            tvl=state.total_nav_locked_mojos,
+            deed_count=state.deed_count,
+            total_pool_token_supply=state.total_pool_token_supply,
+            treasury_reserve_tokens=state.treasury_reserve_tokens,
+        )
+        my_id = bytes32(b"\x11" * 32)
+        my_inner_puzhash = curried.get_tree_hash()
+        deed_id = bytes32(b"\xd1" * 32)
+        property_id = bytes32(b"\xa2" * 32)
+        collection_id = bytes32(b"\xa1" * 32)
+        nav_root = bytes32(b"\xc3" * 32)
+        nav_registry_coin_id = bytes32(b"\xc1" * 32)
+        nav_registry_puzzle_hash = bytes32(b"\xc2" * 32)
+        seller_puzhash = bytes32(b"\xb1" * 32)
+        mint_token_coin_id = bytes32(b"\xe1" * 32)
+        par_value_mojos = 123_000
+        asset_class = 1
+        share_ppm = 500_000
+        collection_nav_mojos = 400_000_000
+        seller_token_price = 250_000_000
+        registry_version = 7
+        evidence = CollectionNavEvidence(
+            registry_coin_id=nav_registry_coin_id,
+            registry_puzzle_hash=nav_registry_puzzle_hash,
+            collection_id_canon=collection_id,
+            nav_value_mojos=collection_nav_mojos,
+            collection_nav_root=nav_root,
+            registry_version=registry_version,
+        )
+        spec = build_reserve_acquisition_spec(
+            state,
+            deed_id=deed_id,
+            property_id_canon=property_id,
+            par_value_mojos=par_value_mojos,
+            asset_class=asset_class,
+            collection_id_canon=collection_id,
+            share_ppm=share_ppm,
+            nav_evidence=evidence,
+            seller_puzhash=seller_puzhash,
+            seller_token_price=seller_token_price,
+            mint_token_coin_id=mint_token_coin_id,
+        )
+
+        sol = make_pool_solution(
+            my_id,
+            my_inner_puzhash,
+            1,
+            POOL_SPEND_V2_RESERVE_ACQUISITION,
+            [
+                deed_id,
+                property_id,
+                par_value_mojos,
+                asset_class,
+                collection_id,
+                share_ppm,
+                collection_nav_mojos,
+                nav_root,
+                registry_version,
+                nav_registry_coin_id,
+                nav_registry_puzzle_hash,
+                seller_puzhash,
+                seller_token_price,
+                mint_token_coin_id,
+            ],
+        )
+        conditions = curried.run(sol).as_python()
+
+        assert len(conditions) == 11
+        assert atom_int(conditions[0][0]) == CREATE_COIN
+        expected_next = curry_pool(
+            pool_status=POOL_ACTIVE,
+            tvl=spec.next_state.total_nav_locked_mojos,
+            deed_count=spec.next_state.deed_count,
+            total_pool_token_supply=spec.next_state.total_pool_token_supply,
+            treasury_reserve_tokens=spec.next_state.treasury_reserve_tokens,
+        )
+        assert conditions[0][1] == expected_next.get_tree_hash()
+
+        assert atom_int(conditions[1][0]) == ASSERT_PUZZLE_ANNOUNCEMENT
+        assert conditions[1][1] == hashlib.sha256(
+            bytes(nav_registry_puzzle_hash) + spec.required_nav_evidence_message
+        ).digest()
+
+        assert atom_int(conditions[2][0]) == ASSERT_COIN_ANNOUNCEMENT
+        assert conditions[2][1] == hashlib.sha256(bytes(deed_id) + spec.deed_message).digest()
+
+        assert atom_int(conditions[3][0]) == ASSERT_PUZZLE_ANNOUNCEMENT
+        expected_payment_message = token_settlement_payment_message(my_id, spec.token_outputs)
+        assert conditions[3][1] == hashlib.sha256(
+            bytes(computed_cat_offer_puzzle_hash()) + bytes(expected_payment_message)
+        ).digest()
+
+        assert atom_int(conditions[4][0]) == CREATE_PUZZLE_ANNOUNCEMENT
+        assert conditions[4][1] == spec.token_authorizations[0].announcement_message
+
+        assert atom_int(conditions[5][0]) == CREATE_PUZZLE_ANNOUNCEMENT
+        assert conditions[5][1] == spec.pool_action_message
+
+        assert atom_int(conditions[6][0]) == SEND_MESSAGE
+        assert conditions[6][1] == bytes([0x10])
+        assert conditions[6][2] == PROTOCOL_PREFIX + Program.to([
+            POOL_SPEND_DEPOSIT,
+            deed_id,
+            par_value_mojos,
+        ]).get_tree_hash()
+
+        assert atom_int(conditions[7][0]) == REMARK
+        assert conditions[7][1] == PROTOCOL_PREFIX
+        assert atom_int(conditions[7][2]) == POOL_V2_RESERVE_ACQUISITION_TAG
+        assert atom_int(conditions[7][3]) == spec.next_state.total_nav_locked_mojos
+        assert atom_int(conditions[7][4]) == spec.next_state.deed_count
+        assert atom_int(conditions[7][5]) == spec.next_state.total_pool_token_supply
+        assert atom_int(conditions[7][6]) == spec.next_state.treasury_reserve_tokens
+        assert atom_int(conditions[7][7]) == spec.quote.reserve_tokens_paid
+        assert atom_int(conditions[7][8]) == spec.quote.fresh_tokens_to_mint
+
+    def test_reserve_acquisition_without_shortfall_omits_mint_authorization(self):
+        state = PoolEconomicState(
+            total_nav_locked_mojos=1_000_000_000,
+            deed_count=10,
+            total_pool_token_supply=800_000_000,
+            treasury_reserve_tokens=200_000_000,
+        )
+        curried = curry_pool(
+            pool_status=POOL_ACTIVE,
+            tvl=state.total_nav_locked_mojos,
+            deed_count=state.deed_count,
+            total_pool_token_supply=state.total_pool_token_supply,
+            treasury_reserve_tokens=state.treasury_reserve_tokens,
+        )
+        my_id = bytes32(b"\x11" * 32)
+        my_inner_puzhash = curried.get_tree_hash()
+        deed_id = bytes32(b"\xd1" * 32)
+        property_id = bytes32(b"\xa2" * 32)
+        collection_id = bytes32(b"\xa1" * 32)
+        nav_root = bytes32(b"\xc3" * 32)
+        nav_registry_coin_id = bytes32(b"\xc1" * 32)
+        nav_registry_puzzle_hash = bytes32(b"\xc2" * 32)
+        seller_puzhash = bytes32(b"\xb1" * 32)
+        par_value_mojos = 123_000
+        asset_class = 1
+        share_ppm = 500_000
+        collection_nav_mojos = 400_000_000
+        seller_token_price = 100_000_000
+        registry_version = 7
+        evidence = CollectionNavEvidence(
+            registry_coin_id=nav_registry_coin_id,
+            registry_puzzle_hash=nav_registry_puzzle_hash,
+            collection_id_canon=collection_id,
+            nav_value_mojos=collection_nav_mojos,
+            collection_nav_root=nav_root,
+            registry_version=registry_version,
+        )
+        spec = build_reserve_acquisition_spec(
+            state,
+            deed_id=deed_id,
+            property_id_canon=property_id,
+            par_value_mojos=par_value_mojos,
+            asset_class=asset_class,
+            collection_id_canon=collection_id,
+            share_ppm=share_ppm,
+            nav_evidence=evidence,
+            seller_puzhash=seller_puzhash,
+            seller_token_price=seller_token_price,
+        )
+        assert spec.token_authorizations == ()
+
+        sol = make_pool_solution(
+            my_id,
+            my_inner_puzhash,
+            1,
+            POOL_SPEND_V2_RESERVE_ACQUISITION,
+            [
+                deed_id,
+                property_id,
+                par_value_mojos,
+                asset_class,
+                collection_id,
+                share_ppm,
+                collection_nav_mojos,
+                nav_root,
+                registry_version,
+                nav_registry_coin_id,
+                nav_registry_puzzle_hash,
+                seller_puzhash,
+                seller_token_price,
+                None,
+            ],
+        )
+        conditions = curried.run(sol).as_python()
+
+        assert len(conditions) == 10
+        assert atom_int(conditions[3][0]) == ASSERT_PUZZLE_ANNOUNCEMENT
+        assert atom_int(conditions[4][0]) == CREATE_PUZZLE_ANNOUNCEMENT
+        assert conditions[4][1] == spec.pool_action_message
+        assert atom_int(conditions[5][0]) == SEND_MESSAGE
+        assert atom_int(conditions[6][0]) == REMARK
+        assert atom_int(conditions[6][7]) == spec.quote.reserve_tokens_paid
+        assert atom_int(conditions[6][8]) == 0
+
+    def test_reserve_acquisition_rejects_missing_mint_coin_for_shortfall(self):
+        state = PoolEconomicState(
+            total_nav_locked_mojos=1_000_000_000,
+            deed_count=10,
+            total_pool_token_supply=800_000_000,
+            treasury_reserve_tokens=0,
+        )
+        curried = curry_pool(
+            pool_status=POOL_ACTIVE,
+            tvl=state.total_nav_locked_mojos,
+            deed_count=state.deed_count,
+            total_pool_token_supply=state.total_pool_token_supply,
+            treasury_reserve_tokens=state.treasury_reserve_tokens,
+        )
+        sol = make_pool_solution(
+            bytes32(b"\x11" * 32),
+            curried.get_tree_hash(),
+            1,
+            POOL_SPEND_V2_RESERVE_ACQUISITION,
+            [
+                bytes32(b"\xd1" * 32),
+                bytes32(b"\xa2" * 32),
+                123_000,
+                1,
+                bytes32(b"\xa1" * 32),
+                500_000,
+                400_000_000,
+                bytes32(b"\xc3" * 32),
+                7,
+                bytes32(b"\xc1" * 32),
+                bytes32(b"\xc2" * 32),
+                bytes32(b"\xb1" * 32),
+                250_000_000,
+                None,
+            ],
+        )
+        with pytest.raises(ValueError):
+            curried.run(sol)
+
+
+class TestPoolSettlementBinding:
+    """Test SPEND CASE 3 — SETTLEMENT release-set binding."""
+
+    splitxch_root = bytes32(b"\xab" * 32)
+    gov_inner_puzhash = bytes32(b"\xac" * 32)
+    gov_singleton_struct = Program.to(
+        (SINGLETON_MOD_HASH, (bytes32(b"\xad" * 32), LAUNCHER_PUZZLE_HASH))
+    )
+    releases = [
+        (bytes32(b"\x21" * 32), bytes32(b"\x31" * 32)),
+        (bytes32(b"\x22" * 32), bytes32(b"\x32" * 32)),
+    ]
+
+    def run_settlement(self, releases=None):
+        releases = self.releases if releases is None else releases
+        curried = curry_pool(pool_status=POOL_ACTIVE, tvl=200_000, deed_count=len(self.releases))
+        sol = make_pool_solution(
+            bytes32(b"\x11" * 32),
+            curried.get_tree_hash(),
+            1,
+            POOL_SPEND_SETTLEMENT,
+            [
+                self.splitxch_root,
+                99_999,
+                releases,
+                self.gov_inner_puzhash,
+                self.gov_singleton_struct,
+            ],
+        )
+        return curried.run(sol).as_python()
+
+    def test_settlement_receive_message_binds_full_deed_releases_hash(self):
+        conditions = self.run_settlement()
+        receives = [c for c in conditions if atom_int(c[0]) == RECEIVE_MESSAGE]
+        assert len(receives) == 1
+        assert receives[0][1] == bytes([0x10])
+        assert receives[0][2] == settlement_message(
+            self.splitxch_root,
+            99_999,
+            len(self.releases),
+            self.releases,
+        )
+        assert receives[0][2] != old_count_only_settlement_message(
+            self.splitxch_root,
+            99_999,
+            len(self.releases),
+        )
+
+    def test_settlement_batch_announcement_binds_full_deed_releases_hash(self):
+        conditions = self.run_settlement()
+        announcements = [c for c in conditions if atom_int(c[0]) == CREATE_PUZZLE_ANNOUNCEMENT]
+        batch = announcements[0]
+        expected = PROTOCOL_PREFIX + Program.to([
+            POOL_SPEND_SETTLEMENT,
+            self.splitxch_root,
+            99_999,
+            len(self.releases),
+            deed_releases_hash(self.releases),
+        ]).get_tree_hash()
+        assert batch[1] == expected
+
+    def test_mutating_release_destination_changes_required_governance_message(self):
+        mutated = [
+            self.releases[0],
+            (self.releases[1][0], bytes32(b"\xfe" * 32)),
+        ]
+        assert settlement_message(self.splitxch_root, 99_999, len(self.releases), mutated) != settlement_message(
+            self.splitxch_root,
+            99_999,
+            len(self.releases),
+            self.releases,
+        )
+        conditions = self.run_settlement(mutated)
+        receives = [c for c in conditions if atom_int(c[0]) == RECEIVE_MESSAGE]
+        assert receives[0][2] == settlement_message(
+            self.splitxch_root,
+            99_999,
+            len(self.releases),
+            mutated,
+        )
+
+    def test_reordering_release_set_changes_required_governance_message(self):
+        reordered = list(reversed(self.releases))
+        assert settlement_message(self.splitxch_root, 99_999, len(self.releases), reordered) != settlement_message(
+            self.splitxch_root,
+            99_999,
+            len(self.releases),
+            self.releases,
+        )
+
+    def test_duplicate_deed_release_is_rejected_before_message_pairing(self):
+        duplicate = [self.releases[0], self.releases[0]]
+        with pytest.raises(ValueError):
+            self.run_settlement(duplicate)
 
 
 class TestPoolGovernance:

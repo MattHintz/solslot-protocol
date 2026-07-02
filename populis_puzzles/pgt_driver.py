@@ -285,9 +285,54 @@ def proposal_tracker_inner_hash(*args, **kwargs) -> bytes32:
 
 
 # ── Bill operation builders ──────────────────────────────────────────────────
-def bill_mint(deed_full_puzzle_hash: bytes32) -> Program:
-    """MINT bill: governance approves spawning a deed at the given full ph."""
-    return Program.to((BILL_MINT, (deed_full_puzzle_hash, 0)))
+def _require_b32(value: bytes | bytes32, name: str) -> bytes32:
+    raw = bytes(value)
+    if len(raw) != 32:
+        raise ValueError(f"{name} must be 32 bytes")
+    return bytes32(raw)
+
+
+def bill_mint(
+    deed_full_puzzle_hash: bytes32,
+    property_id_canon: bytes32 | None = None,
+    property_registry_puzzle_hash: bytes32 | None = None,
+) -> Program:
+    """MINT bill: approve spawning a deed and bind its property registry context.
+
+    Layout: ``(M deed_full_puzzle_hash property_id_canon
+    property_registry_puzzle_hash)``.  ``governance_singleton_inner.clsp`` still
+    dispatches MINT by reading the first payload slot as ``deed_full_puzzle_hash``;
+    the two extra slots are part of ``sha256tree(bill)`` so voters and the API
+    bind the proposal to the A4 property-registry record that the portal used.
+
+    If ``property_id_canon`` / ``property_registry_puzzle_hash`` are omitted,
+    the helper returns the legacy two-field ``(M deed_full_puzzle_hash)`` bill
+    for older tests/helpers that only need a syntactically valid MINT dispatch.
+    New publish code should pass both explicitly.
+    """
+    deed_full_puzzle_hash = _require_b32(deed_full_puzzle_hash, "deed_full_puzzle_hash")
+    if property_id_canon is None and property_registry_puzzle_hash is None:
+        return Program.to((BILL_MINT, (deed_full_puzzle_hash, 0)))
+    if property_id_canon is None or property_registry_puzzle_hash is None:
+        raise ValueError(
+            "property_id_canon and property_registry_puzzle_hash must be passed together"
+        )
+    property_id_canon = _require_b32(
+        property_id_canon, "property_id_canon"
+    )
+    property_registry_puzzle_hash = _require_b32(
+        property_registry_puzzle_hash,
+        "property_registry_puzzle_hash",
+    )
+    return Program.to(
+        (
+            BILL_MINT,
+            (
+                deed_full_puzzle_hash,
+                (property_id_canon, (property_registry_puzzle_hash, 0)),
+            ),
+        )
+    )
 
 
 def bill_freeze(new_pool_status: int) -> Program:
@@ -295,9 +340,26 @@ def bill_freeze(new_pool_status: int) -> Program:
     return Program.to((BILL_FREEZE, (new_pool_status, 0)))
 
 
-def bill_settle(splitxch_root: bytes32, total_amount: int, num_deeds: int) -> Program:
-    """SETTLE bill: governance approves a batch settlement."""
-    return Program.to((BILL_SETTLE, (splitxch_root, (total_amount, (num_deeds, 0)))))
+def deed_releases_hash(deed_releases) -> bytes32:
+    """Return ``sha256tree(deed_releases)`` for governance settlement binding."""
+    return bytes32(Program.to(deed_releases).get_tree_hash())
+
+
+def bill_settle(
+    splitxch_root: bytes32,
+    total_amount: int,
+    num_deeds: int,
+    deed_releases_hash: bytes32,
+) -> Program:
+    """SETTLE bill: governance approves a specific batch settlement release set."""
+    if len(deed_releases_hash) != 32:
+        raise ValueError("deed_releases_hash must be 32 bytes")
+    return Program.to(
+        (
+            BILL_SETTLE,
+            (splitxch_root, (total_amount, (num_deeds, (deed_releases_hash, 0)))),
+        )
+    )
 
 
 def bill_vault_version(

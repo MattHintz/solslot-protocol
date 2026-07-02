@@ -17,7 +17,6 @@
 ;;;   SINGLETON_MOD_HASH    — mod hash for singleton_top_layer
 ;;;   DEED_LAUNCHER_ID      — launcher ID of the specific deed NFT
 ;;;   LAUNCHER_PUZZLE_HASH  — standard launcher puzzle hash
-;;;   BURN_INNER_PUZHASH    — the inner puzzle hash the deed is sent to on burn
 ;;;   SECONDS_DELAY         — seconds before delayed escape is available
 ;;;   DELAYED_PUZZLE_HASH   — destination for delayed escape
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -27,12 +26,11 @@
         SINGLETON_MOD_HASH
         DEED_LAUNCHER_ID
         LAUNCHER_PUZZLE_HASH
-        BURN_INNER_PUZHASH
         SECONDS_DELAY
         DELAYED_PUZZLE_HASH
         ;; --- solution ---
         ;; Claim path:  (target_puzzle_hash my_amount . extra_args)
-        ;; Delayed path: (my_amount)   — extra_args is ()
+        ;; Delayed path: (ignored_target_puzzle_hash my_amount)
         target_puzzle_hash
         my_amount
         . extra_args
@@ -42,6 +40,11 @@
     (include curry.clib)
     (include sha256tree.clib)
     (include utility_macros.clib)
+
+    ;; Canonical unspendable burn destination for settlement-exited deeds.
+    ;; This is intentionally not a curried parameter: settlement leaves must
+    ;; not get to choose where "burned" deeds are sent.
+    (defconstant BURN_INNER_PUZHASH 0x0000000000000000000000000000000000000000000000000000000000000000)
 
     ;; Compute full singleton puzzle hash for the deed
     (defun-inline calculate_full_puzzle_hash (SINGLETON_MOD_HASH DEED_LAUNCHER_ID LAUNCHER_PUZZLE_HASH inner_puzzle_hash)
@@ -66,7 +69,6 @@
     ;; we assert here to verify the deed is actually being burned.
     ;; extra_args = (deed_coin_id pool_coin_id)
     (defun claim_settlement (SINGLETON_MOD_HASH DEED_LAUNCHER_ID LAUNCHER_PUZZLE_HASH
-                             BURN_INNER_PUZHASH
                              target_puzzle_hash my_amount
                              deed_coin_id pool_coin_id)
         (assert
@@ -74,6 +76,7 @@
             (is-uint64 my_amount)
             (is-size-b32 deed_coin_id)
             (is-size-b32 pool_coin_id)
+            (is-size-b32 BURN_INNER_PUZHASH)
             (list
                 ;; Assert the deed's p2_pool coin announces the burn release.
                 ;; p2_pool emits: CREATE_COIN_ANNOUNCEMENT(PROTOCOL_PREFIX . sha256(pool_coin_id, deed_launcher_id, next_puzzlehash))
@@ -100,7 +103,6 @@
     (if extra_args
         (claim_settlement
             SINGLETON_MOD_HASH DEED_LAUNCHER_ID LAUNCHER_PUZZLE_HASH
-            BURN_INNER_PUZHASH
             target_puzzle_hash my_amount
             (f extra_args) (f (r extra_args)))
         (delayed_spend SECONDS_DELAY DELAYED_PUZZLE_HASH my_amount)

@@ -1,0 +1,168 @@
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; Collection NAV Registry Singleton.
+;;;
+;;; Governed on-chain source of appraised collection NAV for Pool Economic V2.
+;;; The registry stores a root over a full list witness of:
+;;;
+;;;   ((collection_id_canon . nav_value_mojos) ...)
+;;;
+;;; where ``collection_id_canon`` is bytes32 and ``nav_value_mojos`` is uint64.
+;;; Updates are intentionally O(n) for alpha: a spend supplies the current full
+;;; list, proves it hashes to COLLECTION_NAV_ROOT, and recreates the singleton
+;;; with a deterministic upsert of the target collection id.
+;;;
+;;; Curried parameters:
+;;;   SELF_MOD_HASH        — tree hash of this module.
+;;;   GOV_PUBKEY           — BLS G1 pubkey authorised to publish NAV updates.
+;;;   COLLECTION_NAV_ROOT  — sha256tree of current entries.
+;;;   REGISTRY_VERSION     — monotonically increasing uint64.
+;;;
+;;; Solution:
+;;;   my_amount
+;;;   collection_id_canon
+;;;   nav_value_mojos
+;;;   current_entries
+;;;   new_registry_version
+;;;
+;;; If ``new_registry_version == REGISTRY_VERSION`` this is a no-op read
+;;; evidence spend: the coin recreates itself unchanged and announces the
+;;; current NAV entry for co-spending pool exits.  If
+;;; ``new_registry_version == REGISTRY_VERSION + 1`` this is a governed NAV
+;;; update signed by ``GOV_PUBKEY``.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(mod
+  (
+    SELF_MOD_HASH
+    GOV_PUBKEY
+    COLLECTION_NAV_ROOT
+    REGISTRY_VERSION
+    ;; --- solution ---
+    my_amount
+    collection_id_canon
+    nav_value_mojos
+    current_entries
+    new_registry_version
+  )
+
+  (include condition_codes.clib)
+  (include utils.clib)
+  (include utility_macros.clib)
+
+  (defconstant NAV_REGISTRY_TAG 0x4e415652) ; "NAVR"
+  (defconstant NAV_EVIDENCE_TAG 0x4e415645) ; "NAVE"
+
+  (defun-inline new-inner-puzhash
+      (SELF_MOD_HASH GOV_PUBKEY new_collection_nav_root new_registry_version)
+    (curry_hashes SELF_MOD_HASH
+      (sha256 1 SELF_MOD_HASH)
+      (sha256 1 GOV_PUBKEY)
+      (sha256 1 new_collection_nav_root)
+      (sha256 1 new_registry_version)))
+
+  (defun all-nav-entries (entries)
+    (if entries
+      (if
+        (all
+          (is-size-b32 (f (f entries)))
+          (is-uint64 (r (f entries)))
+          (> (r (f entries)) 0))
+        (all-nav-entries (r entries))
+        ())
+      1))
+
+  (defun upsert-nav (collection_id_canon nav_value_mojos entries)
+    (if entries
+      (if (= (f (f entries)) collection_id_canon)
+        (c (c collection_id_canon nav_value_mojos) (r entries))
+        (c (f entries) (upsert-nav collection_id_canon nav_value_mojos (r entries))))
+      (list (c collection_id_canon nav_value_mojos))))
+
+  (defun find-nav (collection_id_canon entries)
+    (if entries
+      (if (= (f (f entries)) collection_id_canon)
+        (list 1 (r (f entries)))
+        (find-nav collection_id_canon (r entries)))
+      (list 0 0)))
+
+  (defun-inline nav-message
+      (collection_id_canon nav_value_mojos old_root new_root new_registry_version)
+    (sha256tree
+      (list
+        NAV_REGISTRY_TAG
+        collection_id_canon
+        nav_value_mojos
+        old_root
+        new_root
+        new_registry_version)))
+
+  (defun-inline nav-evidence-message
+      (collection_id_canon nav_value_mojos root registry_version)
+    (sha256tree
+      (list
+        NAV_EVIDENCE_TAG
+        collection_id_canon
+        nav_value_mojos
+        root
+        registry_version)))
+
+  (assert
+    (is-uint64 my_amount)
+    (is-size-b32 SELF_MOD_HASH)
+    (is-size-b32 COLLECTION_NAV_ROOT)
+    (is-size-b32 collection_id_canon)
+    (is-uint64 nav_value_mojos)
+    (> nav_value_mojos 0)
+    (is-uint64 REGISTRY_VERSION)
+    (is-uint64 new_registry_version)
+    (all-nav-entries current_entries)
+    (has-no-duplicate-firsts current_entries ())
+    (= COLLECTION_NAV_ROOT (sha256tree current_entries))
+    (is-size-bls-g1 GOV_PUBKEY)
+    (if (= new_registry_version REGISTRY_VERSION)
+      (assert
+        (f (find-nav collection_id_canon current_entries))
+        (= nav_value_mojos (f (r (find-nav collection_id_canon current_entries))))
+        (list
+          (list CREATE_COIN
+            (new-inner-puzhash
+              SELF_MOD_HASH
+              GOV_PUBKEY
+              COLLECTION_NAV_ROOT
+              REGISTRY_VERSION)
+            my_amount)
+          (list CREATE_PUZZLE_ANNOUNCEMENT
+            (concat PROTOCOL_PREFIX
+              (nav-evidence-message
+                collection_id_canon
+                nav_value_mojos
+                COLLECTION_NAV_ROOT
+                REGISTRY_VERSION)))
+          (list ASSERT_MY_AMOUNT my_amount)))
+      (assert
+        (= new_registry_version (+ REGISTRY_VERSION 1))
+        (list
+          (list AGG_SIG_ME GOV_PUBKEY
+            (nav-message
+              collection_id_canon
+              nav_value_mojos
+              COLLECTION_NAV_ROOT
+              (sha256tree (upsert-nav collection_id_canon nav_value_mojos current_entries))
+              new_registry_version))
+          (list CREATE_COIN
+            (new-inner-puzhash
+              SELF_MOD_HASH
+              GOV_PUBKEY
+              (sha256tree (upsert-nav collection_id_canon nav_value_mojos current_entries))
+              new_registry_version)
+            my_amount)
+          (list CREATE_PUZZLE_ANNOUNCEMENT
+            (concat PROTOCOL_PREFIX
+              (nav-message
+                collection_id_canon
+                nav_value_mojos
+                COLLECTION_NAV_ROOT
+                (sha256tree (upsert-nav collection_id_canon nav_value_mojos current_entries))
+                new_registry_version)))
+          (list ASSERT_MY_AMOUNT my_amount)))))
+)

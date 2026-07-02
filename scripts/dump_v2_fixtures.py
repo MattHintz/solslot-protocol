@@ -3,9 +3,9 @@
 The TS service in ``populis_portal`` reproduces a subset of the Python
 driver helpers (``compute_state_hash``, ``compute_admins_hash``,
 ``compute_pending_ops_hash``, ``admin_authority_v2_inner_mod_hash``,
-``make_inner_puzzle_hash``) so that the portal can construct + verify
-v2 admin authority spends entirely client-side without depending on
-the Populis API.
+``make_inner_puzzle_hash``, ``compute_roster_update_binding_hash``) so
+that the portal can construct + verify v2 admin authority spends entirely
+client-side without depending on the Populis API.
 
 This script writes a JSON fixture mapping each helper to a list of
 ``(input, expected_output)`` cases.  The portal's Karma test reads
@@ -44,6 +44,7 @@ from populis_puzzles.admin_authority_v2_driver import (
     compute_admins_hash,
     compute_launch_outputs,
     compute_pending_ops_hash,
+    compute_roster_update_binding_hash,
     compute_state_hash,
     make_inner_puzzle_hash,
     singleton_full_puzzle_hash,
@@ -82,6 +83,10 @@ def build_fixture() -> dict[str, Any]:
         the default policy + a custom policy.  This binds the entire
         curry-order contract: any TS drift in the curry sequence
         will surface here.
+      * ``roster_update_binding_hash`` — sha256tree of the local
+        A.5 ADMIN_ROSTER_UPDATE signer binding tuple. Cases vary
+        pending ops and versions so a TS port that reorders fields or
+        relies on backend output fails fast.
     """
     # Sentinel 32-byte hashes (distinct so a TS port that swaps two
     # fields in the curry order produces a different output).
@@ -217,6 +222,56 @@ def build_fixture() -> dict[str, Any]:
             }
         )
 
+    roster_update_binding_cases: list[dict[str, Any]] = []
+    for params, label in (
+        (
+            {
+                "current_mips_root_hash": h1,
+                "current_admins_hash": h2,
+                "current_pending_ops_hash": EMPTY_LIST_HASH,
+                "current_authority_version": 1,
+                "new_admins_hash": h3,
+                "new_mips_root_hash": h4,
+                "new_authority_version": 2,
+            },
+            "fresh-slot-add-empty-pending",
+        ),
+        (
+            {
+                "current_mips_root_hash": h4,
+                "current_admins_hash": h3,
+                "current_pending_ops_hash": h2,
+                "current_authority_version": 7,
+                "new_admins_hash": h1,
+                "new_mips_root_hash": h2,
+                "new_authority_version": 8,
+            },
+            "with-pending-op-version-bump",
+        ),
+        (
+            {
+                "current_mips_root_hash": h2,
+                "current_admins_hash": h1,
+                "current_pending_ops_hash": EMPTY_LIST_HASH,
+                "current_authority_version": 41,
+                "new_admins_hash": h4,
+                "new_mips_root_hash": h3,
+                "new_authority_version": 42,
+            },
+            "all-distinct-roster-update-fields",
+        ),
+    ):
+        roster_update_binding_cases.append(
+            {
+                "label": label,
+                "input": {
+                    k: (_hex(v) if isinstance(v, (bytes, bytes32)) else v)
+                    for k, v in params.items()
+                },
+                "expected": _hex(compute_roster_update_binding_hash(**params)),
+            }
+        )
+
     # ──────────────────────────────────────────────────────────────────
     # singleton_full_puzzle_hash + compute_launch_outputs (D-2.1).
     # ──────────────────────────────────────────────────────────────────
@@ -310,6 +365,7 @@ def build_fixture() -> dict[str, Any]:
         "admins_hash": admins_cases,
         "pending_ops_hash": pending_cases,
         "inner_puzzle_hash": inner_puzzle_cases,
+        "roster_update_binding_hash": roster_update_binding_cases,
         "singleton_full_puzzle_hash": singleton_full_cases,
         "launch_outputs": launch_cases,
     }
@@ -341,6 +397,7 @@ def main() -> None:
         f"{len(fixture['admins_hash'])} admins cases, "
         f"{len(fixture['pending_ops_hash'])} pending cases, "
         f"{len(fixture['inner_puzzle_hash'])} inner-puzzle cases, "
+        f"{len(fixture['roster_update_binding_hash'])} roster-update binding cases, "
         f"{len(fixture['singleton_full_puzzle_hash'])} singleton-full cases, "
         f"{len(fixture['launch_outputs'])} launch cases"
     )

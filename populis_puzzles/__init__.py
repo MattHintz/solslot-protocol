@@ -50,9 +50,12 @@ PUZZLE_FILENAMES = (
     # SKELETON + OPERATIONAL spend (tag 0x01); KEY_ADD_* / KEY_REMOVE_* land
     # in C.2b/C.2c.
     "admin_authority_v2_inner.clsp",
-    # A.4 — property_registry singleton; append-only on-chain log of
-    # registered property ids, paired with the A.1 mint_proposal singleton.
+    # A.4 — property_registry singleton; uniqueness-enforced on-chain log of
+    # registered property ids.
     "property_registry_inner.clsp",
+    # Pool Economic V2 — governed collection NAV registry.  This is the
+    # on-chain appraisal source used by NAV-based deed swap/redemption quotes.
+    "collection_nav_registry_inner.clsp",
     # A.1 — mint_proposal singleton; per-proposal state machine
     # (DRAFT → APPROVED → CANCELLED) replacing MintProposalStore.
     "mint_proposal_inner.clsp",
@@ -87,6 +90,64 @@ PUZZLE_FILENAMES = (
 # All four A.x puzzles' mod hashes therefore changed; the new values
 # are pinned in the corresponding driver caches and API singletons.py.
 FROZEN_CHECKSUM: Optional[str] = (
+    # 2026-07-02: refrozen for pool_token_tail CAT2 invocation compatibility.
+    #   - pool_token_tail.clsp now accepts the canonical CAT2 TAIL invocation
+    #     shape and unpacks the Populis mint/melt authorization payload from
+    #     tail_solution, while retaining the direct five-field test fixture
+    #     path.  This lets real CAT spends replay the pool-token TAIL.
+    # 2026-07-01: refrozen for fully curried Pool Economic V2 state.
+    #   - pool_singleton_inner.clsp now curries TOTAL_POOL_TOKEN_SUPPLY and
+    #     TREASURY_RESERVE_TOKENS alongside status, NAV/TVL, and deed count.
+    #     Deposit/redeem/swap/redemption/acquisition state recreation hashes
+    #     commit supply/reserve transitions directly instead of trusting
+    #     caller-supplied solution fields.
+    # 2026-07-01: refrozen for Pool Economic V2 reserve acquisition branch.
+    #   - pool_singleton_inner.clsp added POOL_SPEND_V2_RESERVE_ACQUISITION,
+    #     which asserts governed NAV evidence, smart-deed collection/share
+    #     deposit evidence, a fixed seller reserve-payment assertion, optional
+    #     fresh-mint shortfall authorization, and bounded payment fanout.
+    # 2026-07-01: refrozen for Pool Economic V2 specific-deed swap branch.
+    #   - pool_singleton_inner.clsp added POOL_SPEND_V2_SPECIFIC_DEED_SWAP,
+    #     which asserts governed NAV evidence, smart-deed collection/share
+    #     release evidence, CAT settlement payment fanout, 0.3% protocol fee,
+    #     0.7% PGT rewards-root fee, and treasury-reserve principal lockup.
+    # 2026-06-30: refrozen for Pool Economic V2 true-redemption branch.
+    #   - pool_singleton_inner.clsp added POOL_SPEND_V2_TRUE_REDEMPTION,
+    #     which asserts governed NAV evidence, smart-deed collection/share
+    #     metadata, pool-token CAT melt authorization, and recreates the pool
+    #     with NAV/deed-count decremented.
+    # 2026-06-30: refrozen for Pool Economic V2 NAV read evidence.
+    #   - collection_nav_registry_inner.clsp now supports no-op current-version
+    #     read spends that recreate the registry unchanged and emit
+    #     PROTOCOL_PREFIX || sha256tree(NAVE collection nav root version), so
+    #     pool swap/redemption spends can assert governed on-chain NAV evidence.
+    # 2026-06-30: refrozen for Pool Economic V2 smart-deed metadata binding.
+    #   - smart_deed_inner.clsp now curries collection_id_canon and share_ppm
+    #     and includes them in deed deposit/redeem announcements.
+    # 2026-06-30: refrozen for Pool Economic V2 NAV registry introduction.
+    #   - collection_nav_registry_inner.clsp added to PUZZLE_FILENAMES as the
+    #     governed on-chain collection NAV source for deed swap/redemption
+    #     pricing.
+    # 2026-06-29: refrozen for A4 property registry uniqueness hardening.
+    #   - property_registry_inner.clsp now curries REGISTERED_IDS_ROOT and
+    #     requires each registration spend to supply the full current
+    #     registered-id list as a non-membership witness.
+    #   - The recreated singleton carries
+    #     sha256tree((property_id_canon . registered_ids)), so duplicate
+    #     registry entries are consensus-impossible in the A.4 registry.
+    # 2026-06-29: refrozen for governance settlement release-set binding.
+    #   - governance_singleton_inner.clsp SETTLE bills now carry
+    #     deed_releases_hash = sha256tree(deed_releases), and EXECUTE emits the
+    #     pool message over (SETT splitxch_root amount count releases_hash).
+    #   - pool_singleton_inner.clsp settlement spends recompute that hash from
+    #     the provided release list and require the matching governance message,
+    #     so count-only settlement approval can no longer authorize a different
+    #     release set.
+    # 2026-06-29: refrozen for SOR-1 / p2_deed_settlement burn hardening.
+    #   - p2_deed_settlement.clsp no longer curries BURN_INNER_PUZHASH as
+    #     external setup meaning.  The settlement burn destination is now the
+    #     canonical all-zero inner puzzle hash inside the puzzle itself, so
+    #     settlement leaves cannot redefine what "burned deed" means.
     # 2026-06-21: refrozen for the governance vault-version bill (Brick 3.5a).
     #   - governance_singleton_inner.clsp gained the BILL_VAULT_VERSION ('V')
     #     dispatch branch: EXECUTE of a vault-version bill emits the routine-path
@@ -103,7 +164,7 @@ FROZEN_CHECKSUM: Optional[str] = (
     #   - ceb141a: vault_singleton_inner gained the 'm' (migrate) spend case
     #     for the vault upgrade flow (research/POPULIS_VAULT_UPGRADE_DESIGN.md).
     #   - vault_version_registry_inner.clsp added to PUZZLE_FILENAMES.
-    "0936af4f5548ca42367161da72d8bc9a0cdd91f2d426020be5852554f9b280bc"
+    "ae78630b16ca47f8317e73e13110a8265841b61238fabf28233b81e15fe8e554"
 )
 
 # ── Cache ──

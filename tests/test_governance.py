@@ -39,6 +39,7 @@ from populis_puzzles.pgt_driver import (
     bill_settle,
     bill_vault_version,
     cat_pgt_free_puzzle_hash,
+    deed_releases_hash,
     pgt_free_inner_mod,
     pgt_locked_inner_mod,
     proposal_hash_from_bill,
@@ -531,7 +532,13 @@ class TestExecute:
 
     def test_execute_settle_sends_message_to_pool(self):
         """SETTLE EXECUTE: same pattern as FREEZE — mode 0x10, no extra asserts."""
-        bill = bill_settle(bytes32(b"\xab" * 32), 1_000_000, 5)
+        splitxch_root = bytes32(b"\xab" * 32)
+        releases = [
+            (bytes32(b"\x11" * 32), bytes32(b"\x22" * 32)),
+            (bytes32(b"\x33" * 32), bytes32(b"\x44" * 32)),
+        ]
+        releases_hash = deed_releases_hash(releases)
+        bill = bill_settle(splitxch_root, 1_000_000, len(releases), releases_hash)
         curried = _curry_tracker(
             proposal_hash=proposal_hash_from_bill(bill),
             bill_op=bill,
@@ -551,6 +558,14 @@ class TestExecute:
         assert len(sends) == 1
         assert _atom_int(sends[0][1]) == 0x10
         assert len(sends[0]) == 3
+        expected_message = b"\x50" + Program.to([
+            b"SETT",
+            splitxch_root,
+            1_000_000,
+            len(releases),
+            releases_hash,
+        ]).get_tree_hash()
+        assert _atom_bytes(sends[0][2]) == expected_message
         asserts = [c for c in conds if _atom_int(c[0]) == ASSERT_PUZZLE_ANNOUNCEMENT]
         assert len(asserts) == 0
 

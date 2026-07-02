@@ -73,7 +73,9 @@ DEED_SINGLETON_STRUCT = Program.to((SINGLETON_MOD_HASH, (DEED_LAUNCHER_ID, LAUNC
 # Smart deed metadata
 PAR_VALUE = 100000
 ASSET_CLASS = 1
-PROPERTY_ID = b"PROP-001"
+PROPERTY_ID = bytes32(b"\x08" * 32)
+COLLECTION_ID_CANON = bytes32(b"\x09" * 32)
+SHARE_PPM = 1_000_000
 JURISDICTION = b"US-CA"
 ROYALTY_PUZHASH = bytes32(b"\x04" * 32)
 ROYALTY_BPS = 200
@@ -89,7 +91,13 @@ TOKEN_MELT = -1
 
 
 # ── Helper: curry the pool ──
-def curry_pool(pool_status=POOL_ACTIVE, tvl=0, deed_count=0) -> Program:
+def curry_pool(
+    pool_status=POOL_ACTIVE,
+    tvl=0,
+    deed_count=0,
+    total_pool_token_supply=0,
+    treasury_reserve_tokens=0,
+) -> Program:
     return POOL_INNER_MOD.curry(
         POOL_MOD_HASH,
         POOL_SINGLETON_STRUCT,
@@ -102,6 +110,8 @@ def curry_pool(pool_status=POOL_ACTIVE, tvl=0, deed_count=0) -> Program:
         pool_status,
         tvl,
         deed_count,
+        total_pool_token_supply,
+        treasury_reserve_tokens,
     )
 
 
@@ -113,6 +123,8 @@ def curry_deed() -> Program:
         PAR_VALUE,
         ASSET_CLASS,
         PROPERTY_ID,
+        COLLECTION_ID_CANON,
+        SHARE_PPM,
         JURISDICTION,
         ROYALTY_PUZHASH,
         ROYALTY_BPS,
@@ -441,7 +453,12 @@ class TestFullDepositTokenizeRoundTrip:
         assert pool_msg == deed_msg, "Pool↔Deed message mismatch"
 
         # Pool state recreation matches expected new state
-        expected_new_pool = curry_pool(pool_status=POOL_ACTIVE, tvl=PAR_VALUE, deed_count=1)
+        expected_new_pool = curry_pool(
+            pool_status=POOL_ACTIVE,
+            tvl=PAR_VALUE,
+            deed_count=1,
+            total_pool_token_supply=expected_token_amount,
+        )
         assert pool_conds[0][1] == expected_new_pool.get_tree_hash(), "Pool state recreation mismatch"
 
         # Token amount = par_value * FP_SCALE / 1000

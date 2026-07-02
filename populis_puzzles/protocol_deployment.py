@@ -211,6 +211,8 @@ def pool_inner_puzzle(
     pool_status: int = 1,        # ACTIVE
     tvl: int = 0,
     deed_count: int = 0,
+    total_pool_token_supply: int = 0,
+    treasury_reserve_tokens: int = 0,
 ) -> Program:
     """Curry the pool singleton inner puzzle for the given deployment context."""
     mod = _pool_inner_mod()
@@ -227,6 +229,8 @@ def pool_inner_puzzle(
         pool_status,
         tvl,
         deed_count,
+        total_pool_token_supply,
+        treasury_reserve_tokens,
     )
 
 
@@ -285,6 +289,8 @@ class ProtocolDeploymentParams:
     min_proposal_stake: int = DEFAULT_MIN_PROPOSAL_STAKE
     fp_scale: int = DEFAULT_FP_SCALE
     initial_pool_status: int = 1  # 1 = ACTIVE
+    initial_total_pool_token_supply: int = 0
+    initial_treasury_reserve_tokens: int = 0
 
 
 @dataclass
@@ -356,6 +362,8 @@ class ProtocolDeploymentPlan:
             self.did_full_puzhash,
             fp_scale=self.params.fp_scale,
             pool_status=self.params.initial_pool_status,
+            total_pool_token_supply=self.params.initial_total_pool_token_supply,
+            treasury_reserve_tokens=self.params.initial_treasury_reserve_tokens,
         )
         self.pool_inner_puzhash = bytes32(pool_inner.get_tree_hash())
         self.pool_full_puzhash = singleton_full_puzzle_hash(
@@ -551,7 +559,7 @@ def _faucet_parent_spend(
         + bytes(coin.name())
         + faucet.agg_sig_me_data
     )
-    sig = AugSchemeMPL.sign(faucet.key.synthetic_sk, sig_message)
+    sig = AugSchemeMPL.sign(faucet.key.wallet_sk, sig_message)
     return parent_spend, sig
 
 

@@ -39,7 +39,9 @@ TEST_SINGLETON_STRUCT = Program.to((SINGLETON_MOD_HASH, (bytes32(b"\xaa" * 32), 
 PROTOCOL_DID_PUZHASH = bytes32(b"\x03" * 32)
 PAR_VALUE = 100000
 ASSET_CLASS = 1
-PROPERTY_ID = b"PROP-001"
+PROPERTY_ID = bytes32(b"\x08" * 32)
+COLLECTION_ID_CANON = bytes32(b"\x09" * 32)
+SHARE_PPM = 750_000
 JURISDICTION = b"US-CA"
 ROYALTY_PUZHASH = bytes32(b"\x04" * 32)
 ROYALTY_BPS = 200
@@ -64,6 +66,8 @@ def curry_deed() -> Program:
         PAR_VALUE,
         ASSET_CLASS,
         PROPERTY_ID,
+        COLLECTION_ID_CANON,
+        SHARE_PPM,
         JURISDICTION,
         ROYALTY_PUZHASH,
         ROYALTY_BPS,

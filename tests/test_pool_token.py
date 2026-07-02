@@ -6,9 +6,20 @@ Tests verify:
   3. Transfer case returns empty conditions (ungated)
 """
 import pytest
+from chia.consensus.condition_tools import conditions_dict_for_solution
+from chia.types.blockchain_format.coin import Coin
 from chia.types.blockchain_format.program import Program
+from chia.types.condition_opcodes import ConditionOpcode
+from chia.wallet.cat_wallet.cat_utils import (
+    CAT_MOD,
+    SpendableCAT,
+    construct_cat_puzzle,
+    unsigned_spend_bundle_for_spendable_cats,
+)
+from chia.wallet.lineage_proof import LineageProof
 from chia.wallet.puzzles.load_clvm import load_clvm
 from chia_rs.sized_bytes import bytes32
+from chia_rs.sized_ints import uint64
 
 POOL_TOKEN_TAIL_MOD: Program = load_clvm(
     "pool_token_tail.clsp",
@@ -28,6 +39,43 @@ def curry_tail() -> Program:
         POOL_LAUNCHER_ID,
         LAUNCHER_PUZZLE_HASH,
     )
+
+
+def _full_cat_conditions(mint_or_melt: int, token_amount: int, input_amount: int, output_amount: int):
+    tail = curry_tail()
+    inner_puzzle = Program.to(1)
+    inner_puzzle_hash = inner_puzzle.get_tree_hash()
+    cat_puzzle = construct_cat_puzzle(CAT_MOD, tail.get_tree_hash(), inner_puzzle)
+    token_coin = Coin(
+        bytes32(b"\xe1" * 32),
+        cat_puzzle.get_tree_hash(),
+        uint64(input_amount),
+    )
+    pool_inner_puzhash = bytes32(b"\xcc" * 32)
+    pool_coin_id = bytes32(b"\x22" * 32)
+    tail_solution = Program.to(
+        [pool_inner_puzhash, pool_coin_id, token_coin.name(), mint_or_melt, token_amount]
+    )
+    inner_solution = Program.to(
+        [
+            [51, inner_puzzle_hash, output_amount],
+            [51, 0, -113, tail, tail_solution],
+        ]
+    )
+    spendable = SpendableCAT(
+        coin=token_coin,
+        limitations_program_hash=tail.get_tree_hash(),
+        inner_puzzle=inner_puzzle,
+        inner_solution=inner_solution,
+        limitations_solution=tail_solution,
+        lineage_proof=LineageProof(),
+        extra_delta=token_amount if mint_or_melt > 0 else -token_amount,
+        limitations_program_reveal=tail,
+    )
+    bundle = unsigned_spend_bundle_for_spendable_cats(CAT_MOD, [spendable])
+    assert len(bundle.coin_spends) == 1
+    spend = bundle.coin_spends[0]
+    return conditions_dict_for_solution(spend.puzzle_reveal, spend.solution, 11_000_000_000)
 
 
 class TestPoolTokenTailMint:
@@ -85,3 +133,29 @@ class TestPoolTokenTailTransfer:
 
         # Transfer: nil — no restrictions (Chialisp () = b'')
         assert conditions == b""
+
+
+class TestPoolTokenTailCatInvocation:
+    """Verify the TAIL works through Chia's real CAT2 wrapper."""
+
+    def test_mint_replays_inside_cat_wrapper(self):
+        conditions = _full_cat_conditions(
+            mint_or_melt=1,
+            token_amount=100,
+            input_amount=7,
+            output_amount=107,
+        )
+
+        assert ConditionOpcode.ASSERT_MY_COIN_ID in conditions
+        assert ConditionOpcode.ASSERT_PUZZLE_ANNOUNCEMENT in conditions
+
+    def test_melt_replays_inside_cat_wrapper(self):
+        conditions = _full_cat_conditions(
+            mint_or_melt=-1,
+            token_amount=100,
+            input_amount=107,
+            output_amount=7,
+        )
+
+        assert ConditionOpcode.ASSERT_MY_COIN_ID in conditions
+        assert ConditionOpcode.ASSERT_PUZZLE_ANNOUNCEMENT in conditions

@@ -49,6 +49,8 @@ PINNED_V2_MOD_HASH = bytes32.fromhex(
 
 # Sample proposal data.
 PROPERTY_ID_CANON = bytes32(b"\x11" * 32)
+COLLECTION_ID_CANON = bytes32(b"\x12" * 32)
+SHARE_PPM = 750_000
 PAR_VALUE = 100_000
 ROYALTY_BPS = 250
 QUORUM_THRESHOLD = 1_000_000
@@ -227,6 +229,8 @@ def _draft_state(
         gov_member_hash=bytes32(gov_member_hash),
         proposal_data_hash=compute_proposal_data_hash(
             property_id_canon=PROPERTY_ID_CANON,
+            collection_id_canon=COLLECTION_ID_CANON,
+            share_ppm=SHARE_PPM,
             par_value_mojos=PAR_VALUE,
             royalty_bps=ROYALTY_BPS,
             quorum_threshold=QUORUM_THRESHOLD,
@@ -844,10 +848,14 @@ class TestBindingHashReplayProtection:
     def test_binding_hash_unique_per_proposal_data(self):
         prop_a = compute_proposal_data_hash(
             property_id_canon=bytes32(b"\x01" * 32),
+            collection_id_canon=COLLECTION_ID_CANON,
+            share_ppm=SHARE_PPM,
             par_value_mojos=1, royalty_bps=0, quorum_threshold=1,
         )
         prop_b = compute_proposal_data_hash(
             property_id_canon=bytes32(b"\x02" * 32),
+            collection_id_canon=COLLECTION_ID_CANON,
+            share_ppm=SHARE_PPM,
             par_value_mojos=1, royalty_bps=0, quorum_threshold=1,
         )
         a = compute_binding_hash(

@@ -25,9 +25,41 @@ from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Tuple
 
 from chia.types.blockchain_format.program import Program
-from chia.types.blockchain_format.sized_bytes import bytes32
 from chia.types.condition_opcodes import ConditionOpcode
+from chia_rs.sized_bytes import bytes32
 from chia_rs.sized_ints import uint64
+
+from populis_puzzles import load_puzzle
+
+
+CANONICAL_DEED_BURN_INNER_PUZHASH = bytes32(b"\x00" * 32)
+
+
+def p2_deed_settlement_mod() -> Program:
+    return load_puzzle("p2_deed_settlement.clsp")
+
+
+def curry_p2_deed_settlement(
+    *,
+    singleton_mod_hash: bytes32,
+    deed_launcher_id: bytes32,
+    launcher_puzzle_hash: bytes32,
+    seconds_delay: int,
+    delayed_puzzle_hash: bytes32,
+) -> Program:
+    """Return the canonical settlement leaf for one deed.
+
+    The burn destination is intentionally not an argument.  The Chialisp
+    puzzle hardcodes the all-zero inner puzzle hash so settlement leaves cannot
+    redefine what "burned deed" means.
+    """
+    return p2_deed_settlement_mod().curry(
+        singleton_mod_hash,
+        deed_launcher_id,
+        launcher_puzzle_hash,
+        seconds_delay,
+        delayed_puzzle_hash,
+    )
 
 
 # ---------------------------------------------------------------------------

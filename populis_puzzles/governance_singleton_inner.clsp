@@ -41,9 +41,11 @@
 ;;;   VOTING_DEADLINE  — absolute seconds when voting closes
 ;;;
 ;;; Bill operation tuples:
-;;;   (M deed_full_puzhash)                             ; MINT  (tag 'M' = 0x4d)
+;;;   (M deed_full_puzhash property_id_canon property_registry_puzzle_hash)
+;;;                                                       ; MINT  (tag 'M' = 0x4d)
 ;;;   (F new_pool_status)                               ; FREEZE (tag 'F' = 0x46)
-;;;   (S splitxch_root_hash total_amount num_deeds)     ; SETTLE (tag 'S' = 0x53)
+;;;   (S splitxch_root_hash total_amount num_deeds deed_releases_hash)
+;;;                                                       ; SETTLE (tag 'S' = 0x53)
 ;;;
 ;;; Spend cases:
 ;;;   1 — PROPOSE : open a new proposal.  Requires:
@@ -207,6 +209,16 @@
                 (sha256tree (list LOCK_TAG proposal_hash amount deadline))))
     )
 
+    ;; SETTLE bill message body:
+    ;;   sha256tree(SETT splitxch_root total_amount num_deeds deed_releases_hash)
+    (defun-inline settle-message-hash (bill_op)
+        (sha256tree (list POOL_SETT_TAG
+            (f (r bill_op))
+            (f (r (r bill_op)))
+            (f (r (r (r bill_op))))
+            (f (r (r (r (r bill_op)))))))
+    )
+
     ;; ─────────────────────────────────────────────────────────────────────
     ;;  Spend handlers
     ;; ─────────────────────────────────────────────────────────────────────
@@ -331,11 +343,14 @@
                         (concat PROTOCOL_PREFIX
                             (sha256tree (list POOL_GOV_TAG (f (r bill_op)))))))
                 (if (= (f bill_op) BILL_SETTLE)
-                    ;; SETTLE: same pattern as FREEZE.
+                    ;; SETTLE: bind governance approval to the exact release set
+                    ;; hash, not just root/amount/count.  The pool recomputes
+                    ;; sha256tree(deed_releases) locally before receiving this
+                    ;; message.
                     (list
                         (list SEND_MESSAGE 0x10
                             (concat PROTOCOL_PREFIX
-                                (sha256tree (list POOL_SETT_TAG (f (r bill_op)) (f (r (r bill_op))) (f (r (r (r bill_op)))))))))
+                                (settle-message-hash bill_op))))
                     (if (= (f bill_op) BILL_VAULT_VERSION)
                         ;; VAULT_VERSION: ratify a vault_version_registry CODE change.
                         ;; Emit the routine-path approval the registry's
