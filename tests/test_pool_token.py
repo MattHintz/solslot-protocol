@@ -5,6 +5,8 @@ Tests verify:
   2. Melt case requires pool singleton announcement (with protocol prefix)
   3. Transfer case returns empty conditions (ungated)
 """
+import hashlib
+
 import pytest
 from chia.consensus.condition_tools import conditions_dict_for_solution
 from chia.types.blockchain_format.coin import Coin
@@ -52,9 +54,17 @@ def _full_cat_conditions(mint_or_melt: int, token_amount: int, input_amount: int
         uint64(input_amount),
     )
     pool_inner_puzhash = bytes32(b"\xcc" * 32)
+    pool_full_puzhash = bytes32(b"\x44" * 32)
     pool_coin_id = bytes32(b"\x22" * 32)
     tail_solution = Program.to(
-        [pool_inner_puzhash, pool_coin_id, token_coin.name(), mint_or_melt, token_amount]
+        [
+            pool_full_puzhash,
+            pool_inner_puzhash,
+            pool_coin_id,
+            token_coin.name(),
+            mint_or_melt,
+            token_amount,
+        ]
     )
     inner_solution = Program.to(
         [
@@ -83,12 +93,13 @@ class TestPoolTokenTailMint:
 
     def test_mint_returns_conditions(self):
         curried = curry_tail()
+        pool_full_puzhash = bytes32(b"\x44" * 32)
         pool_inner_puzhash = bytes32(b"\xcc" * 32)
         pool_coin_id = bytes32(b"\x22" * 32)
         my_coin_id = bytes32(b"\x33" * 32)
         amount = 100000
 
-        sol = Program.to([pool_inner_puzhash, pool_coin_id, my_coin_id, 1, amount])
+        sol = Program.to([pool_full_puzhash, pool_inner_puzhash, pool_coin_id, my_coin_id, 1, amount])
         result = curried.run(sol)
         conditions = result.as_python()
 
@@ -98,18 +109,43 @@ class TestPoolTokenTailMint:
         assert conditions[0][1] == my_coin_id
         assert conditions[1][0] == bytes([63])  # ASSERT_PUZZLE_ANNOUNCEMENT
 
+    def test_mint_v2_solution_binds_pool_full_puzzle_hash(self):
+        curried = curry_tail()
+        pool_full_puzhash = bytes32(b"\x44" * 32)
+        pool_inner_puzhash = bytes32(b"\xcc" * 32)
+        pool_coin_id = bytes32(b"\x22" * 32)
+        my_coin_id = bytes32(b"\x33" * 32)
+        amount = 100000
+
+        sol = Program.to([
+            pool_full_puzhash,
+            pool_inner_puzhash,
+            pool_coin_id,
+            my_coin_id,
+            1,
+            amount,
+        ])
+        result = curried.run(sol)
+        conditions = result.as_python()
+
+        expected_message = b"P" + Program.to([1, my_coin_id, amount]).get_tree_hash()
+        expected_announcement_id = hashlib.sha256(pool_full_puzhash + expected_message).digest()
+        assert conditions[1][0] == bytes([63])  # ASSERT_PUZZLE_ANNOUNCEMENT
+        assert conditions[1][1] == expected_announcement_id
+
 
 class TestPoolTokenTailMelt:
     """Test melt case (mint_or_melt = -1)."""
 
     def test_melt_returns_conditions(self):
         curried = curry_tail()
+        pool_full_puzhash = bytes32(b"\x44" * 32)
         pool_inner_puzhash = bytes32(b"\xcc" * 32)
         pool_coin_id = bytes32(b"\x22" * 32)
         my_coin_id = bytes32(b"\x33" * 32)
         amount = 50000
 
-        sol = Program.to([pool_inner_puzhash, pool_coin_id, my_coin_id, -1, amount])
+        sol = Program.to([pool_full_puzhash, pool_inner_puzhash, pool_coin_id, my_coin_id, -1, amount])
         result = curried.run(sol)
         conditions = result.as_python()
 
@@ -123,11 +159,12 @@ class TestPoolTokenTailTransfer:
 
     def test_transfer_returns_empty(self):
         curried = curry_tail()
+        pool_full_puzhash = bytes32(b"\x44" * 32)
         pool_inner_puzhash = bytes32(b"\xcc" * 32)
         pool_coin_id = bytes32(b"\x22" * 32)
         my_coin_id = bytes32(b"\x33" * 32)
 
-        sol = Program.to([pool_inner_puzhash, pool_coin_id, my_coin_id, 0, 0])
+        sol = Program.to([pool_full_puzhash, pool_inner_puzhash, pool_coin_id, my_coin_id, 0, 0])
         result = curried.run(sol)
         conditions = result.as_python()
 

@@ -164,7 +164,7 @@ FROZEN_CHECKSUM: Optional[str] = (
     #   - ceb141a: vault_singleton_inner gained the 'm' (migrate) spend case
     #     for the vault upgrade flow (research/POPULIS_VAULT_UPGRADE_DESIGN.md).
     #   - vault_version_registry_inner.clsp added to PUZZLE_FILENAMES.
-    "ae78630b16ca47f8317e73e13110a8265841b61238fabf28233b81e15fe8e554"
+    "bb7cf979ffe57bb0b36b47f59954a8f104b171618e6c4ab1178f30ecb13c5b3c"
 )
 
 # ── Cache ──

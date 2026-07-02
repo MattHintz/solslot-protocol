@@ -282,7 +282,15 @@ class TestPoolTokenAnnouncementMatch:
         tail = curry_tail()
         pool_inner_puzhash = pool_inner.get_tree_hash()
 
-        tail_sol = Program.to([pool_inner_puzhash, pool_id, token_coin_id, TOKEN_MINT, expected_token_amount])
+        pool_full_puzhash = pool_full_puzzle_hash(pool_inner)
+        tail_sol = Program.to([
+            pool_full_puzhash,
+            pool_inner_puzhash,
+            pool_id,
+            token_coin_id,
+            TOKEN_MINT,
+            expected_token_amount,
+        ])
         tail_conditions = tail.run(tail_sol).as_python()
 
         # Token TAIL's ASSERT_PUZZLE_ANNOUNCEMENT (opcode 63) — the full hash is element [1]
@@ -359,19 +367,22 @@ class TestPoolTokenAnnouncementMatch:
 
         # --- Get TAIL's expected announcement hash ---
         tail = curry_tail()
-        tail_sol = Program.to([pool_inner_puzhash, pool_id, token_coin_id, TOKEN_MINT, expected_token_amount])
+        pool_full_puzhash = pool_full_puzzle_hash(pool_inner)
+        tail_sol = Program.to([
+            pool_full_puzhash,
+            pool_inner_puzhash,
+            pool_id,
+            token_coin_id,
+            TOKEN_MINT,
+            expected_token_amount,
+        ])
         tail_conditions = tail.run(tail_sol).as_python()
         tail_assert = extract_condition(tail_conditions, 63)
         tail_expected_hash = bytes32(tail_assert[1])
 
         # --- Compute what the TAIL should expect ---
         # ASSERT_PUZZLE_ANNOUNCEMENT hash = sha256(puzzle_hash || message)
-        # The TAIL computes the pool's full puzzle hash via calculate_full_puzzle_hash:
-        #   curry_hashes(f SINGLETON_STRUCT, sha256tree(SINGLETON_STRUCT), inner_puzzle_hash)
-        # We replicate this with curry_and_treehash using our test dummy constants.
-        quoted_mod = calculate_hash_of_quoted_mod_hash(SINGLETON_MOD_HASH)
-        struct_hash = POOL_SINGLETON_STRUCT.get_tree_hash()
-        pool_full_ph = curry_and_treehash(quoted_mod, struct_hash, pool_inner_puzhash)
+        pool_full_ph = pool_full_puzzle_hash(pool_inner)
 
         # The expected announcement hash
         computed_hash = bytes32(hashlib.sha256(bytes(pool_full_ph) + pool_announce_content).digest())
@@ -420,7 +431,14 @@ class TestFullDepositTokenizeRoundTrip:
         deed_conds = deed_inner.run(deed_sol).as_python()
 
         # --- 3. Run token TAIL (mint) ---
-        tail_sol = Program.to([pool_inner_puzhash, pool_id, token_coin_id, TOKEN_MINT, expected_token_amount])
+        tail_sol = Program.to([
+            pool_full_puzzle_hash(pool_inner),
+            pool_inner_puzhash,
+            pool_id,
+            token_coin_id,
+            TOKEN_MINT,
+            expected_token_amount,
+        ])
         tail_conds = tail.run(tail_sol).as_python()
 
         # --- Verify pool produced expected conditions ---

@@ -565,6 +565,7 @@ class TestPhase5Deposit:
 
         # Token TAIL
         tail_sol = Program.to([
+            full_puzzle_hash(POOL_SINGLETON_STRUCT, self.pool_inner),
             self.pool_inner_ph, POOL_COIN_ID, TOKEN_COIN_ID,
             TOKEN_MINT, self.expected_token_amount,
         ])
@@ -572,9 +573,7 @@ class TestPhase5Deposit:
         tail_assert = extract_cond(tail_conds, 63)  # ASSERT_PUZZLE_ANNOUNCEMENT
 
         # Compute expected full hash: sha256(pool_full_ph || announcement_content)
-        quoted_mod = calculate_hash_of_quoted_mod_hash(SINGLETON_MOD_HASH)
-        struct_hash = POOL_SINGLETON_STRUCT.get_tree_hash()
-        pool_full_ph = curry_and_treehash(quoted_mod, struct_hash, self.pool_inner_ph)
+        pool_full_ph = full_puzzle_hash(POOL_SINGLETON_STRUCT, self.pool_inner)
 
         computed_hash = bytes32(
             hashlib.sha256(bytes(pool_full_ph) + pool_announce_content).digest()
@@ -753,15 +752,14 @@ class TestPhase6Redeem:
 
         # Token TAIL assertion
         tail_sol = Program.to([
+            full_puzzle_hash(POOL_SINGLETON_STRUCT, self.pool_inner),
             self.pool_inner_ph, POOL_COIN_ID, TOKEN_COIN_ID,
             TOKEN_MELT, self.expected_token_amount,
         ])
         tail_conds = self.tail.run(tail_sol).as_python()
         tail_assert = extract_cond(tail_conds, 63)
 
-        quoted_mod = calculate_hash_of_quoted_mod_hash(SINGLETON_MOD_HASH)
-        struct_hash = POOL_SINGLETON_STRUCT.get_tree_hash()
-        pool_full_ph = curry_and_treehash(quoted_mod, struct_hash, self.pool_inner_ph)
+        pool_full_ph = full_puzzle_hash(POOL_SINGLETON_STRUCT, self.pool_inner)
         computed_hash = bytes32(
             hashlib.sha256(bytes(pool_full_ph) + pool_announce_content).digest()
         )

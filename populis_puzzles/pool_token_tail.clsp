@@ -10,7 +10,8 @@
 ;;;   POOL_LAUNCHER_ID — pool singleton launcher id
 ;;;   POOL_LAUNCHER_PUZZLE_HASH — launcher puzzle hash
 ;;;
-;;; Direct test/development solution:
+;;; Direct/CAT V2 solution:
+;;;   pool_full_puzzle_hash — current pool singleton full puzzle hash
 ;;;   pool_inner_puzzle_hash — current pool inner puzzle hash
 ;;;   pool_coin_id — pool singleton coin id (for anti-ephemeral)
 ;;;   my_coin_id — this token's coin id
@@ -20,7 +21,7 @@
 ;;; CAT2 invocation solution:
 ;;;   Truths parent_is_cat lineage_proof delta inner_conditions tail_solution
 ;;;
-;;; where tail_solution is the direct five-field Populis payload above.
+;;; where tail_solution is the direct V2 Populis payload above.
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (mod
@@ -42,13 +43,13 @@
     (include utils.clib)
     (include utility_macros.clib)
 
-    (defun run-pool-token-tail (pool_inner_puzzle_hash pool_coin_id my_coin_id mint_or_melt amount)
+    (defun run-pool-token-tail (pool_full_puzzle_hash pool_coin_id my_coin_id mint_or_melt amount)
         ;; Transfers (mint_or_melt = 0) are always allowed — ungated CAT.
         ;; Mints (1) and melts (-1) require pool singleton co-spend announcement.
         (if mint_or_melt
             ;; Mint or melt: require pool singleton puzzle announcement
             (assert
-                (is-size-b32 pool_inner_puzzle_hash)
+                (is-size-b32 pool_full_puzzle_hash)
                 (is-size-b32 pool_coin_id)
                 (is-size-b32 my_coin_id)
                 (is-uint64 amount)
@@ -56,9 +57,7 @@
                     (list ASSERT_MY_COIN_ID my_coin_id)
                     (list ASSERT_PUZZLE_ANNOUNCEMENT
                         (sha256
-                            (calculate_full_puzzle_hash
-                                (c POOL_SINGLETON_MOD_HASH (c POOL_LAUNCHER_ID POOL_LAUNCHER_PUZZLE_HASH))
-                                pool_inner_puzzle_hash)
+                            pool_full_puzzle_hash
                             (concat PROTOCOL_PREFIX (sha256tree (list mint_or_melt my_coin_id amount)))))
                 )
             )
@@ -68,16 +67,15 @@
     )
 
     ;; In live CAT2 spends, arg0 is Truths (a pair) and arg5 carries the
-    ;; Populis-specific tail_solution.  Existing direct unit tests pass the
-    ;; five Populis fields as arg0..arg4.
+    ;; Populis-specific tail_solution.
     (if (l arg0)
         (run-pool-token-tail
             (f arg5)
-            (f (r arg5))
+            (f (r (r arg5)))
             (my_id_cat_truth arg0)
-            (f (r (r (r arg5))))
             (f (r (r (r (r arg5)))))
+            (f (r (r (r (r (r arg5))))))
         )
-        (run-pool-token-tail arg0 arg1 arg2 arg3 arg4)
+        (run-pool-token-tail arg0 arg2 arg3 arg4 arg5)
     )
 )
