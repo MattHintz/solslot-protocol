@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from chia.types.blockchain_format.program import Program
 from chia_rs.sized_bytes import bytes32
 
-from populis_puzzles.collection_nav_registry_driver import compute_nav_evidence_message
+from solslot_puzzles.collection_nav_registry_driver import compute_nav_evidence_message
 
 
 SHARE_PPM_DENOMINATOR = 1_000_000
@@ -298,6 +298,8 @@ def quote_reserve_acquisition(
     if seller_token_price <= 0:
         raise ValueError("seller_token_price must be positive")
     nav = deed_nav_mojos(collection_nav_mojos, share_ppm)
+    if seller_token_price > nav:
+        raise ValueError("seller_token_price cannot exceed deed NAV")
     reserve_paid = min(state.treasury_reserve_tokens, seller_token_price)
     fresh_mint = seller_token_price - reserve_paid
     return ReserveAcquisitionQuote(

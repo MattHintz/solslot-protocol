@@ -43,13 +43,33 @@
     (include utils.clib)
     (include utility_macros.clib)
 
-    (defun run-pool-token-tail (pool_full_puzzle_hash pool_coin_id my_coin_id mint_or_melt amount)
+    (defun-inline expected_pool_full_puzzle_hash
+        (POOL_SINGLETON_MOD_HASH POOL_LAUNCHER_ID POOL_LAUNCHER_PUZZLE_HASH pool_inner_puzzle_hash)
+        (calculate_full_puzzle_hash
+            (c POOL_SINGLETON_MOD_HASH (c POOL_LAUNCHER_ID POOL_LAUNCHER_PUZZLE_HASH))
+            pool_inner_puzzle_hash)
+    )
+
+    (defun-inline token_authorization_message (mint_or_melt my_coin_id amount)
+        (concat PROTOCOL_PREFIX (sha256tree (list mint_or_melt my_coin_id amount)))
+    )
+
+    (defun run-pool-token-tail
+        (POOL_SINGLETON_MOD_HASH POOL_LAUNCHER_ID POOL_LAUNCHER_PUZZLE_HASH
+         pool_full_puzzle_hash pool_inner_puzzle_hash pool_coin_id my_coin_id mint_or_melt amount)
         ;; Transfers (mint_or_melt = 0) are always allowed — ungated CAT.
-        ;; Mints (1) and melts (-1) require pool singleton co-spend announcement.
+        ;; Mints (1) and melts (-1) require both a pool singleton puzzle
+        ;; announcement and a same-coin announcement from the pool coin.
         (if mint_or_melt
-            ;; Mint or melt: require pool singleton puzzle announcement
             (assert
                 (is-size-b32 pool_full_puzzle_hash)
+                (is-size-b32 pool_inner_puzzle_hash)
+                (= pool_full_puzzle_hash
+                    (expected_pool_full_puzzle_hash
+                        POOL_SINGLETON_MOD_HASH
+                        POOL_LAUNCHER_ID
+                        POOL_LAUNCHER_PUZZLE_HASH
+                        pool_inner_puzzle_hash))
                 (is-size-b32 pool_coin_id)
                 (is-size-b32 my_coin_id)
                 (is-uint64 amount)
@@ -58,7 +78,11 @@
                     (list ASSERT_PUZZLE_ANNOUNCEMENT
                         (sha256
                             pool_full_puzzle_hash
-                            (concat PROTOCOL_PREFIX (sha256tree (list mint_or_melt my_coin_id amount)))))
+                            (token_authorization_message mint_or_melt my_coin_id amount)))
+                    (list ASSERT_COIN_ANNOUNCEMENT
+                        (sha256
+                            pool_coin_id
+                            (token_authorization_message mint_or_melt my_coin_id amount)))
                 )
             )
             ;; Transfer: no conditions — always allowed
@@ -70,12 +94,20 @@
     ;; Populis-specific tail_solution.
     (if (l arg0)
         (run-pool-token-tail
+            POOL_SINGLETON_MOD_HASH
+            POOL_LAUNCHER_ID
+            POOL_LAUNCHER_PUZZLE_HASH
             (f arg5)
+            (f (r arg5))
             (f (r (r arg5)))
             (my_id_cat_truth arg0)
             (f (r (r (r (r arg5)))))
             (f (r (r (r (r (r arg5))))))
         )
-        (run-pool-token-tail arg0 arg2 arg3 arg4 arg5)
+        (run-pool-token-tail
+            POOL_SINGLETON_MOD_HASH
+            POOL_LAUNCHER_ID
+            POOL_LAUNCHER_PUZZLE_HASH
+            arg0 arg1 arg2 arg3 arg4 arg5)
     )
 )

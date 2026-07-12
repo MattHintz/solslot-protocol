@@ -1,7 +1,7 @@
 """Generate the fixture for the portal's TS PGT VOTE spend builder (Phase 3b).
 
 The TS service ``pgt-vote-spend-builder.service.ts`` reproduces the canonical
-PGT lock + tracker VOTE CoinSpend builders from ``populis_puzzles.pgt_driver``
+PGT lock + tracker VOTE CoinSpend builders from ``solslot_puzzles.pgt_driver``
 so the portal can assemble a signed VOTE bundle entirely client-side and POST
 it to the populis_api ``/admin/committee/vote`` endpoint.
 
@@ -41,7 +41,7 @@ from chia.wallet.puzzles.singleton_top_layer_v1_1 import (
 from chia_rs.sized_bytes import bytes32
 from chia_rs.sized_ints import uint64
 
-from populis_puzzles.pgt_driver import (
+from solslot_puzzles.pgt_driver import (
     bill_mint,
     build_pgt_lock_coin_spend,
     build_tracker_vote_coin_spend,

@@ -3,7 +3,7 @@
 .. deprecated:: Phase 9-Hermes-D
 
     This V1 driver is superseded by
-    :mod:`populis_puzzles.mint_proposal_v2_driver`, which targets the
+    :mod:`solslot_puzzles.mint_proposal_v2_driver`, which targets the
     MIPS-pluggable :file:`mint_proposal_inner_v2.clsp`.  V2 replaces
     V1's hard-coded BLS ``OWNER_PUBKEY`` / ``GOV_PUBKEY`` with
     CHIP-0043 member tree hashes so a single deployment can mix BLS,
@@ -17,7 +17,7 @@
     coin coordination link with ``governance_singleton_inner.clsp``
     — uses V2 exclusively.
 
-    V1 remains in :data:`populis_puzzles.PUZZLE_FILENAMES` to avoid a
+    V1 remains in :data:`solslot_puzzles.PUZZLE_FILENAMES` to avoid a
     frozen-checksum bump in this brick; a future "V1 mint-proposal
     retirement" brick will remove it atomically with a checksum
     refreeze.
@@ -57,11 +57,11 @@ from dataclasses import dataclass
 from chia.types.blockchain_format.program import Program
 from chia_rs.sized_bytes import bytes32
 
-from populis_puzzles import load_puzzle
+from solslot_puzzles import load_puzzle
 
 warnings.warn(
-    "populis_puzzles.mint_proposal_driver (V1) is deprecated; use "
-    "populis_puzzles.mint_proposal_v2_driver instead. See the module "
+    "solslot_puzzles.mint_proposal_driver (V1) is deprecated; use "
+    "solslot_puzzles.mint_proposal_v2_driver instead. See the module "
     "docstring for migration notes.",
     DeprecationWarning,
     stacklevel=2,

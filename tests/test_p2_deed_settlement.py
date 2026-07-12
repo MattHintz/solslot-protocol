@@ -11,7 +11,7 @@ from chia.wallet.puzzles.singleton_top_layer_v1_1 import (
 )
 from chia_rs.sized_bytes import bytes32
 
-from populis_puzzles.settlement_splitxch import (
+from solslot_puzzles.settlement_splitxch import (
     CANONICAL_DEED_BURN_INNER_PUZHASH,
     compute_settlement_targets,
     curry_p2_deed_settlement,

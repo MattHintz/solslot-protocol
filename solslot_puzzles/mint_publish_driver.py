@@ -73,13 +73,13 @@ from chia.wallet.util.curry_and_treehash import (
 from chia_rs.sized_bytes import bytes32
 from chia_rs.sized_ints import uint64
 
-from populis_puzzles import load_puzzle
-from populis_puzzles.mint_proposal_v2_driver import (
+from solslot_puzzles import load_puzzle
+from solslot_puzzles.mint_proposal_v2_driver import (
     STATE_DRAFT,
     compute_proposal_data_hash,
     make_inner_puzzle_hash,
 )
-from populis_puzzles.pgt_driver import (
+from solslot_puzzles.pgt_driver import (
     TRK_PROPOSE,
     build_pgt_lock_coin_spend,
 )

@@ -1,4 +1,4 @@
-"""Tests for :mod:`populis_puzzles.mint_publish_driver` (Phase 4a).
+"""Tests for :mod:`solslot_puzzles.mint_publish_driver` (Phase 4a).
 
 Coverage strategy:
 
@@ -49,12 +49,12 @@ from chia.wallet.puzzles.singleton_top_layer_v1_1 import (
 )
 from chia_rs.sized_bytes import bytes32
 
-from populis_puzzles.mint_proposal_v2_driver import (
+from solslot_puzzles.mint_proposal_v2_driver import (
     STATE_DRAFT,
     compute_proposal_data_hash,
     make_inner_puzzle_hash,
 )
-from populis_puzzles.mint_publish_driver import (
+from solslot_puzzles.mint_publish_driver import (
     BILL_MINT_TAG,
     SINGLETON_AMOUNT,
     MintPublishArtifacts,
@@ -911,7 +911,7 @@ class TestBuildProposalEveLaunchSpend:
 
     def _eve_inner(self) -> Program:
         """Build the V2 mint-proposal inner curried for DRAFT eve state."""
-        from populis_puzzles.mint_proposal_v2_driver import make_inner_puzzle
+        from solslot_puzzles.mint_proposal_v2_driver import make_inner_puzzle
 
         pdh = compute_proposal_data_hash(
             property_id_canon=PROPERTY_ID,
@@ -1016,7 +1016,7 @@ class TestBuildTrackerProposeCoinSpend:
 
     def _idle_tracker_inner(self) -> Program:
         """Build an idle (no-active-proposal) tracker inner puzzle."""
-        from populis_puzzles.pgt_driver import (
+        from solslot_puzzles.pgt_driver import (
             pgt_free_inner_mod,
             pgt_locked_inner_mod,
             proposal_tracker_inner_puzzle,
@@ -1118,7 +1118,7 @@ class TestBuildTrackerProposeCoinSpend:
         items = list(inner_sol.as_iter())
         # (my_id my_inner_puzzlehash my_amount TRK_PROPOSE params)
         assert len(items) == 5
-        from populis_puzzles.pgt_driver import TRK_PROPOSE
+        from solslot_puzzles.pgt_driver import TRK_PROPOSE
 
         assert int.from_bytes(items[3].atom or b"\x00", "big") == TRK_PROPOSE
         # params = (proposal_hash bill_op voter_inner_puzhash first_vote deadline)
@@ -1256,7 +1256,7 @@ class TestBuildPgtFirstVoteCoinSpend:
     _AMOUNT = 10_000
 
     def _common_args(self) -> dict:
-        from populis_puzzles.pgt_driver import (
+        from solslot_puzzles.pgt_driver import (
             cat_pgt_free_puzzle_hash,
             pgt_free_inner_mod,
             pgt_locked_inner_hash,
@@ -1321,7 +1321,7 @@ class TestBuildPgtFirstVoteCoinSpend:
         }
 
     def test_equals_underlying_pgt_lock_spend(self):
-        from populis_puzzles.pgt_driver import build_pgt_lock_coin_spend
+        from solslot_puzzles.pgt_driver import build_pgt_lock_coin_spend
 
         common = self._common_args()
         deadline = 2_000_000_000

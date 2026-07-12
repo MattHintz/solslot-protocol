@@ -31,7 +31,7 @@ from chia.wallet.puzzles.singleton_top_layer_v1_1 import (
 )
 from chia_rs.sized_bytes import bytes32
 
-from populis_puzzles.admin_authority_v2_driver import (
+from solslot_puzzles.admin_authority_v2_driver import (
     DEFAULT_COOLDOWN_BLOCKS,
     DEFAULT_MAX_ADMINS,
     DEFAULT_MAX_KEYS_PER_ADMIN,

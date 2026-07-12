@@ -1,4 +1,4 @@
-"""Tests for ``populis_puzzles.eip712_helpers``.
+"""Tests for ``solslot_puzzles.eip712_helpers``.
 
 These pin the new module's outputs to the existing inline test
 helpers in ``test_admin_authority_v2.py`` (which were promoted to
@@ -13,7 +13,7 @@ from __future__ import annotations
 import pytest
 from chia_rs.sized_bytes import bytes32
 
-from populis_puzzles.eip712_helpers import (
+from solslot_puzzles.eip712_helpers import (
     MAINNET_GENESIS_CHALLENGE,
     TESTNET11_GENESIS_CHALLENGE,
     compute_eip712_member_leaf_hash,
@@ -231,7 +231,7 @@ class TestComputeLeafHash:
         )
         from chia.types.blockchain_format.program import Program
 
-        from populis_puzzles.eip712_helpers import (
+        from solslot_puzzles.eip712_helpers import (
             _eip712_member_mod_hash,
             eip712_type_hash,
         )

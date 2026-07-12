@@ -7,7 +7,7 @@ conditions) whose leaves are p2_deed_settlement coins — one per deed,
 each holding an equal share.
 
 Usage (simulation / driver):
-    from populis_puzzles.settlement_splitxch import (
+    from solslot_puzzles.settlement_splitxch import (
         compute_settlement_targets,
         build_splitxch_tree,
     )
@@ -29,7 +29,7 @@ from chia.types.condition_opcodes import ConditionOpcode
 from chia_rs.sized_bytes import bytes32
 from chia_rs.sized_ints import uint64
 
-from populis_puzzles import load_puzzle
+from solslot_puzzles import load_puzzle
 
 
 CANONICAL_DEED_BURN_INNER_PUZHASH = bytes32(b"\x00" * 32)

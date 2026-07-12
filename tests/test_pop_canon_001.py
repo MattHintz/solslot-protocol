@@ -44,7 +44,7 @@ from clvm.SExp import SExp
 from chia_puzzles_py.programs import P2_CONDITIONS  # not used; placeholder import safety
 from chia.types.blockchain_format.program import Program
 
-from populis_puzzles.pgt_driver import (
+from solslot_puzzles.pgt_driver import (
     PGT_TRANSFER,
     PGT_LOCK,
     pgt_free_inner_puzzle,

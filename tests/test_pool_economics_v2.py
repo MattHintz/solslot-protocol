@@ -4,8 +4,8 @@ import pytest
 from chia.types.blockchain_format.program import Program
 from chia_rs.sized_bytes import bytes32
 
-from populis_puzzles.collection_nav_registry_driver import compute_nav_evidence_message
-from populis_puzzles.pool_economics_v2 import (
+from solslot_puzzles.collection_nav_registry_driver import compute_nav_evidence_message
+from solslot_puzzles.pool_economics_v2 import (
     DEED_SPEND_POOL_DEPOSIT,
     DEED_SPEND_POOL_REDEEM,
     MAX_POOL_V2_TOKEN_OUTPUTS,
@@ -122,15 +122,31 @@ def test_reserve_acquisition_uses_reserve_before_fresh_mint():
         state,
         collection_nav_mojos=400_000_000,
         share_ppm=500_000,
-        seller_token_price=250_000_000,
+        seller_token_price=200_000_000,
     )
     assert quote.deed_nav_mojos == 200_000_000
     assert quote.reserve_tokens_paid == 200_000_000
-    assert quote.fresh_tokens_to_mint == 50_000_000
+    assert quote.fresh_tokens_to_mint == 0
     assert quote.next_total_nav_locked_mojos == 1_200_000_000
     assert quote.next_deed_count == 11
-    assert quote.next_total_pool_token_supply == 850_000_000
+    assert quote.next_total_pool_token_supply == 800_000_000
     assert quote.next_treasury_reserve_tokens == 0
+
+
+def test_reserve_acquisition_rejects_seller_price_above_deed_nav():
+    state = PoolEconomicState(
+        total_nav_locked_mojos=1_000_000_000,
+        deed_count=10,
+        total_pool_token_supply=800_000_000,
+        treasury_reserve_tokens=200_000_000,
+    )
+    with pytest.raises(ValueError, match="cannot exceed deed NAV"):
+        quote_reserve_acquisition(
+            state,
+            collection_nav_mojos=400_000_000,
+            share_ppm=500_000,
+            seller_token_price=200_000_001,
+        )
 
 
 def test_nav_evidence_message_is_registry_driver_compatible():
@@ -317,7 +333,6 @@ def test_reserve_acquisition_spec_uses_reserve_then_mints_shortfall():
     property_id = b32(0xA2)
     collection_id = b32(0xA1)
     seller = b32(0xB1)
-    mint_token_coin_id = b32(0xE1)
 
     spec = build_reserve_acquisition_spec(
         state,
@@ -336,27 +351,21 @@ def test_reserve_acquisition_spec_uses_reserve_then_mints_shortfall():
             registry_version=7,
         ),
         seller_puzhash=seller,
-        seller_token_price=250_000_000,
-        mint_token_coin_id=mint_token_coin_id,
+        seller_token_price=200_000_000,
     )
 
     assert spec.quote.reserve_tokens_paid == 200_000_000
-    assert spec.quote.fresh_tokens_to_mint == 50_000_000
+    assert spec.quote.fresh_tokens_to_mint == 0
     assert spec.next_state == PoolEconomicState(
         total_nav_locked_mojos=1_200_000_000,
         deed_count=11,
-        total_pool_token_supply=850_000_000,
+        total_pool_token_supply=800_000_000,
         treasury_reserve_tokens=0,
     )
     assert [(o.role, o.amount, o.puzzle_hash) for o in spec.token_outputs] == [
         ("seller_reserve_payment", 200_000_000, seller),
     ]
-    assert len(spec.token_authorizations) == 1
-    assert spec.token_authorizations[0].announcement_message == token_authorization_message(
-        TOKEN_MINT,
-        mint_token_coin_id,
-        50_000_000,
-    )
+    assert spec.token_authorizations == ()
     assert spec.deed_message == deed_pool_deposit_message(
         deed_id,
         123_000,
@@ -393,7 +402,7 @@ def test_reserve_acquisition_requires_mint_coin_for_fresh_shortfall():
                 registry_version=7,
             ),
             seller_puzhash=b32(0xB1),
-            seller_token_price=250_000_000,
+            seller_token_price=200_000_000,
         )
 
 

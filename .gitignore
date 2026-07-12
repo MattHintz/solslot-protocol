@@ -32,3 +32,5 @@ Thumbs.db
 
 # Docs — internal design docs excluded from public repo for now
 docs/*.md
+!docs/POOL_ECONOMIC_V2_AUDIT_HANDOFF_2026_07_05.md
+!docs/TESTNET_GENESIS_CEREMONY_RUNBOOK_2026_07_06.md

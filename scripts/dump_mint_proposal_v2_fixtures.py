@@ -22,7 +22,7 @@ from typing import Any
 
 from chia_rs.sized_bytes import bytes32
 
-from populis_puzzles.mint_proposal_v2_driver import (
+from solslot_puzzles.mint_proposal_v2_driver import (
     STATE_APPROVED,
     STATE_CANCELLED,
     STATE_DRAFT,

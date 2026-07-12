@@ -15,7 +15,7 @@ clients (the Populis API, the launch wizard) can:
     that lives in an admin record's ``leaves`` tuple and gets folded
     into the on-chain ``ADMINS_HASH``.
 
-Why these live in ``populis_puzzles`` rather than at API or portal
+Why these live in ``solslot_puzzles`` rather than at API or portal
 level: the leaf hash is an on-chain commitment, so the canonical
 computation must come from the same place that knows the puzzle
 bytecode.  The API + portal both depend on this module so they
@@ -154,7 +154,7 @@ _EIP712_MEMBER_PUZZLE_CACHE: Optional[Program] = None
 def _eip712_member_puzzle() -> Program:
     """Load + cache the ``eip712_member.clsp`` puzzle program.
 
-    Sourced from ``populis_puzzles.test_fixture_eip712_member.clsp``
+    Sourced from ``solslot_puzzles.test_fixture_eip712_member.clsp``
     which is a verbatim copy of the upstream chia-wallet-sdk PR #395
     puzzle (see populis_protocol's test suite for the cross-check that
     asserts byte-for-byte equality with the upstream).
@@ -171,7 +171,7 @@ def _eip712_member_puzzle() -> Program:
 
         _EIP712_MEMBER_PUZZLE_CACHE = load_clvm(
             "test_fixture_eip712_member.clsp",
-            package_or_requirement="populis_puzzles",
+            package_or_requirement="solslot_puzzles",
             recompile=True,
         )
     return _EIP712_MEMBER_PUZZLE_CACHE

@@ -6,7 +6,7 @@ import pytest
 from chia.types.blockchain_format.program import Program
 from chia_rs.sized_bytes import bytes32
 
-from populis_puzzles.zkpassport_attestation import (
+from solslot_puzzles.zkpassport_attestation import (
     ZKPASSPORT_ATTEST_DOMAIN,
     ZKPASSPORT_EMPTY_ATTEST_ROOT,
     ZKPASSPORT_POLICY_VERSION,

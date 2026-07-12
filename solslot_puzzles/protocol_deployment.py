@@ -64,7 +64,7 @@ from chia_rs import AugSchemeMPL, SpendBundle
 from chia_rs.sized_bytes import bytes32
 from chia_rs.sized_ints import uint64
 
-from populis_puzzles.pgt_driver import (
+from solslot_puzzles.pgt_driver import (
     SINGLETON_LAUNCHER_HASH as PGT_SINGLETON_LAUNCHER_HASH,
     pgt_free_inner_mod,
     pgt_locked_inner_mod,
@@ -73,6 +73,7 @@ from populis_puzzles.pgt_driver import (
     proposal_tracker_inner_puzzle,
     proposal_tracker_mod,
 )
+from solslot_puzzles.collection_nav_registry_driver import collection_nav_registry_inner_mod_hash
 
 
 # Sanity: the launcher hash constant must be identical across modules.
@@ -87,7 +88,20 @@ DEFAULT_VOTING_WINDOW_SECONDS = 300    # 5 min
 DEFAULT_PGT_TOTAL_SUPPLY = 1_000_000   # fixed 1M PGT
 DEFAULT_MIN_PROPOSAL_STAKE = 10_000    # 1% of supply, anti-spam
 DEFAULT_FP_SCALE = 1000                # pool token-to-par exchange rate scale
+DEFAULT_MIN_NAV_REGISTRY_VERSION = 0   # deployment-governed NAV freshness floor
 SINGLETON_AMOUNT = uint64(1)
+DEFAULT_EMPTY_B32 = bytes32(b"\x00" * 32)
+DEFAULT_EMPTY_GOV_PUBKEY = b"\x00" * 48
+
+
+def _reject_empty_b32(value: bytes32, name: str) -> None:
+    if value == DEFAULT_EMPTY_B32:
+        raise ValueError(f"{name} must be configured before deployment")
+
+
+def _reject_empty_gov_pubkey(value: bytes, name: str) -> None:
+    if value == DEFAULT_EMPTY_GOV_PUBKEY:
+        raise ValueError(f"{name} must be configured before deployment")
 
 
 # ─── Lazy-loaded compiled puzzles ───────────────────────────────────────────
@@ -101,7 +115,7 @@ def _pool_inner_mod() -> Program:
     if _POOL_INNER_MOD is None:
         _POOL_INNER_MOD = load_clvm(
             "pool_singleton_inner.clsp",
-            package_or_requirement="populis_puzzles",
+            package_or_requirement="solslot_puzzles",
             recompile=True,
         )
     return _POOL_INNER_MOD
@@ -112,7 +126,7 @@ def _pool_token_tail_mod() -> Program:
     if _POOL_TOKEN_TAIL_MOD is None:
         _POOL_TOKEN_TAIL_MOD = load_clvm(
             "pool_token_tail.clsp",
-            package_or_requirement="populis_puzzles",
+            package_or_requirement="solslot_puzzles",
             recompile=True,
         )
     return _POOL_TOKEN_TAIL_MOD
@@ -123,7 +137,7 @@ def _quorum_did_mod() -> Program:
     if _QUORUM_DID_MOD is None:
         _QUORUM_DID_MOD = load_clvm(
             "quorum_did_inner.clsp",
-            package_or_requirement="populis_puzzles",
+            package_or_requirement="solslot_puzzles",
             recompile=True,
         )
     return _QUORUM_DID_MOD
@@ -131,7 +145,7 @@ def _quorum_did_mod() -> Program:
 
 def _p2_vault_mod_hash() -> bytes32:
     p2_vault = load_clvm(
-        "p2_vault.clsp", package_or_requirement="populis_puzzles", recompile=True
+        "p2_vault.clsp", package_or_requirement="solslot_puzzles", recompile=True
     )
     return bytes32(p2_vault.get_tree_hash())
 
@@ -158,36 +172,11 @@ def singleton_struct(launcher_id: bytes32) -> Program:
 
 def singleton_full_puzzle_hash(launcher_id: bytes32, inner_puzzle_hash: bytes32) -> bytes32:
     """Compute the singleton's full puzzle hash given its launcher id + inner ph."""
-    quoted_mod = calculate_hash_of_quoted_mod_hash(SINGLETON_MOD_HASH)
-
-    def _quoted_atom_hash(value: bytes) -> bytes32:
-        # tree_hash of (q . value) for an atom
-        import hashlib
-        return bytes32(
-            hashlib.sha256(
-                b"\x02"
-                + hashlib.sha256(b"\x01\x01").digest()
-                + hashlib.sha256(b"\x01" + value).digest()
-            ).digest()
-        )
-
-    def _quoted_program_hash(tree_hash: bytes32) -> bytes32:
-        # tree_hash of (q . prog) given prog's tree hash
-        import hashlib
-        return bytes32(
-            hashlib.sha256(
-                b"\x02"
-                + hashlib.sha256(b"\x01\x01").digest()
-                + tree_hash
-            ).digest()
-        )
-
-    struct_hash = bytes32(singleton_struct(launcher_id).get_tree_hash())
     return bytes32(
         curry_and_treehash(
-            quoted_mod,
-            _quoted_program_hash(struct_hash),
-            _quoted_program_hash(inner_puzzle_hash),
+            calculate_hash_of_quoted_mod_hash(SINGLETON_MOD_HASH),
+            bytes32(singleton_struct(launcher_id).get_tree_hash()),
+            inner_puzzle_hash,
         )
     )
 
@@ -207,6 +196,14 @@ def pool_inner_puzzle(
     pool_launcher_id: bytes32,
     protocol_did_full_puzhash: bytes32,
     *,
+    nav_registry_mod_hash: bytes32 | None = None,
+    nav_registry_gov_pubkey: bytes | None = None,
+    nav_registry_launcher_id: bytes32 = DEFAULT_EMPTY_B32,
+    min_nav_registry_version: int = DEFAULT_MIN_NAV_REGISTRY_VERSION,
+    trusted_treasury_reserve_puzhash: bytes32 | None = None,
+    trusted_protocol_treasury_puzhash: bytes32 | None = None,
+    trusted_governance_rewards_puzhash: bytes32 | None = None,
+    trusted_governance_rewards_root: bytes32 = DEFAULT_EMPTY_B32,
     fp_scale: int = DEFAULT_FP_SCALE,
     pool_status: int = 1,        # ACTIVE
     tvl: int = 0,
@@ -217,6 +214,15 @@ def pool_inner_puzzle(
     """Curry the pool singleton inner puzzle for the given deployment context."""
     mod = _pool_inner_mod()
     mod_hash = mod.get_tree_hash()
+    nav_registry_mod_hash = nav_registry_mod_hash or collection_nav_registry_inner_mod_hash()
+    nav_registry_gov_pubkey = nav_registry_gov_pubkey or DEFAULT_EMPTY_GOV_PUBKEY
+    if len(nav_registry_gov_pubkey) != 48:
+        raise ValueError("nav_registry_gov_pubkey must be 48 bytes")
+    if min_nav_registry_version < 0 or min_nav_registry_version >= 2**64:
+        raise ValueError("min_nav_registry_version must be a uint64")
+    trusted_treasury_reserve_puzhash = trusted_treasury_reserve_puzhash or protocol_did_full_puzhash
+    trusted_protocol_treasury_puzhash = trusted_protocol_treasury_puzhash or protocol_did_full_puzhash
+    trusted_governance_rewards_puzhash = trusted_governance_rewards_puzhash or protocol_did_full_puzhash
     return mod.curry(
         mod_hash,
         singleton_struct(pool_launcher_id),
@@ -225,6 +231,14 @@ def pool_inner_puzzle(
         CAT_MOD_HASH,
         OFFER_MOD_HASH,
         _p2_vault_mod_hash(),
+        nav_registry_mod_hash,
+        nav_registry_gov_pubkey,
+        nav_registry_launcher_id,
+        min_nav_registry_version,
+        trusted_treasury_reserve_puzhash,
+        trusted_protocol_treasury_puzhash,
+        trusted_governance_rewards_puzhash,
+        trusted_governance_rewards_root,
         fp_scale,
         pool_status,
         tvl,
@@ -288,6 +302,7 @@ class ProtocolDeploymentParams:
     pgt_total_supply: int = DEFAULT_PGT_TOTAL_SUPPLY
     min_proposal_stake: int = DEFAULT_MIN_PROPOSAL_STAKE
     fp_scale: int = DEFAULT_FP_SCALE
+    min_nav_registry_version: int = DEFAULT_MIN_NAV_REGISTRY_VERSION
     initial_pool_status: int = 1  # 1 = ACTIVE
     initial_total_pool_token_supply: int = 0
     initial_treasury_reserve_tokens: int = 0
@@ -312,6 +327,15 @@ class ProtocolDeploymentPlan:
     did_genesis_coin_id: bytes32   # name of Cdid
     gov_genesis_coin_id: bytes32   # name of Cgov
 
+    # ── Trusted Pool Economic V2 wiring ─────────────────────────────────
+    trusted_nav_registry_mod_hash: bytes32 = field(default_factory=collection_nav_registry_inner_mod_hash)
+    trusted_nav_registry_gov_pubkey: bytes = DEFAULT_EMPTY_GOV_PUBKEY
+    trusted_nav_registry_launcher_id: bytes32 = DEFAULT_EMPTY_B32
+    trusted_treasury_reserve_puzhash: bytes32 | None = None
+    trusted_protocol_treasury_puzhash: bytes32 | None = None
+    trusted_governance_rewards_puzhash: bytes32 | None = None
+    trusted_governance_rewards_root: bytes32 = DEFAULT_EMPTY_B32
+
     # ── Derived launcher IDs ──────────────────────────────────────────────
     pool_launcher_id: bytes32 = field(init=False)
     did_launcher_id: bytes32 = field(init=False)
@@ -333,6 +357,39 @@ class ProtocolDeploymentPlan:
 
     def __post_init__(self) -> None:
         # Step 1: launcher ids deterministic from parent coin names
+        if len(self.trusted_nav_registry_gov_pubkey) != 48:
+            raise ValueError("trusted_nav_registry_gov_pubkey must be 48 bytes")
+        if self.trusted_treasury_reserve_puzhash is None:
+            self.trusted_treasury_reserve_puzhash = self.faucet_inner_puzhash
+        if self.trusted_protocol_treasury_puzhash is None:
+            self.trusted_protocol_treasury_puzhash = self.faucet_inner_puzhash
+        if self.trusted_governance_rewards_puzhash is None:
+            self.trusted_governance_rewards_puzhash = self.faucet_inner_puzhash
+        _reject_empty_gov_pubkey(
+            self.trusted_nav_registry_gov_pubkey,
+            "trusted_nav_registry_gov_pubkey",
+        )
+        _reject_empty_b32(
+            self.trusted_nav_registry_launcher_id,
+            "trusted_nav_registry_launcher_id",
+        )
+        _reject_empty_b32(
+            self.trusted_treasury_reserve_puzhash,
+            "trusted_treasury_reserve_puzhash",
+        )
+        _reject_empty_b32(
+            self.trusted_protocol_treasury_puzhash,
+            "trusted_protocol_treasury_puzhash",
+        )
+        _reject_empty_b32(
+            self.trusted_governance_rewards_puzhash,
+            "trusted_governance_rewards_puzhash",
+        )
+        _reject_empty_b32(
+            self.trusted_governance_rewards_root,
+            "trusted_governance_rewards_root",
+        )
+
         self.pool_launcher_id = bytes32(
             Coin(self.pool_genesis_coin_id, SINGLETON_LAUNCHER_HASH, SINGLETON_AMOUNT).name()
         )
@@ -360,6 +417,14 @@ class ProtocolDeploymentPlan:
         pool_inner = pool_inner_puzzle(
             self.pool_launcher_id,
             self.did_full_puzhash,
+            nav_registry_mod_hash=self.trusted_nav_registry_mod_hash,
+            nav_registry_gov_pubkey=self.trusted_nav_registry_gov_pubkey,
+            nav_registry_launcher_id=self.trusted_nav_registry_launcher_id,
+            min_nav_registry_version=self.params.min_nav_registry_version,
+            trusted_treasury_reserve_puzhash=self.trusted_treasury_reserve_puzhash,
+            trusted_protocol_treasury_puzhash=self.trusted_protocol_treasury_puzhash,
+            trusted_governance_rewards_puzhash=self.trusted_governance_rewards_puzhash,
+            trusted_governance_rewards_root=self.trusted_governance_rewards_root,
             fp_scale=self.params.fp_scale,
             pool_status=self.params.initial_pool_status,
             total_pool_token_supply=self.params.initial_total_pool_token_supply,
@@ -569,6 +634,10 @@ def plan_to_manifest_dict(plan: ProtocolDeploymentPlan) -> dict[str, Any]:
     def _hex(v: Any) -> Any:
         if isinstance(v, (bytes, bytes32)):
             return "0x" + bytes(v).hex()
+        if isinstance(v, dict):
+            return {k: _hex(value) for k, value in v.items()}
+        if isinstance(v, (list, tuple)):
+            return [_hex(value) for value in v]
         return v
 
     raw = asdict(plan)
@@ -581,10 +650,30 @@ def plan_from_manifest_dict(data: dict[str, Any]) -> ProtocolDeploymentPlan:
     Re-runs ``__post_init__`` to validate that derived hashes still match
     (catches manifest corruption).
     """
+    def _bytes(s: Any) -> bytes:
+        if isinstance(s, (bytes, bytes32)):
+            return bytes(s)
+        return bytes.fromhex(s[2:] if s.startswith("0x") else s)
+
     def _b32(s: Any) -> bytes32:
         return bytes32.fromhex(s[2:] if s.startswith("0x") else s)
 
     params = ProtocolDeploymentParams(**data["params"])
+    trusted_kwargs: dict[str, Any] = {}
+    for key in [
+        "trusted_nav_registry_mod_hash",
+        "trusted_nav_registry_launcher_id",
+        "trusted_treasury_reserve_puzhash",
+        "trusted_protocol_treasury_puzhash",
+        "trusted_governance_rewards_puzhash",
+        "trusted_governance_rewards_root",
+    ]:
+        if key in data and data[key] is not None:
+            trusted_kwargs[key] = _b32(data[key])
+    if "trusted_nav_registry_gov_pubkey" in data:
+        trusted_kwargs["trusted_nav_registry_gov_pubkey"] = _bytes(
+            data["trusted_nav_registry_gov_pubkey"]
+        )
     plan = ProtocolDeploymentPlan(
         network=data["network"],
         params=params,
@@ -593,6 +682,7 @@ def plan_from_manifest_dict(data: dict[str, Any]) -> ProtocolDeploymentPlan:
         pool_genesis_coin_id=_b32(data["pool_genesis_coin_id"]),
         did_genesis_coin_id=_b32(data["did_genesis_coin_id"]),
         gov_genesis_coin_id=_b32(data["gov_genesis_coin_id"]),
+        **trusted_kwargs,
     )
     # Sanity: stored derived hashes should match recomputed values.
     for key in [
@@ -601,6 +691,9 @@ def plan_from_manifest_dict(data: dict[str, Any]) -> ProtocolDeploymentPlan:
         "pool_token_tail_hash", "pool_inner_puzhash", "pool_full_puzhash",
         "did_inner_puzhash", "did_full_puzhash",
         "tracker_inner_puzhash", "tracker_full_puzhash",
+        "trusted_nav_registry_mod_hash", "trusted_nav_registry_launcher_id",
+        "trusted_treasury_reserve_puzhash", "trusted_protocol_treasury_puzhash",
+        "trusted_governance_rewards_puzhash", "trusted_governance_rewards_root",
     ]:
         if key in data:
             stored = _b32(data[key])
@@ -672,6 +765,7 @@ __all__ = [
     "DEFAULT_PGT_TOTAL_SUPPLY",
     "DEFAULT_MIN_PROPOSAL_STAKE",
     "DEFAULT_FP_SCALE",
+    "DEFAULT_MIN_NAV_REGISTRY_VERSION",
     "ProtocolDeploymentParams",
     "ProtocolDeploymentPlan",
     "DeploymentBundle",

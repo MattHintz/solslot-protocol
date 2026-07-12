@@ -24,7 +24,7 @@ import pytest
 from chia.types.blockchain_format.program import Program
 from chia_rs.sized_bytes import bytes32
 
-from populis_puzzles.pgt_driver import (
+from solslot_puzzles.pgt_driver import (
     BILL_FREEZE,
     BILL_MINT,
     BILL_SETTLE,
@@ -48,7 +48,7 @@ from populis_puzzles.pgt_driver import (
     vault_version_approval_message,
     vault_version_content_hash,
 )
-from populis_puzzles import vault_version_registry_driver as vvr
+from solslot_puzzles import vault_version_registry_driver as vvr
 
 
 PuzzleError = ValueError

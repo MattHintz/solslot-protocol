@@ -18,7 +18,7 @@ from chia.types.blockchain_format.program import Program
 from chia.wallet.puzzles.load_clvm import load_clvm
 from chia_rs.sized_bytes import bytes32
 
-from populis_puzzles.mint_proposal_v2_driver import (
+from solslot_puzzles.mint_proposal_v2_driver import (
     MintProposalV2State,
     STATE_APPROVED,
     STATE_CANCELLED,
@@ -82,7 +82,7 @@ def _bls_member_fixture() -> Program:
     if _BLS_MEMBER_FIXTURE is None:
         _BLS_MEMBER_FIXTURE = load_clvm(
             "test_fixture_bls_member.clsp",
-            package_or_requirement="populis_puzzles",
+            package_or_requirement="solslot_puzzles",
             recompile=True,
         )
     return _BLS_MEMBER_FIXTURE
@@ -100,7 +100,7 @@ def _eip712_member_fixture() -> Program:
     if _EIP712_MEMBER_FIXTURE is None:
         _EIP712_MEMBER_FIXTURE = load_clvm(
             "test_fixture_eip712_member.clsp",
-            package_or_requirement="populis_puzzles",
+            package_or_requirement="solslot_puzzles",
             recompile=True,
         )
     return _EIP712_MEMBER_FIXTURE

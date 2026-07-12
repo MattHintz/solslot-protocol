@@ -32,7 +32,7 @@ from chia.wallet.puzzles.singleton_top_layer_v1_1 import (
 from chia_rs.sized_bytes import bytes32
 from chia_rs.sized_ints import uint64
 
-from populis_puzzles import load_puzzle
+from solslot_puzzles import load_puzzle
 
 # Standard chia singleton constants pulled in for the launch flow.
 SINGLETON_AMOUNT = uint64(1)

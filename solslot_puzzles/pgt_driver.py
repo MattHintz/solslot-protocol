@@ -34,7 +34,7 @@ from chia_rs import CoinSpend
 from chia_rs.sized_bytes import bytes32
 from chia_rs.sized_ints import uint64
 
-from populis_puzzles import load_puzzle
+from solslot_puzzles import load_puzzle
 
 
 # ── Module-level caches of the compiled programs ─────────────────────────────

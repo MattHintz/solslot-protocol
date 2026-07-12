@@ -5,7 +5,7 @@ The portal's Karma test (sub-brick 4c) reads
 to assert its TS port of ``build_mint_publish_artifacts`` matches the Python
 driver byte-for-byte.  This pytest re-runs the dumper and asserts the on-disk
 fixture is up to date so PRs that change
-:mod:`populis_puzzles.mint_publish_driver` (or any of its upstream puzzles)
+:mod:`solslot_puzzles.mint_publish_driver` (or any of its upstream puzzles)
 without refreshing the fixture fail CI here rather than at the portal Karma
 layer.
 """

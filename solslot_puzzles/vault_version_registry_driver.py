@@ -43,7 +43,7 @@ from chia_rs import CoinSpend, G2Element, SpendBundle
 from chia_rs.sized_bytes import bytes32
 from chia_rs.sized_ints import uint64
 
-from populis_puzzles import load_puzzle
+from solslot_puzzles import load_puzzle
 
 
 # ── Spend-case tags — MUST match the .clsp defconstants ─────────────────────
@@ -539,7 +539,7 @@ def canonical_params_hash_from_vault_inner(curried_vault_inner: Program) -> byte
     its four protocol-level params.  This is the value the portal compares
     against ``registry.canonical_params_hash`` to detect outdated vaults.
     """
-    from populis_puzzles.vault_driver import parse_vault_inner_puzzle
+    from solslot_puzzles.vault_driver import parse_vault_inner_puzzle
 
     state = parse_vault_inner_puzzle(curried_vault_inner)
     return compute_canonical_params_hash(

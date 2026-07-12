@@ -11,7 +11,7 @@ import pytest
 from chia.types.blockchain_format.program import Program
 from chia_rs.sized_bytes import bytes32
 
-from populis_puzzles.admin_authority_driver import (
+from solslot_puzzles.admin_authority_driver import (
     AdminAuthorityState,
     RotationSpendArtifacts,
     admin_authority_inner_mod,
@@ -179,7 +179,7 @@ class TestParse:
         from chia.wallet.puzzles.load_clvm import load_clvm
         other = load_clvm(
             "quorum_did_inner.clsp",
-            package_or_requirement="populis_puzzles",
+            package_or_requirement="solslot_puzzles",
             recompile=True,
         ).curry(b"\x00" * 32)
         with pytest.raises(ValueError, match="admin_authority_inner"):

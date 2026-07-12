@@ -31,7 +31,7 @@ from typing import Sequence
 from chia.types.blockchain_format.program import Program
 from chia_rs.sized_bytes import bytes32
 
-from populis_puzzles import load_puzzle
+from solslot_puzzles import load_puzzle
 
 
 # ── Module-level cache of the compiled program ──────────────────────────

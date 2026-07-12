@@ -25,7 +25,7 @@ from __future__ import annotations
 from chia.types.blockchain_format.program import Program
 from chia_rs.sized_bytes import bytes32
 
-from populis_puzzles.pgt_driver import (
+from solslot_puzzles.pgt_driver import (
     PGT_TRANSFER,
     SINGLETON_LAUNCHER_HASH,
     make_proposal_tracker_struct,

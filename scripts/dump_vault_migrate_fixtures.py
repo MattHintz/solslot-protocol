@@ -48,7 +48,7 @@ from chia.wallet.puzzles.singleton_top_layer_v1_1 import (
 from chia.types.coin_spend import make_spend
 from chia_rs.sized_bytes import bytes32
 
-from populis_puzzles.vault_driver import (
+from solslot_puzzles.vault_driver import (
     AUTH_TYPE_BLS,
     P2_VAULT_MOD,
     SPEND_MIGRATE,

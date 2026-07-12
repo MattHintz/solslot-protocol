@@ -6,7 +6,7 @@
 # The TS service ``populis_portal/src/app/services/mint-proposal-v2/
 # mint-publish.service.ts`` re-implements ``build_mint_publish_artifacts``
 # in TS using the WASM ``Clvm`` shim.  It needs the same four puzzles
-# the Python driver loads via ``populis_puzzles.load_puzzle`` —
+# the Python driver loads via ``solslot_puzzles.load_puzzle`` —
 # bundled as TS string literals so the portal never round-trips to
 # populis_api just to obtain a puzzle.
 #
@@ -30,7 +30,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." &> /dev/null && pwd)"
-PUZZLES_DIR="$REPO_ROOT/populis_puzzles"
+PUZZLES_DIR="$REPO_ROOT/solslot_puzzles"
 DEST_DIR="$REPO_ROOT/../populis_portal/src/app/services/mint-proposal-v2"
 
 mkdir -p "$DEST_DIR"
@@ -48,7 +48,7 @@ dump_one() {
   if [[ ! -f "$src" ]]; then
     echo "ERROR: puzzle hex not found at $src" >&2
     echo "  Compile first:" >&2
-    echo "    cd populis_protocol && .venv/bin/python -c 'from populis_puzzles import load_puzzle; load_puzzle(\"${puzzle}.clsp\")'" >&2
+    echo "    cd populis_protocol && .venv/bin/python -c 'from solslot_puzzles import load_puzzle; load_puzzle(\"${puzzle}.clsp\")'" >&2
     exit 1
   fi
 
@@ -61,7 +61,7 @@ dump_one() {
  * Compiled bytecode of \`${puzzle}.clsp\` (Phase 4 mint-publish).
  *
  * Bundled at build time from
- * \`\`populis_protocol/populis_puzzles/${puzzle}.clsp.hex\`\`
+ * \`\`populis_protocol/solslot_puzzles/${puzzle}.clsp.hex\`\`
  * via the helper script
  * \`\`populis_protocol/scripts/dump_mint_publish_puzzle_hex.sh\`\`.
  *

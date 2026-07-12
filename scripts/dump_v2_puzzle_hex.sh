@@ -3,10 +3,10 @@
 # Regenerate the portal-side bundled puzzle hex constant for
 # admin_authority_v2_inner.clsp.
 #
-# The portal can't depend on populis_puzzles at runtime (different
+# The portal can't depend on solslot_puzzles at runtime (different
 # language, different repo), so the compiled bytecode is bundled as
 # a TS string literal.  This script reads
-# ``populis_puzzles/admin_authority_v2_inner.clsp.hex`` and rewrites
+# ``solslot_puzzles/admin_authority_v2_inner.clsp.hex`` and rewrites
 # ``populis_portal/src/app/services/admin-authority-v2/admin-authority-v2.puzzle-hex.ts``.
 #
 # Run this whenever the .clsp source changes.  The cross-repo
@@ -17,12 +17,12 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." &> /dev/null && pwd)"
-SOURCE="$REPO_ROOT/populis_puzzles/admin_authority_v2_inner.clsp.hex"
+SOURCE="$REPO_ROOT/solslot_puzzles/admin_authority_v2_inner.clsp.hex"
 DEST="$REPO_ROOT/../populis_portal/src/app/services/admin-authority-v2/admin-authority-v2.puzzle-hex.ts"
 
 if [[ ! -f "$SOURCE" ]]; then
   echo "ERROR: puzzle hex not found at $SOURCE" >&2
-  echo "  Try: cd populis_protocol && .venv/bin/python -c 'from populis_puzzles import load_puzzle; load_puzzle(\"admin_authority_v2_inner.clsp\")'" >&2
+  echo "  Try: cd populis_protocol && .venv/bin/python -c 'from solslot_puzzles import load_puzzle; load_puzzle(\"admin_authority_v2_inner.clsp\")'" >&2
   exit 1
 fi
 
@@ -36,7 +36,7 @@ cat > "$DEST" <<'HEADER'
  * Compiled bytecode of `admin_authority_v2_inner.clsp` (Phase 9-Hermes-C).
  *
  * Bundled at build time from
- * ``populis_protocol/populis_puzzles/admin_authority_v2_inner.clsp.hex``
+ * ``populis_protocol/solslot_puzzles/admin_authority_v2_inner.clsp.hex``
  * via the helper script ``populis_protocol/scripts/dump_v2_puzzle_hex.sh``.
  *
  * The portal feeds this hex into ``Clvm.deserialize()`` (chia-wallet-sdk-wasm)

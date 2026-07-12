@@ -10,6 +10,16 @@
 ;;;   CAT_MOD_HASH — tree hash of the standard CAT2 outer puzzle
 ;;;   OFFER_MOD_HASH — tree hash of Chia settlement_payments puzzle
 ;;;   P2_VAULT_MOD_HASH — tree hash of p2_vault module (for vault containment)
+;;;   NAV_REGISTRY_MOD_HASH — trusted collection NAV registry inner mod hash
+;;;   NAV_REGISTRY_GOV_PUBKEY — trusted NAV registry governor pubkey
+;;;   NAV_REGISTRY_LAUNCHER_ID — trusted NAV registry singleton launcher id
+;;;     Assumes the NAV registry is launched by the standard Chia singleton
+;;;     launcher puzzle hash carried in SINGLETON_STRUCT.
+;;;   MIN_NAV_REGISTRY_VERSION — lowest accepted NAV registry version
+;;;   TRUSTED_TREASURY_RESERVE_PUZHASH — canonical pool reserve CAT receiver
+;;;   TRUSTED_PROTOCOL_TREASURY_PUZHASH — canonical protocol fee receiver
+;;;   TRUSTED_GOVERNANCE_REWARDS_PUZHASH — canonical governance rewards receiver
+;;;   TRUSTED_GOVERNANCE_REWARDS_ROOT — canonical governance rewards claim root
 ;;;   FP_SCALE — fixed-point scale (1000 = 1.000 tokens per dollar of par)
 ;;;
 ;;; Curried state (changes each spend via curry_hashes recreation):
@@ -39,6 +49,14 @@
         CAT_MOD_HASH
         OFFER_MOD_HASH
         P2_VAULT_MOD_HASH
+        NAV_REGISTRY_MOD_HASH
+        NAV_REGISTRY_GOV_PUBKEY
+        NAV_REGISTRY_LAUNCHER_ID
+        MIN_NAV_REGISTRY_VERSION
+        TRUSTED_TREASURY_RESERVE_PUZHASH
+        TRUSTED_PROTOCOL_TREASURY_PUZHASH
+        TRUSTED_GOVERNANCE_REWARDS_PUZHASH
+        TRUSTED_GOVERNANCE_REWARDS_ROOT
         FP_SCALE
         POOL_STATUS
         TOTAL_VALUE_LOCKED
@@ -85,7 +103,12 @@
 
     ;; Compute inner puzzle hash from curried params + state
     (defun compute_inner_ph (MOD_HASH SINGLETON_STRUCT PROTOCOL_DID_PUZHASH
-                              TOKEN_TAIL_HASH CAT_MOD_HASH OFFER_MOD_HASH P2_VAULT_MOD_HASH FP_SCALE
+                              TOKEN_TAIL_HASH CAT_MOD_HASH OFFER_MOD_HASH P2_VAULT_MOD_HASH
+                              NAV_REGISTRY_MOD_HASH NAV_REGISTRY_GOV_PUBKEY NAV_REGISTRY_LAUNCHER_ID
+                              MIN_NAV_REGISTRY_VERSION
+                              TRUSTED_TREASURY_RESERVE_PUZHASH TRUSTED_PROTOCOL_TREASURY_PUZHASH
+                              TRUSTED_GOVERNANCE_REWARDS_PUZHASH TRUSTED_GOVERNANCE_REWARDS_ROOT
+                              FP_SCALE
                               status tvl count supply reserve)
         (curry_hashes MOD_HASH
             (sha256 1 MOD_HASH)
@@ -95,6 +118,14 @@
             (sha256 1 CAT_MOD_HASH)
             (sha256 1 OFFER_MOD_HASH)
             (sha256 1 P2_VAULT_MOD_HASH)
+            (sha256 1 NAV_REGISTRY_MOD_HASH)
+            (sha256 1 NAV_REGISTRY_GOV_PUBKEY)
+            (sha256 1 NAV_REGISTRY_LAUNCHER_ID)
+            (sha256 1 MIN_NAV_REGISTRY_VERSION)
+            (sha256 1 TRUSTED_TREASURY_RESERVE_PUZHASH)
+            (sha256 1 TRUSTED_PROTOCOL_TREASURY_PUZHASH)
+            (sha256 1 TRUSTED_GOVERNANCE_REWARDS_PUZHASH)
+            (sha256 1 TRUSTED_GOVERNANCE_REWARDS_ROOT)
             (sha256 1 FP_SCALE)
             (sha256 1 status)
             (sha256 1 tvl)
@@ -181,12 +212,42 @@
                     registry_version)))
     )
 
+    (defun-inline nav_registry_struct (SINGLETON_STRUCT NAV_REGISTRY_LAUNCHER_ID)
+        ;; The NAV registry uses the same singleton top layer and standard
+        ;; launcher puzzle hash as the pool. Future registry variants with a
+        ;; custom launcher puzzle must curry that hash separately.
+        (c (f SINGLETON_STRUCT) (c NAV_REGISTRY_LAUNCHER_ID (r (r SINGLETON_STRUCT))))
+    )
+
+    (defun-inline nav_registry_inner_ph (NAV_REGISTRY_MOD_HASH NAV_REGISTRY_GOV_PUBKEY nav_root registry_version)
+        (curry_hashes NAV_REGISTRY_MOD_HASH
+            (sha256 1 NAV_REGISTRY_MOD_HASH)
+            (sha256 1 NAV_REGISTRY_GOV_PUBKEY)
+            (sha256 1 nav_root)
+            (sha256 1 registry_version))
+    )
+
+    (defun-inline trusted_nav_registry_puzzle_hash
+        (SINGLETON_STRUCT NAV_REGISTRY_MOD_HASH NAV_REGISTRY_GOV_PUBKEY NAV_REGISTRY_LAUNCHER_ID nav_root registry_version)
+        (calculate_full_puzzle_hash
+            (nav_registry_struct SINGLETON_STRUCT NAV_REGISTRY_LAUNCHER_ID)
+            (nav_registry_inner_ph NAV_REGISTRY_MOD_HASH NAV_REGISTRY_GOV_PUBKEY nav_root registry_version))
+    )
+
     (defun-inline token_melt_message (token_coin_id principal_tokens)
         (concat PROTOCOL_PREFIX (sha256tree (list TOKEN_MELT token_coin_id principal_tokens)))
     )
 
     (defun-inline token_mint_message (token_coin_id amount)
         (concat PROTOCOL_PREFIX (sha256tree (list TOKEN_MINT token_coin_id amount)))
+    )
+
+    (defun token_authorization_conditions (token_message tail_conditions)
+        (c
+            (list CREATE_PUZZLE_ANNOUNCEMENT token_message)
+            (c
+                (list CREATE_COIN_ANNOUNCEMENT token_message)
+                tail_conditions))
     )
 
     (defun-inline cat_offer_puzzle_hash (CAT_MOD_HASH TOKEN_TAIL_HASH OFFER_MOD_HASH)
@@ -331,16 +392,15 @@
 
     (defun maybe_fresh_mint_condition (mint_token_coin_id fresh_mint tail_conditions)
         (if (> fresh_mint 0)
-            (c
-                (list CREATE_PUZZLE_ANNOUNCEMENT
-                    (token_mint_message mint_token_coin_id fresh_mint))
+            (token_authorization_conditions
+                (token_mint_message mint_token_coin_id fresh_mint)
                 tail_conditions)
             tail_conditions)
     )
 
     ;; SPEND CASE 1 — DEPOSIT
     ;; params = (deed_id deed_par_value depositor_puzhash token_coin_id)
-    (defun spend_deposit (MOD_HASH SINGLETON_STRUCT PROTOCOL_DID_PUZHASH TOKEN_TAIL_HASH CAT_MOD_HASH OFFER_MOD_HASH P2_VAULT_MOD_HASH FP_SCALE
+    (defun spend_deposit (MOD_HASH SINGLETON_STRUCT PROTOCOL_DID_PUZHASH TOKEN_TAIL_HASH CAT_MOD_HASH OFFER_MOD_HASH P2_VAULT_MOD_HASH NAV_REGISTRY_MOD_HASH NAV_REGISTRY_GOV_PUBKEY NAV_REGISTRY_LAUNCHER_ID MIN_NAV_REGISTRY_VERSION TRUSTED_TREASURY_RESERVE_PUZHASH TRUSTED_PROTOCOL_TREASURY_PUZHASH TRUSTED_GOVERNANCE_REWARDS_PUZHASH TRUSTED_GOVERNANCE_REWARDS_ROOT FP_SCALE
                           POOL_STATUS TOTAL_VALUE_LOCKED DEED_COUNT TOTAL_POOL_TOKEN_SUPPLY TREASURY_RESERVE_TOKENS
                           my_id my_inner_puzzlehash my_amount
                           deed_id deed_par_value depositor_puzhash token_coin_id)
@@ -358,16 +418,15 @@
             (is-uint64 (+ TOTAL_POOL_TOKEN_SUPPLY (compute_token_amount deed_par_value FP_SCALE)))
             (c
                 (list CREATE_COIN
-                    (compute_inner_ph MOD_HASH SINGLETON_STRUCT PROTOCOL_DID_PUZHASH TOKEN_TAIL_HASH CAT_MOD_HASH OFFER_MOD_HASH P2_VAULT_MOD_HASH FP_SCALE
+                    (compute_inner_ph MOD_HASH SINGLETON_STRUCT PROTOCOL_DID_PUZHASH TOKEN_TAIL_HASH CAT_MOD_HASH OFFER_MOD_HASH P2_VAULT_MOD_HASH NAV_REGISTRY_MOD_HASH NAV_REGISTRY_GOV_PUBKEY NAV_REGISTRY_LAUNCHER_ID MIN_NAV_REGISTRY_VERSION TRUSTED_TREASURY_RESERVE_PUZHASH TRUSTED_PROTOCOL_TREASURY_PUZHASH TRUSTED_GOVERNANCE_REWARDS_PUZHASH TRUSTED_GOVERNANCE_REWARDS_ROOT FP_SCALE
                                       POOL_STATUS
                                       (+ TOTAL_VALUE_LOCKED deed_par_value)
                                       (+ DEED_COUNT 1)
                                       (+ TOTAL_POOL_TOKEN_SUPPLY (compute_token_amount deed_par_value FP_SCALE))
                                       TREASURY_RESERVE_TOKENS)
                     my_amount)
-                (c
-                    (list CREATE_PUZZLE_ANNOUNCEMENT
-                        (concat PROTOCOL_PREFIX (sha256tree (list TOKEN_MINT token_coin_id (compute_token_amount deed_par_value FP_SCALE)))))
+                (token_authorization_conditions
+                    (token_mint_message token_coin_id (compute_token_amount deed_par_value FP_SCALE))
                     (c
                         (list SEND_MESSAGE 0x10
                             (concat PROTOCOL_PREFIX (sha256tree (list POOL_SPEND_DEPOSIT deed_id deed_par_value))))
@@ -390,7 +449,7 @@
     ;; SPEND CASE 2 — REDEEM
     ;; Computes p2_vault destination from vault_launcher_id — vault containment enforced.
     ;; params = (deed_id deed_par_value vault_launcher_id launcher_puzzle_hash token_coin_id)
-    (defun spend_redeem (MOD_HASH SINGLETON_STRUCT PROTOCOL_DID_PUZHASH TOKEN_TAIL_HASH CAT_MOD_HASH OFFER_MOD_HASH P2_VAULT_MOD_HASH FP_SCALE
+    (defun spend_redeem (MOD_HASH SINGLETON_STRUCT PROTOCOL_DID_PUZHASH TOKEN_TAIL_HASH CAT_MOD_HASH OFFER_MOD_HASH P2_VAULT_MOD_HASH NAV_REGISTRY_MOD_HASH NAV_REGISTRY_GOV_PUBKEY NAV_REGISTRY_LAUNCHER_ID MIN_NAV_REGISTRY_VERSION TRUSTED_TREASURY_RESERVE_PUZHASH TRUSTED_PROTOCOL_TREASURY_PUZHASH TRUSTED_GOVERNANCE_REWARDS_PUZHASH TRUSTED_GOVERNANCE_REWARDS_ROOT FP_SCALE
                          POOL_STATUS TOTAL_VALUE_LOCKED DEED_COUNT TOTAL_POOL_TOKEN_SUPPLY TREASURY_RESERVE_TOKENS
                          my_id my_inner_puzzlehash my_amount
                          deed_id deed_par_value vault_launcher_id launcher_puzzle_hash token_coin_id)
@@ -411,16 +470,15 @@
             (gte (- TOTAL_POOL_TOKEN_SUPPLY (compute_token_amount deed_par_value FP_SCALE)) TREASURY_RESERVE_TOKENS)
             (c
                 (list CREATE_COIN
-                    (compute_inner_ph MOD_HASH SINGLETON_STRUCT PROTOCOL_DID_PUZHASH TOKEN_TAIL_HASH CAT_MOD_HASH OFFER_MOD_HASH P2_VAULT_MOD_HASH FP_SCALE
+                    (compute_inner_ph MOD_HASH SINGLETON_STRUCT PROTOCOL_DID_PUZHASH TOKEN_TAIL_HASH CAT_MOD_HASH OFFER_MOD_HASH P2_VAULT_MOD_HASH NAV_REGISTRY_MOD_HASH NAV_REGISTRY_GOV_PUBKEY NAV_REGISTRY_LAUNCHER_ID MIN_NAV_REGISTRY_VERSION TRUSTED_TREASURY_RESERVE_PUZHASH TRUSTED_PROTOCOL_TREASURY_PUZHASH TRUSTED_GOVERNANCE_REWARDS_PUZHASH TRUSTED_GOVERNANCE_REWARDS_ROOT FP_SCALE
                                       POOL_STATUS
                                       (- TOTAL_VALUE_LOCKED deed_par_value)
                                       (- DEED_COUNT 1)
                                       (- TOTAL_POOL_TOKEN_SUPPLY (compute_token_amount deed_par_value FP_SCALE))
                                       TREASURY_RESERVE_TOKENS)
                     my_amount)
-                (c
-                    (list CREATE_PUZZLE_ANNOUNCEMENT
-                        (concat PROTOCOL_PREFIX (sha256tree (list TOKEN_MELT token_coin_id (compute_token_amount deed_par_value FP_SCALE)))))
+                (token_authorization_conditions
+                    (token_melt_message token_coin_id (compute_token_amount deed_par_value FP_SCALE))
                     (c
                         ;; Send the computed p2_vault puzzle hash (not a free param)
                         (list SEND_MESSAGE 0x10
@@ -474,7 +532,7 @@
         )
     )
 
-    (defun spend_settlement (MOD_HASH SINGLETON_STRUCT PROTOCOL_DID_PUZHASH TOKEN_TAIL_HASH CAT_MOD_HASH OFFER_MOD_HASH P2_VAULT_MOD_HASH FP_SCALE
+    (defun spend_settlement (MOD_HASH SINGLETON_STRUCT PROTOCOL_DID_PUZHASH TOKEN_TAIL_HASH CAT_MOD_HASH OFFER_MOD_HASH P2_VAULT_MOD_HASH NAV_REGISTRY_MOD_HASH NAV_REGISTRY_GOV_PUBKEY NAV_REGISTRY_LAUNCHER_ID MIN_NAV_REGISTRY_VERSION TRUSTED_TREASURY_RESERVE_PUZHASH TRUSTED_PROTOCOL_TREASURY_PUZHASH TRUSTED_GOVERNANCE_REWARDS_PUZHASH TRUSTED_GOVERNANCE_REWARDS_ROOT FP_SCALE
                              DEED_COUNT TOTAL_POOL_TOKEN_SUPPLY TREASURY_RESERVE_TOKENS
                              my_id my_inner_puzzlehash my_amount
                              splitxch_root_hash total_settlement_amount deed_releases
@@ -505,7 +563,7 @@
             (c
                 ;; State recreation: pool fully settled
                 (list CREATE_COIN
-                    (compute_inner_ph MOD_HASH SINGLETON_STRUCT PROTOCOL_DID_PUZHASH TOKEN_TAIL_HASH CAT_MOD_HASH OFFER_MOD_HASH P2_VAULT_MOD_HASH FP_SCALE
+                    (compute_inner_ph MOD_HASH SINGLETON_STRUCT PROTOCOL_DID_PUZHASH TOKEN_TAIL_HASH CAT_MOD_HASH OFFER_MOD_HASH P2_VAULT_MOD_HASH NAV_REGISTRY_MOD_HASH NAV_REGISTRY_GOV_PUBKEY NAV_REGISTRY_LAUNCHER_ID MIN_NAV_REGISTRY_VERSION TRUSTED_TREASURY_RESERVE_PUZHASH TRUSTED_PROTOCOL_TREASURY_PUZHASH TRUSTED_GOVERNANCE_REWARDS_PUZHASH TRUSTED_GOVERNANCE_REWARDS_ROOT FP_SCALE
                                       POOL_ACTIVE 0 0 TOTAL_POOL_TOKEN_SUPPLY TREASURY_RESERVE_TOKENS)
                     my_amount)
                 (c
@@ -548,7 +606,7 @@
     ;; {0=FROZEN, 1=ACTIVE}.  Pre-fix, governance could write any integer
     ;; into POOL_STATUS, permanently bricking spend cases that check
     ;; (= POOL_STATUS POOL_ACTIVE).
-    (defun spend_governance (MOD_HASH SINGLETON_STRUCT PROTOCOL_DID_PUZHASH TOKEN_TAIL_HASH CAT_MOD_HASH OFFER_MOD_HASH P2_VAULT_MOD_HASH FP_SCALE
+    (defun spend_governance (MOD_HASH SINGLETON_STRUCT PROTOCOL_DID_PUZHASH TOKEN_TAIL_HASH CAT_MOD_HASH OFFER_MOD_HASH P2_VAULT_MOD_HASH NAV_REGISTRY_MOD_HASH NAV_REGISTRY_GOV_PUBKEY NAV_REGISTRY_LAUNCHER_ID MIN_NAV_REGISTRY_VERSION TRUSTED_TREASURY_RESERVE_PUZHASH TRUSTED_PROTOCOL_TREASURY_PUZHASH TRUSTED_GOVERNANCE_REWARDS_PUZHASH TRUSTED_GOVERNANCE_REWARDS_ROOT FP_SCALE
                              TOTAL_VALUE_LOCKED DEED_COUNT TOTAL_POOL_TOKEN_SUPPLY TREASURY_RESERVE_TOKENS
                              my_id my_inner_puzzlehash my_amount
                              new_status gov_inner_puzhash gov_singleton_struct)
@@ -561,7 +619,7 @@
             (gte TOTAL_POOL_TOKEN_SUPPLY TREASURY_RESERVE_TOKENS)
             (c
                 (list CREATE_COIN
-                    (compute_inner_ph MOD_HASH SINGLETON_STRUCT PROTOCOL_DID_PUZHASH TOKEN_TAIL_HASH CAT_MOD_HASH OFFER_MOD_HASH P2_VAULT_MOD_HASH FP_SCALE
+                    (compute_inner_ph MOD_HASH SINGLETON_STRUCT PROTOCOL_DID_PUZHASH TOKEN_TAIL_HASH CAT_MOD_HASH OFFER_MOD_HASH P2_VAULT_MOD_HASH NAV_REGISTRY_MOD_HASH NAV_REGISTRY_GOV_PUBKEY NAV_REGISTRY_LAUNCHER_ID MIN_NAV_REGISTRY_VERSION TRUSTED_TREASURY_RESERVE_PUZHASH TRUSTED_PROTOCOL_TREASURY_PUZHASH TRUSTED_GOVERNANCE_REWARDS_PUZHASH TRUSTED_GOVERNANCE_REWARDS_ROOT FP_SCALE
                                       new_status TOTAL_VALUE_LOCKED DEED_COUNT TOTAL_POOL_TOKEN_SUPPLY TREASURY_RESERVE_TOKENS)
                     my_amount)
                 (c
@@ -583,7 +641,7 @@
     ;; Tokens always go to PROTOCOL_DID_PUZHASH (protocol treasury) — enforced on-chain.
     ;; Buyer destination computed from P2_VAULT_MOD_HASH — vault containment enforced.
     ;; params = (deed_id deed_par_value buyer_vault_launcher_id launcher_puzzle_hash)
-    (defun spend_generate_offer (MOD_HASH SINGLETON_STRUCT PROTOCOL_DID_PUZHASH TOKEN_TAIL_HASH CAT_MOD_HASH OFFER_MOD_HASH P2_VAULT_MOD_HASH FP_SCALE
+    (defun spend_generate_offer (MOD_HASH SINGLETON_STRUCT PROTOCOL_DID_PUZHASH TOKEN_TAIL_HASH CAT_MOD_HASH OFFER_MOD_HASH P2_VAULT_MOD_HASH NAV_REGISTRY_MOD_HASH NAV_REGISTRY_GOV_PUBKEY NAV_REGISTRY_LAUNCHER_ID MIN_NAV_REGISTRY_VERSION TRUSTED_TREASURY_RESERVE_PUZHASH TRUSTED_PROTOCOL_TREASURY_PUZHASH TRUSTED_GOVERNANCE_REWARDS_PUZHASH TRUSTED_GOVERNANCE_REWARDS_ROOT FP_SCALE
                                  POOL_STATUS TOTAL_VALUE_LOCKED DEED_COUNT TOTAL_POOL_TOKEN_SUPPLY TREASURY_RESERVE_TOKENS
                                  my_id my_inner_puzzlehash my_amount
                                  deed_id deed_par_value buyer_vault_launcher_id launcher_puzzle_hash)
@@ -602,7 +660,7 @@
             (c
                 ;; State recreation: deed leaves pool
                 (list CREATE_COIN
-                    (compute_inner_ph MOD_HASH SINGLETON_STRUCT PROTOCOL_DID_PUZHASH TOKEN_TAIL_HASH CAT_MOD_HASH OFFER_MOD_HASH P2_VAULT_MOD_HASH FP_SCALE
+                    (compute_inner_ph MOD_HASH SINGLETON_STRUCT PROTOCOL_DID_PUZHASH TOKEN_TAIL_HASH CAT_MOD_HASH OFFER_MOD_HASH P2_VAULT_MOD_HASH NAV_REGISTRY_MOD_HASH NAV_REGISTRY_GOV_PUBKEY NAV_REGISTRY_LAUNCHER_ID MIN_NAV_REGISTRY_VERSION TRUSTED_TREASURY_RESERVE_PUZHASH TRUSTED_PROTOCOL_TREASURY_PUZHASH TRUSTED_GOVERNANCE_REWARDS_PUZHASH TRUSTED_GOVERNANCE_REWARDS_ROOT FP_SCALE
                                       POOL_STATUS
                                       (- TOTAL_VALUE_LOCKED deed_par_value)
                                       (- DEED_COUNT 1)
@@ -685,7 +743,7 @@
     ;;
     ;; Total NAV, deed count, total supply, and treasury reserve are all
     ;; curried pool state fields.
-    (defun spend_v2_specific_deed_swap (MOD_HASH SINGLETON_STRUCT PROTOCOL_DID_PUZHASH TOKEN_TAIL_HASH CAT_MOD_HASH OFFER_MOD_HASH P2_VAULT_MOD_HASH FP_SCALE
+    (defun spend_v2_specific_deed_swap (MOD_HASH SINGLETON_STRUCT PROTOCOL_DID_PUZHASH TOKEN_TAIL_HASH CAT_MOD_HASH OFFER_MOD_HASH P2_VAULT_MOD_HASH NAV_REGISTRY_MOD_HASH NAV_REGISTRY_GOV_PUBKEY NAV_REGISTRY_LAUNCHER_ID MIN_NAV_REGISTRY_VERSION TRUSTED_TREASURY_RESERVE_PUZHASH TRUSTED_PROTOCOL_TREASURY_PUZHASH TRUSTED_GOVERNANCE_REWARDS_PUZHASH TRUSTED_GOVERNANCE_REWARDS_ROOT FP_SCALE
                                         POOL_STATUS TOTAL_VALUE_LOCKED DEED_COUNT TOTAL_POOL_TOKEN_SUPPLY TREASURY_RESERVE_TOKENS
                                         my_id my_inner_puzzlehash my_amount
                                         deed_id collection_id_canon share_ppm collection_nav_mojos
@@ -701,6 +759,7 @@
             (is-uint64 collection_nav_mojos)
             (is-size-b32 nav_root)
             (is-uint64 nav_registry_version)
+            (gte nav_registry_version MIN_NAV_REGISTRY_VERSION)
             (is-size-b32 nav_registry_coin_id)
             (is-size-b32 nav_registry_puzzle_hash)
             (is-uint64 TOTAL_POOL_TOKEN_SUPPLY)
@@ -711,6 +770,18 @@
             (is-size-b32 protocol_treasury_puzhash)
             (is-size-b32 governance_rewards_puzhash)
             (is-size-b32 governance_rewards_root)
+            (= nav_registry_puzzle_hash
+                (trusted_nav_registry_puzzle_hash
+                    SINGLETON_STRUCT
+                    NAV_REGISTRY_MOD_HASH
+                    NAV_REGISTRY_GOV_PUBKEY
+                    NAV_REGISTRY_LAUNCHER_ID
+                    nav_root
+                    nav_registry_version))
+            (= treasury_reserve_puzhash TRUSTED_TREASURY_RESERVE_PUZHASH)
+            (= protocol_treasury_puzhash TRUSTED_PROTOCOL_TREASURY_PUZHASH)
+            (= governance_rewards_puzhash TRUSTED_GOVERNANCE_REWARDS_PUZHASH)
+            (= governance_rewards_root TRUSTED_GOVERNANCE_REWARDS_ROOT)
             (> TOTAL_VALUE_LOCKED 0)
             (> DEED_COUNT 0)
             (> collection_nav_mojos 0)
@@ -727,7 +798,7 @@
                         TOTAL_VALUE_LOCKED)))
             (c
                 (list CREATE_COIN
-                    (compute_inner_ph MOD_HASH SINGLETON_STRUCT PROTOCOL_DID_PUZHASH TOKEN_TAIL_HASH CAT_MOD_HASH OFFER_MOD_HASH P2_VAULT_MOD_HASH FP_SCALE
+                    (compute_inner_ph MOD_HASH SINGLETON_STRUCT PROTOCOL_DID_PUZHASH TOKEN_TAIL_HASH CAT_MOD_HASH OFFER_MOD_HASH P2_VAULT_MOD_HASH NAV_REGISTRY_MOD_HASH NAV_REGISTRY_GOV_PUBKEY NAV_REGISTRY_LAUNCHER_ID MIN_NAV_REGISTRY_VERSION TRUSTED_TREASURY_RESERVE_PUZHASH TRUSTED_PROTOCOL_TREASURY_PUZHASH TRUSTED_GOVERNANCE_REWARDS_PUZHASH TRUSTED_GOVERNANCE_REWARDS_ROOT FP_SCALE
                                       POOL_STATUS
                                       (- TOTAL_VALUE_LOCKED (compute_deed_nav collection_nav_mojos share_ppm))
                                       (- DEED_COUNT 1)
@@ -867,7 +938,7 @@
     ;; settlement assertion to the seller, plus at most one CAT mint
     ;; authorization for reserve shortfall.  That keeps faucet/payment helpers
     ;; from becoming an unbounded fanout surface.
-    (defun spend_v2_reserve_acquisition (MOD_HASH SINGLETON_STRUCT PROTOCOL_DID_PUZHASH TOKEN_TAIL_HASH CAT_MOD_HASH OFFER_MOD_HASH P2_VAULT_MOD_HASH FP_SCALE
+    (defun spend_v2_reserve_acquisition (MOD_HASH SINGLETON_STRUCT PROTOCOL_DID_PUZHASH TOKEN_TAIL_HASH CAT_MOD_HASH OFFER_MOD_HASH P2_VAULT_MOD_HASH NAV_REGISTRY_MOD_HASH NAV_REGISTRY_GOV_PUBKEY NAV_REGISTRY_LAUNCHER_ID MIN_NAV_REGISTRY_VERSION TRUSTED_TREASURY_RESERVE_PUZHASH TRUSTED_PROTOCOL_TREASURY_PUZHASH TRUSTED_GOVERNANCE_REWARDS_PUZHASH TRUSTED_GOVERNANCE_REWARDS_ROOT FP_SCALE
                                          POOL_STATUS TOTAL_VALUE_LOCKED DEED_COUNT TOTAL_POOL_TOKEN_SUPPLY TREASURY_RESERVE_TOKENS
                                          my_id my_inner_puzzlehash my_amount
                                          deed_id property_id_canon par_value_mojos asset_class
@@ -885,8 +956,17 @@
             (is-uint64 collection_nav_mojos)
             (is-size-b32 nav_root)
             (is-uint64 nav_registry_version)
+            (gte nav_registry_version MIN_NAV_REGISTRY_VERSION)
             (is-size-b32 nav_registry_coin_id)
             (is-size-b32 nav_registry_puzzle_hash)
+            (= nav_registry_puzzle_hash
+                (trusted_nav_registry_puzzle_hash
+                    SINGLETON_STRUCT
+                    NAV_REGISTRY_MOD_HASH
+                    NAV_REGISTRY_GOV_PUBKEY
+                    NAV_REGISTRY_LAUNCHER_ID
+                    nav_root
+                    nav_registry_version))
             (is-uint64 TOTAL_POOL_TOKEN_SUPPLY)
             (is-uint64 TREASURY_RESERVE_TOKENS)
             (is-size-b32 seller_puzhash)
@@ -899,6 +979,7 @@
             (> share_ppm 0)
             (gte SHARE_PPM_DENOMINATOR share_ppm)
             (> seller_token_price 0)
+            (gte (compute_deed_nav collection_nav_mojos share_ppm) seller_token_price)
             (gte TOTAL_POOL_TOKEN_SUPPLY TREASURY_RESERVE_TOKENS)
             (is-uint64 (compute_deed_nav collection_nav_mojos share_ppm))
             (is-uint64 (+ TOTAL_VALUE_LOCKED (compute_deed_nav collection_nav_mojos share_ppm)))
@@ -909,7 +990,7 @@
                 (not mint_token_coin_id))
             (c
                 (list CREATE_COIN
-                    (compute_inner_ph MOD_HASH SINGLETON_STRUCT PROTOCOL_DID_PUZHASH TOKEN_TAIL_HASH CAT_MOD_HASH OFFER_MOD_HASH P2_VAULT_MOD_HASH FP_SCALE
+                    (compute_inner_ph MOD_HASH SINGLETON_STRUCT PROTOCOL_DID_PUZHASH TOKEN_TAIL_HASH CAT_MOD_HASH OFFER_MOD_HASH P2_VAULT_MOD_HASH NAV_REGISTRY_MOD_HASH NAV_REGISTRY_GOV_PUBKEY NAV_REGISTRY_LAUNCHER_ID MIN_NAV_REGISTRY_VERSION TRUSTED_TREASURY_RESERVE_PUZHASH TRUSTED_PROTOCOL_TREASURY_PUZHASH TRUSTED_GOVERNANCE_REWARDS_PUZHASH TRUSTED_GOVERNANCE_REWARDS_ROOT FP_SCALE
                                       POOL_STATUS
                                       (+ TOTAL_VALUE_LOCKED (compute_deed_nav collection_nav_mojos share_ppm))
                                       (+ DEED_COUNT 1)
@@ -1011,7 +1092,7 @@
     ;;
     ;; Total NAV, deed count, total supply, and treasury reserve are all
     ;; curried pool state fields.
-    (defun spend_v2_true_redemption (MOD_HASH SINGLETON_STRUCT PROTOCOL_DID_PUZHASH TOKEN_TAIL_HASH CAT_MOD_HASH OFFER_MOD_HASH P2_VAULT_MOD_HASH FP_SCALE
+    (defun spend_v2_true_redemption (MOD_HASH SINGLETON_STRUCT PROTOCOL_DID_PUZHASH TOKEN_TAIL_HASH CAT_MOD_HASH OFFER_MOD_HASH P2_VAULT_MOD_HASH NAV_REGISTRY_MOD_HASH NAV_REGISTRY_GOV_PUBKEY NAV_REGISTRY_LAUNCHER_ID MIN_NAV_REGISTRY_VERSION TRUSTED_TREASURY_RESERVE_PUZHASH TRUSTED_PROTOCOL_TREASURY_PUZHASH TRUSTED_GOVERNANCE_REWARDS_PUZHASH TRUSTED_GOVERNANCE_REWARDS_ROOT FP_SCALE
                                      POOL_STATUS TOTAL_VALUE_LOCKED DEED_COUNT TOTAL_POOL_TOKEN_SUPPLY TREASURY_RESERVE_TOKENS
                                      my_id my_inner_puzzlehash my_amount
                                      deed_id collection_id_canon share_ppm collection_nav_mojos
@@ -1025,8 +1106,17 @@
             (is-uint64 collection_nav_mojos)
             (is-size-b32 nav_root)
             (is-uint64 nav_registry_version)
+            (gte nav_registry_version MIN_NAV_REGISTRY_VERSION)
             (is-size-b32 nav_registry_coin_id)
             (is-size-b32 nav_registry_puzzle_hash)
+            (= nav_registry_puzzle_hash
+                (trusted_nav_registry_puzzle_hash
+                    SINGLETON_STRUCT
+                    NAV_REGISTRY_MOD_HASH
+                    NAV_REGISTRY_GOV_PUBKEY
+                    NAV_REGISTRY_LAUNCHER_ID
+                    nav_root
+                    nav_registry_version))
             (is-uint64 TOTAL_POOL_TOKEN_SUPPLY)
             (is-uint64 TREASURY_RESERVE_TOKENS)
             (is-size-b32 vault_launcher_id)
@@ -1047,7 +1137,7 @@
                     TOTAL_VALUE_LOCKED))
             (c
                 (list CREATE_COIN
-                    (compute_inner_ph MOD_HASH SINGLETON_STRUCT PROTOCOL_DID_PUZHASH TOKEN_TAIL_HASH CAT_MOD_HASH OFFER_MOD_HASH P2_VAULT_MOD_HASH FP_SCALE
+                    (compute_inner_ph MOD_HASH SINGLETON_STRUCT PROTOCOL_DID_PUZHASH TOKEN_TAIL_HASH CAT_MOD_HASH OFFER_MOD_HASH P2_VAULT_MOD_HASH NAV_REGISTRY_MOD_HASH NAV_REGISTRY_GOV_PUBKEY NAV_REGISTRY_LAUNCHER_ID MIN_NAV_REGISTRY_VERSION TRUSTED_TREASURY_RESERVE_PUZHASH TRUSTED_PROTOCOL_TREASURY_PUZHASH TRUSTED_GOVERNANCE_REWARDS_PUZHASH TRUSTED_GOVERNANCE_REWARDS_ROOT FP_SCALE
                                       POOL_STATUS
                                       (- TOTAL_VALUE_LOCKED (compute_deed_nav collection_nav_mojos share_ppm))
                                       (- DEED_COUNT 1)
@@ -1075,15 +1165,13 @@
                                     (compute_p2_vault_hash P2_VAULT_MOD_HASH SINGLETON_STRUCT vault_launcher_id launcher_puzzle_hash)
                                     collection_id_canon
                                     share_ppm)))
-                        (c
-                            ;; Authorize the pool CAT tail melt.
-                            (list CREATE_PUZZLE_ANNOUNCEMENT
-                                (token_melt_message
-                                    token_coin_id
-                                    (compute_principal_tokens
-                                        (compute_deed_nav collection_nav_mojos share_ppm)
-                                        (- TOTAL_POOL_TOKEN_SUPPLY TREASURY_RESERVE_TOKENS)
-                                        TOTAL_VALUE_LOCKED)))
+                        (token_authorization_conditions
+                            (token_melt_message
+                                token_coin_id
+                                (compute_principal_tokens
+                                    (compute_deed_nav collection_nav_mojos share_ppm)
+                                    (- TOTAL_POOL_TOKEN_SUPPLY TREASURY_RESERVE_TOKENS)
+                                    TOTAL_VALUE_LOCKED))
                             (c
                                 ;; Public V2 action commitment consumed by drivers/indexers.
                                 (list CREATE_PUZZLE_ANNOUNCEMENT
@@ -1139,34 +1227,42 @@
         (is-size-b32 my_id)
         (is-size-b32 my_inner_puzzlehash)
         (is-uint64 my_amount)
+        (is-size-b32 NAV_REGISTRY_MOD_HASH)
+        (is-size-bls-g1 NAV_REGISTRY_GOV_PUBKEY)
+        (is-size-b32 NAV_REGISTRY_LAUNCHER_ID)
+        (is-uint64 MIN_NAV_REGISTRY_VERSION)
+        (is-size-b32 TRUSTED_TREASURY_RESERVE_PUZHASH)
+        (is-size-b32 TRUSTED_PROTOCOL_TREASURY_PUZHASH)
+        (is-size-b32 TRUSTED_GOVERNANCE_REWARDS_PUZHASH)
+        (is-size-b32 TRUSTED_GOVERNANCE_REWARDS_ROOT)
         (if (= spend_case POOL_SPEND_DEPOSIT)
-            (spend_deposit MOD_HASH SINGLETON_STRUCT PROTOCOL_DID_PUZHASH TOKEN_TAIL_HASH CAT_MOD_HASH OFFER_MOD_HASH P2_VAULT_MOD_HASH FP_SCALE
+            (spend_deposit MOD_HASH SINGLETON_STRUCT PROTOCOL_DID_PUZHASH TOKEN_TAIL_HASH CAT_MOD_HASH OFFER_MOD_HASH P2_VAULT_MOD_HASH NAV_REGISTRY_MOD_HASH NAV_REGISTRY_GOV_PUBKEY NAV_REGISTRY_LAUNCHER_ID MIN_NAV_REGISTRY_VERSION TRUSTED_TREASURY_RESERVE_PUZHASH TRUSTED_PROTOCOL_TREASURY_PUZHASH TRUSTED_GOVERNANCE_REWARDS_PUZHASH TRUSTED_GOVERNANCE_REWARDS_ROOT FP_SCALE
                            POOL_STATUS TOTAL_VALUE_LOCKED DEED_COUNT TOTAL_POOL_TOKEN_SUPPLY TREASURY_RESERVE_TOKENS
                            my_id my_inner_puzzlehash my_amount
-                           (f params) (f (r params)) (f (r (r params))) (f (r (r (r params)))))
+                           (nth 0 params) (nth 1 params) (nth 2 params) (nth 3 params))
             (if (= spend_case POOL_SPEND_REDEEM)
-                (spend_redeem MOD_HASH SINGLETON_STRUCT PROTOCOL_DID_PUZHASH TOKEN_TAIL_HASH CAT_MOD_HASH OFFER_MOD_HASH P2_VAULT_MOD_HASH FP_SCALE
+                (spend_redeem MOD_HASH SINGLETON_STRUCT PROTOCOL_DID_PUZHASH TOKEN_TAIL_HASH CAT_MOD_HASH OFFER_MOD_HASH P2_VAULT_MOD_HASH NAV_REGISTRY_MOD_HASH NAV_REGISTRY_GOV_PUBKEY NAV_REGISTRY_LAUNCHER_ID MIN_NAV_REGISTRY_VERSION TRUSTED_TREASURY_RESERVE_PUZHASH TRUSTED_PROTOCOL_TREASURY_PUZHASH TRUSTED_GOVERNANCE_REWARDS_PUZHASH TRUSTED_GOVERNANCE_REWARDS_ROOT FP_SCALE
                               POOL_STATUS TOTAL_VALUE_LOCKED DEED_COUNT TOTAL_POOL_TOKEN_SUPPLY TREASURY_RESERVE_TOKENS
                               my_id my_inner_puzzlehash my_amount
-                              (f params) (f (r params)) (f (r (r params))) (f (r (r (r params)))) (f (r (r (r (r params))))))
+                              (nth 0 params) (nth 1 params) (nth 2 params) (nth 3 params) (nth 4 params))
                 (if (= spend_case POOL_SPEND_SETTLEMENT)
-                    (spend_settlement MOD_HASH SINGLETON_STRUCT PROTOCOL_DID_PUZHASH TOKEN_TAIL_HASH CAT_MOD_HASH OFFER_MOD_HASH P2_VAULT_MOD_HASH FP_SCALE
+                    (spend_settlement MOD_HASH SINGLETON_STRUCT PROTOCOL_DID_PUZHASH TOKEN_TAIL_HASH CAT_MOD_HASH OFFER_MOD_HASH P2_VAULT_MOD_HASH NAV_REGISTRY_MOD_HASH NAV_REGISTRY_GOV_PUBKEY NAV_REGISTRY_LAUNCHER_ID MIN_NAV_REGISTRY_VERSION TRUSTED_TREASURY_RESERVE_PUZHASH TRUSTED_PROTOCOL_TREASURY_PUZHASH TRUSTED_GOVERNANCE_REWARDS_PUZHASH TRUSTED_GOVERNANCE_REWARDS_ROOT FP_SCALE
                                       DEED_COUNT TOTAL_POOL_TOKEN_SUPPLY TREASURY_RESERVE_TOKENS
                                       my_id my_inner_puzzlehash my_amount
-                                      (f params) (f (r params)) (f (r (r params)))
-                                      (f (r (r (r params)))) (f (r (r (r (r params))))))
+                                      (nth 0 params) (nth 1 params) (nth 2 params)
+                                      (nth 3 params) (nth 4 params))
                     (if (= spend_case POOL_SPEND_GOVERNANCE)
-                        (spend_governance MOD_HASH SINGLETON_STRUCT PROTOCOL_DID_PUZHASH TOKEN_TAIL_HASH CAT_MOD_HASH OFFER_MOD_HASH P2_VAULT_MOD_HASH FP_SCALE
+                        (spend_governance MOD_HASH SINGLETON_STRUCT PROTOCOL_DID_PUZHASH TOKEN_TAIL_HASH CAT_MOD_HASH OFFER_MOD_HASH P2_VAULT_MOD_HASH NAV_REGISTRY_MOD_HASH NAV_REGISTRY_GOV_PUBKEY NAV_REGISTRY_LAUNCHER_ID MIN_NAV_REGISTRY_VERSION TRUSTED_TREASURY_RESERVE_PUZHASH TRUSTED_PROTOCOL_TREASURY_PUZHASH TRUSTED_GOVERNANCE_REWARDS_PUZHASH TRUSTED_GOVERNANCE_REWARDS_ROOT FP_SCALE
                                           TOTAL_VALUE_LOCKED DEED_COUNT TOTAL_POOL_TOKEN_SUPPLY TREASURY_RESERVE_TOKENS
                                           my_id my_inner_puzzlehash my_amount
-                                          (f params) (f (r params)) (f (r (r params))))
+                                          (nth 0 params) (nth 1 params) (nth 2 params))
                         (if (= spend_case POOL_SPEND_GENERATE_OFFER)
-                            (spend_generate_offer MOD_HASH SINGLETON_STRUCT PROTOCOL_DID_PUZHASH TOKEN_TAIL_HASH CAT_MOD_HASH OFFER_MOD_HASH P2_VAULT_MOD_HASH FP_SCALE
+                            (spend_generate_offer MOD_HASH SINGLETON_STRUCT PROTOCOL_DID_PUZHASH TOKEN_TAIL_HASH CAT_MOD_HASH OFFER_MOD_HASH P2_VAULT_MOD_HASH NAV_REGISTRY_MOD_HASH NAV_REGISTRY_GOV_PUBKEY NAV_REGISTRY_LAUNCHER_ID MIN_NAV_REGISTRY_VERSION TRUSTED_TREASURY_RESERVE_PUZHASH TRUSTED_PROTOCOL_TREASURY_PUZHASH TRUSTED_GOVERNANCE_REWARDS_PUZHASH TRUSTED_GOVERNANCE_REWARDS_ROOT FP_SCALE
                                                   POOL_STATUS TOTAL_VALUE_LOCKED DEED_COUNT TOTAL_POOL_TOKEN_SUPPLY TREASURY_RESERVE_TOKENS
                                                   my_id my_inner_puzzlehash my_amount
-                                                  (f params) (f (r params)) (f (r (r params))) (f (r (r (r params)))))
+                                                  (nth 0 params) (nth 1 params) (nth 2 params) (nth 3 params))
                             (if (= spend_case POOL_SPEND_V2_SPECIFIC_DEED_SWAP)
-                                (spend_v2_specific_deed_swap MOD_HASH SINGLETON_STRUCT PROTOCOL_DID_PUZHASH TOKEN_TAIL_HASH CAT_MOD_HASH OFFER_MOD_HASH P2_VAULT_MOD_HASH FP_SCALE
+                                (spend_v2_specific_deed_swap MOD_HASH SINGLETON_STRUCT PROTOCOL_DID_PUZHASH TOKEN_TAIL_HASH CAT_MOD_HASH OFFER_MOD_HASH P2_VAULT_MOD_HASH NAV_REGISTRY_MOD_HASH NAV_REGISTRY_GOV_PUBKEY NAV_REGISTRY_LAUNCHER_ID MIN_NAV_REGISTRY_VERSION TRUSTED_TREASURY_RESERVE_PUZHASH TRUSTED_PROTOCOL_TREASURY_PUZHASH TRUSTED_GOVERNANCE_REWARDS_PUZHASH TRUSTED_GOVERNANCE_REWARDS_ROOT FP_SCALE
                                                              POOL_STATUS TOTAL_VALUE_LOCKED DEED_COUNT TOTAL_POOL_TOKEN_SUPPLY TREASURY_RESERVE_TOKENS
                                                              my_id my_inner_puzzlehash my_amount
                                                              ;; V2 swap params in schema order.
@@ -1186,7 +1282,7 @@
                                                              (nth 13 params)
                                 )
                                 (if (= spend_case POOL_SPEND_V2_RESERVE_ACQUISITION)
-                                    (spend_v2_reserve_acquisition MOD_HASH SINGLETON_STRUCT PROTOCOL_DID_PUZHASH TOKEN_TAIL_HASH CAT_MOD_HASH OFFER_MOD_HASH P2_VAULT_MOD_HASH FP_SCALE
+                                    (spend_v2_reserve_acquisition MOD_HASH SINGLETON_STRUCT PROTOCOL_DID_PUZHASH TOKEN_TAIL_HASH CAT_MOD_HASH OFFER_MOD_HASH P2_VAULT_MOD_HASH NAV_REGISTRY_MOD_HASH NAV_REGISTRY_GOV_PUBKEY NAV_REGISTRY_LAUNCHER_ID MIN_NAV_REGISTRY_VERSION TRUSTED_TREASURY_RESERVE_PUZHASH TRUSTED_PROTOCOL_TREASURY_PUZHASH TRUSTED_GOVERNANCE_REWARDS_PUZHASH TRUSTED_GOVERNANCE_REWARDS_ROOT FP_SCALE
                                                                   POOL_STATUS TOTAL_VALUE_LOCKED DEED_COUNT TOTAL_POOL_TOKEN_SUPPLY TREASURY_RESERVE_TOKENS
                                                                   my_id my_inner_puzzlehash my_amount
                                                                   ;; V2 reserve acquisition params in schema order.
@@ -1206,7 +1302,7 @@
                                                                   (nth 13 params)
                                     )
                                     (if (= spend_case POOL_SPEND_V2_TRUE_REDEMPTION)
-                                        (spend_v2_true_redemption MOD_HASH SINGLETON_STRUCT PROTOCOL_DID_PUZHASH TOKEN_TAIL_HASH CAT_MOD_HASH OFFER_MOD_HASH P2_VAULT_MOD_HASH FP_SCALE
+                                        (spend_v2_true_redemption MOD_HASH SINGLETON_STRUCT PROTOCOL_DID_PUZHASH TOKEN_TAIL_HASH CAT_MOD_HASH OFFER_MOD_HASH P2_VAULT_MOD_HASH NAV_REGISTRY_MOD_HASH NAV_REGISTRY_GOV_PUBKEY NAV_REGISTRY_LAUNCHER_ID MIN_NAV_REGISTRY_VERSION TRUSTED_TREASURY_RESERVE_PUZHASH TRUSTED_PROTOCOL_TREASURY_PUZHASH TRUSTED_GOVERNANCE_REWARDS_PUZHASH TRUSTED_GOVERNANCE_REWARDS_ROOT FP_SCALE
                                                                   POOL_STATUS TOTAL_VALUE_LOCKED DEED_COUNT TOTAL_POOL_TOKEN_SUPPLY TREASURY_RESERVE_TOKENS
                                                                   my_id my_inner_puzzlehash my_amount
                                                                   ;; V2 redemption params in schema order.

@@ -15,7 +15,7 @@ from typing import Any
 
 import pytest
 
-from populis_puzzles.property_registry_driver import canonicalise_property_id
+from solslot_puzzles.property_registry_driver import canonicalise_property_id
 
 
 PROTOCOL_ROOT = Path(__file__).resolve().parents[1]

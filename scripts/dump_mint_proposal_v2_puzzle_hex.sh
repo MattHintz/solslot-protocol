@@ -5,7 +5,7 @@
 #
 # Mirrors ``dump_v2_puzzle_hex.sh`` (admin-authority-v2) but for the
 # MIPS-pluggable mint-proposal puzzle.  The portal can't depend on
-# populis_puzzles at runtime (different language, different repo),
+# solslot_puzzles at runtime (different language, different repo),
 # so the compiled bytecode is bundled as a TS string literal.
 #
 # Run this whenever the .clsp source changes.  The cross-repo
@@ -18,12 +18,12 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." &> /dev/null && pwd)"
-SOURCE="$REPO_ROOT/populis_puzzles/mint_proposal_inner_v2.clsp.hex"
+SOURCE="$REPO_ROOT/solslot_puzzles/mint_proposal_inner_v2.clsp.hex"
 DEST="$REPO_ROOT/../populis_portal/src/app/services/mint-proposal-v2/mint-proposal-v2.puzzle-hex.ts"
 
 if [[ ! -f "$SOURCE" ]]; then
   echo "ERROR: puzzle hex not found at $SOURCE" >&2
-  echo "  Try: cd populis_protocol && .venv/bin/python -c 'from populis_puzzles import load_puzzle; load_puzzle(\"mint_proposal_inner_v2.clsp\")'" >&2
+  echo "  Try: cd populis_protocol && .venv/bin/python -c 'from solslot_puzzles import load_puzzle; load_puzzle(\"mint_proposal_inner_v2.clsp\")'" >&2
   exit 1
 fi
 
@@ -37,7 +37,7 @@ cat > "$DEST" <<'HEADER'
  * Compiled bytecode of `mint_proposal_inner_v2.clsp` (Phase 9-Hermes-D).
  *
  * Bundled at build time from
- * ``populis_protocol/populis_puzzles/mint_proposal_inner_v2.clsp.hex``
+ * ``populis_protocol/solslot_puzzles/mint_proposal_inner_v2.clsp.hex``
  * via the helper script
  * ``populis_protocol/scripts/dump_mint_proposal_v2_puzzle_hex.sh``.
  *

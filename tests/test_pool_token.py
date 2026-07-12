@@ -20,12 +20,16 @@ from chia.wallet.cat_wallet.cat_utils import (
 )
 from chia.wallet.lineage_proof import LineageProof
 from chia.wallet.puzzles.load_clvm import load_clvm
+from chia.wallet.util.curry_and_treehash import (
+    calculate_hash_of_quoted_mod_hash,
+    curry_and_treehash,
+)
 from chia_rs.sized_bytes import bytes32
 from chia_rs.sized_ints import uint64
 
 POOL_TOKEN_TAIL_MOD: Program = load_clvm(
     "pool_token_tail.clsp",
-    package_or_requirement="populis_puzzles",
+    package_or_requirement="solslot_puzzles",
     recompile=True,
 )
 
@@ -43,6 +47,19 @@ def curry_tail() -> Program:
     )
 
 
+def pool_full_puzzle_hash(pool_inner_puzhash: bytes32) -> bytes32:
+    singleton_struct = Program.to(
+        (SINGLETON_MOD_HASH, (POOL_LAUNCHER_ID, LAUNCHER_PUZZLE_HASH))
+    )
+    return bytes32(
+        curry_and_treehash(
+            calculate_hash_of_quoted_mod_hash(SINGLETON_MOD_HASH),
+            bytes32(singleton_struct.get_tree_hash()),
+            pool_inner_puzhash,
+        )
+    )
+
+
 def _full_cat_conditions(mint_or_melt: int, token_amount: int, input_amount: int, output_amount: int):
     tail = curry_tail()
     inner_puzzle = Program.to(1)
@@ -54,7 +71,7 @@ def _full_cat_conditions(mint_or_melt: int, token_amount: int, input_amount: int
         uint64(input_amount),
     )
     pool_inner_puzhash = bytes32(b"\xcc" * 32)
-    pool_full_puzhash = bytes32(b"\x44" * 32)
+    pool_full_puzhash = pool_full_puzzle_hash(pool_inner_puzhash)
     pool_coin_id = bytes32(b"\x22" * 32)
     tail_solution = Program.to(
         [
@@ -93,8 +110,8 @@ class TestPoolTokenTailMint:
 
     def test_mint_returns_conditions(self):
         curried = curry_tail()
-        pool_full_puzhash = bytes32(b"\x44" * 32)
         pool_inner_puzhash = bytes32(b"\xcc" * 32)
+        pool_full_puzhash = pool_full_puzzle_hash(pool_inner_puzhash)
         pool_coin_id = bytes32(b"\x22" * 32)
         my_coin_id = bytes32(b"\x33" * 32)
         amount = 100000
@@ -103,16 +120,17 @@ class TestPoolTokenTailMint:
         result = curried.run(sol)
         conditions = result.as_python()
 
-        # Mint: 2 conditions — ASSERT_MY_COIN_ID + ASSERT_PUZZLE_ANNOUNCEMENT
-        assert len(conditions) == 2
+        # Mint: token coin id + pool puzzle announcement + pool coin announcement.
+        assert len(conditions) == 3
         assert conditions[0][0] == bytes([70])  # ASSERT_MY_COIN_ID
         assert conditions[0][1] == my_coin_id
         assert conditions[1][0] == bytes([63])  # ASSERT_PUZZLE_ANNOUNCEMENT
+        assert conditions[2][0] == bytes([61])  # ASSERT_COIN_ANNOUNCEMENT
 
     def test_mint_v2_solution_binds_pool_full_puzzle_hash(self):
         curried = curry_tail()
-        pool_full_puzhash = bytes32(b"\x44" * 32)
         pool_inner_puzhash = bytes32(b"\xcc" * 32)
+        pool_full_puzhash = pool_full_puzzle_hash(pool_inner_puzhash)
         pool_coin_id = bytes32(b"\x22" * 32)
         my_coin_id = bytes32(b"\x33" * 32)
         amount = 100000
@@ -130,8 +148,28 @@ class TestPoolTokenTailMint:
 
         expected_message = b"P" + Program.to([1, my_coin_id, amount]).get_tree_hash()
         expected_announcement_id = hashlib.sha256(pool_full_puzhash + expected_message).digest()
+        expected_coin_announcement_id = hashlib.sha256(pool_coin_id + expected_message).digest()
         assert conditions[1][0] == bytes([63])  # ASSERT_PUZZLE_ANNOUNCEMENT
         assert conditions[1][1] == expected_announcement_id
+        assert conditions[2][0] == bytes([61])  # ASSERT_COIN_ANNOUNCEMENT
+        assert conditions[2][1] == expected_coin_announcement_id
+
+    def test_mint_rejects_forged_pool_full_puzzle_hash(self):
+        curried = curry_tail()
+        pool_inner_puzhash = bytes32(b"\xcc" * 32)
+        pool_coin_id = bytes32(b"\x22" * 32)
+        my_coin_id = bytes32(b"\x33" * 32)
+
+        sol = Program.to([
+            bytes32(b"\x44" * 32),
+            pool_inner_puzhash,
+            pool_coin_id,
+            my_coin_id,
+            1,
+            100000,
+        ])
+        with pytest.raises(ValueError):
+            curried.run(sol)
 
 
 class TestPoolTokenTailMelt:
@@ -139,8 +177,8 @@ class TestPoolTokenTailMelt:
 
     def test_melt_returns_conditions(self):
         curried = curry_tail()
-        pool_full_puzhash = bytes32(b"\x44" * 32)
         pool_inner_puzhash = bytes32(b"\xcc" * 32)
+        pool_full_puzhash = pool_full_puzzle_hash(pool_inner_puzhash)
         pool_coin_id = bytes32(b"\x22" * 32)
         my_coin_id = bytes32(b"\x33" * 32)
         amount = 50000
@@ -149,9 +187,10 @@ class TestPoolTokenTailMelt:
         result = curried.run(sol)
         conditions = result.as_python()
 
-        assert len(conditions) == 2
+        assert len(conditions) == 3
         assert conditions[0][0] == bytes([70])  # ASSERT_MY_COIN_ID
         assert conditions[1][0] == bytes([63])  # ASSERT_PUZZLE_ANNOUNCEMENT
+        assert conditions[2][0] == bytes([61])  # ASSERT_COIN_ANNOUNCEMENT
 
 
 class TestPoolTokenTailTransfer:
@@ -159,8 +198,8 @@ class TestPoolTokenTailTransfer:
 
     def test_transfer_returns_empty(self):
         curried = curry_tail()
-        pool_full_puzhash = bytes32(b"\x44" * 32)
         pool_inner_puzhash = bytes32(b"\xcc" * 32)
+        pool_full_puzhash = pool_full_puzzle_hash(pool_inner_puzhash)
         pool_coin_id = bytes32(b"\x22" * 32)
         my_coin_id = bytes32(b"\x33" * 32)
 
@@ -185,6 +224,7 @@ class TestPoolTokenTailCatInvocation:
 
         assert ConditionOpcode.ASSERT_MY_COIN_ID in conditions
         assert ConditionOpcode.ASSERT_PUZZLE_ANNOUNCEMENT in conditions
+        assert ConditionOpcode.ASSERT_COIN_ANNOUNCEMENT in conditions
 
     def test_melt_replays_inside_cat_wrapper(self):
         conditions = _full_cat_conditions(
@@ -196,3 +236,4 @@ class TestPoolTokenTailCatInvocation:
 
         assert ConditionOpcode.ASSERT_MY_COIN_ID in conditions
         assert ConditionOpcode.ASSERT_PUZZLE_ANNOUNCEMENT in conditions
+        assert ConditionOpcode.ASSERT_COIN_ANNOUNCEMENT in conditions

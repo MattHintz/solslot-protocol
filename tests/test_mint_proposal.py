@@ -27,7 +27,7 @@ import pytest
 from chia.types.blockchain_format.program import Program
 from chia.wallet.puzzles.load_clvm import load_clvm
 
-from populis_puzzles.mint_proposal_driver import (
+from solslot_puzzles.mint_proposal_driver import (
     STATE_APPROVED,
     STATE_CANCELLED,
     STATE_DRAFT,
@@ -44,7 +44,7 @@ from populis_puzzles.mint_proposal_driver import (
     mint_proposal_inner_mod_hash,
     parse_inner_puzzle,
 )
-from populis_puzzles.property_registry_driver import canonicalise_property_id
+from solslot_puzzles.property_registry_driver import canonicalise_property_id
 
 
 OWNER = b"\x77" * 48
@@ -76,7 +76,7 @@ class TestCompile:
     def test_module_compiles(self):
         mod = load_clvm(
             "mint_proposal_inner.clsp",
-            package_or_requirement="populis_puzzles",
+            package_or_requirement="solslot_puzzles",
             recompile=True,
         )
         assert mod is not None

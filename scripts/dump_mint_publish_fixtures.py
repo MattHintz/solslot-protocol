@@ -2,7 +2,7 @@
 
 The TS service ``mint-proposal-v2.service.ts`` (sub-brick 4c) reproduces the
 canonical mint-publish hash computation from
-:mod:`populis_puzzles.mint_publish_driver` so the portal can pin all four
+:mod:`solslot_puzzles.mint_publish_driver` so the portal can pin all four
 ``computed.*_puzhash`` values client-side and surface them to the admin
 desk *before* the publish bundle is signed.
 
@@ -45,12 +45,12 @@ from chia.wallet.puzzles.singleton_top_layer_v1_1 import (
 from chia_rs.sized_bytes import bytes32
 from chia_rs.sized_ints import uint64
 
-from populis_puzzles.mint_proposal_v2_driver import (
+from solslot_puzzles.mint_proposal_v2_driver import (
     STATE_DRAFT,
     compute_proposal_data_hash,
     make_inner_puzzle,
 )
-from populis_puzzles.mint_publish_driver import (
+from solslot_puzzles.mint_publish_driver import (
     BILL_MINT_TAG,
     SINGLETON_AMOUNT,
     build_mint_publish_artifacts,
@@ -58,14 +58,14 @@ from populis_puzzles.mint_publish_driver import (
     build_proposal_eve_launch_spend,
     build_tracker_propose_coin_spend,
 )
-from populis_puzzles.pgt_driver import (
+from solslot_puzzles.pgt_driver import (
     cat_pgt_free_puzzle_hash,
     pgt_free_inner_mod,
     pgt_locked_inner_hash,
     pgt_locked_inner_mod,
     proposal_tracker_inner_puzzle,
 )
-from populis_puzzles.property_registry_driver import (
+from solslot_puzzles.property_registry_driver import (
     build_registration_coin_spend,
     make_inner_puzzle as make_property_registry_inner_puzzle,
     registered_ids_root,

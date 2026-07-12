@@ -19,7 +19,7 @@ import pytest
 from chia.types.blockchain_format.program import Program
 from chia_rs.sized_bytes import bytes32
 
-from populis_puzzles.pgt_driver import (
+from solslot_puzzles.pgt_driver import (
     PGT_LOCK,
     PGT_RELEASE_DEADLINE,
     PGT_RELEASE_EXEC,

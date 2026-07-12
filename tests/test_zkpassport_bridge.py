@@ -9,18 +9,18 @@ from chia.wallet.lineage_proof import LineageProof
 from chia.wallet.puzzles.singleton_top_layer_v1_1 import SINGLETON_LAUNCHER_HASH, SINGLETON_MOD_HASH
 from chia_rs.sized_bytes import bytes32
 
-from populis_puzzles.vault_driver import (
+from solslot_puzzles.vault_driver import (
     AUTH_TYPE_BLS,
     DEFAULT_IDENTITY_ATTEST_ROOT,
     SPEND_UPDATE_IDENTITY,
     VAULT_INNER_MOD,
     puzzle_for_vault_inner,
 )
-from populis_puzzles.zkpassport_attestation import (
+from solslot_puzzles.zkpassport_attestation import (
     compute_attestation_bridge_message,
     compute_validator_bridge_message,
 )
-from populis_puzzles.zkpassport_bridge_driver import (
+from solslot_puzzles.zkpassport_bridge_driver import (
     TESTNET11_ZKPASSPORT_BRIDGE_POLICY_HASH,
     TESTNET11_ZKPASSPORT_VALIDATOR_PUBKEY,
     TESTNET11_ZKPASSPORT_VALIDATOR_PUBKEY_HEX,

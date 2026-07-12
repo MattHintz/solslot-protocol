@@ -25,7 +25,7 @@
   (include utils.clib)
   (include utility_macros.clib)
 
-  ;; Spend case constants (must match populis_constants.clib)
+  ;; Spend case constants (must match solslot_constants.clib)
   ;; Settlement exits deeds via p2_pool (pool batch release), not via this puzzle.
   (defconstant DEED_SPEND_POOL_DEPOSIT 0x64)
   (defconstant DEED_SPEND_POOL_REDEEM 0x72)

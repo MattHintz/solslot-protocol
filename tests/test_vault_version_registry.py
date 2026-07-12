@@ -25,7 +25,7 @@ from chia.wallet.puzzles.singleton_top_layer_v1_1 import (
 )
 from chia_rs.sized_bytes import bytes32
 
-from populis_puzzles.vault_version_registry_driver import (
+from solslot_puzzles.vault_version_registry_driver import (
     PROTOCOL_PREFIX,
     SPEND_CODE_ROUTINE,
     SPEND_PARAMS_FASTTRACK,
@@ -441,7 +441,7 @@ class TestCanonicalParamsHashAndDetection:
     def test_from_vault_inner_matches_explicit_params(self):
         """A live vault's canonical params hash == the explicit hash of its
         four protocol-level curried params."""
-        from populis_puzzles.vault_driver import (
+        from solslot_puzzles.vault_driver import (
             AUTH_TYPE_BLS,
             one_leaf_merkle_root,
             puzzle_for_vault_inner,
@@ -468,7 +468,7 @@ class TestCanonicalParamsHashAndDetection:
         assert got == expected
 
     def test_is_vault_current_true_when_matching_false_on_drift(self):
-        from populis_puzzles.vault_driver import (
+        from solslot_puzzles.vault_driver import (
             VAULT_INNER_MOD,
             AUTH_TYPE_BLS,
             one_leaf_merkle_root,

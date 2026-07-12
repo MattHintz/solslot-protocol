@@ -38,8 +38,8 @@ from chia_rs import Coin, G2Element, SpendBundle
 from chia_rs.sized_bytes import bytes32
 from chia_rs.sized_ints import uint64
 
-from populis_puzzles import vault_version_registry_driver as vvr
-from populis_puzzles.pgt_driver import (
+from solslot_puzzles import vault_version_registry_driver as vvr
+from solslot_puzzles.pgt_driver import (
     bill_vault_version,
     build_tracker_execute_coin_spend,
     proposal_hash_from_bill,

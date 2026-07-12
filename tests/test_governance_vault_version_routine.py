@@ -30,8 +30,8 @@ from chia.wallet.puzzles.singleton_top_layer_v1_1 import (
 )
 from chia_rs.sized_bytes import bytes32
 
-from populis_puzzles import vault_version_registry_driver as vvr
-from populis_puzzles.pgt_driver import (
+from solslot_puzzles import vault_version_registry_driver as vvr
+from solslot_puzzles.pgt_driver import (
     TRK_EXECUTE,
     bill_vault_version,
     proposal_hash_from_bill,

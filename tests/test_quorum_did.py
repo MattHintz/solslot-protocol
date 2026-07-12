@@ -11,7 +11,7 @@ from chia_rs.sized_bytes import bytes32
 
 QUORUM_DID_MOD: Program = load_clvm(
     "quorum_did_inner.clsp",
-    package_or_requirement="populis_puzzles",
+    package_or_requirement="solslot_puzzles",
     recompile=True,
 )
 

@@ -62,8 +62,8 @@ from chia.wallet.puzzles.singleton_top_layer_v1_1 import (
 )
 from chia_rs import G1Element, G2Element, PrivateKey
 
-from populis_puzzles import load_puzzle
-from populis_puzzles.zkpassport_attestation import ZKPASSPORT_EMPTY_ATTEST_ROOT
+from solslot_puzzles import load_puzzle
+from solslot_puzzles.zkpassport_attestation import ZKPASSPORT_EMPTY_ATTEST_ROOT
 
 logger = logging.getLogger(__name__)
 
@@ -157,7 +157,7 @@ def vault_discovery_hint(auth_type: int, owner_pubkey: bytes) -> bytes32:
 # EIP-712 domain declaration — single source of truth.
 #
 # Any change to these three values requires regenerating PREFIX_AND_DOMAIN_SEPARATOR
-# in populis_puzzles/vault_singleton_inner.clsp to match.  See the eip712 audit
+# in solslot_puzzles/vault_singleton_inner.clsp to match.  See the eip712 audit
 # helper `eip712_prefix_and_domain_separator()` below — it is the generator.
 #
 # chainId = 84532 (Base Sepolia) — matches the deployed PopulisZkPassportAttestationEmitter
@@ -336,7 +336,7 @@ def eip712_prefix_and_domain_separator() -> bytes:
     EIP-712 digest.
 
     Regenerating the CLSP constant:
-        >>> from populis_puzzles.vault_driver import eip712_prefix_and_domain_separator
+        >>> from solslot_puzzles.vault_driver import eip712_prefix_and_domain_separator
         >>> "0x" + eip712_prefix_and_domain_separator().hex()
     """
     return b"\x19\x01" + eip712_domain_separator()

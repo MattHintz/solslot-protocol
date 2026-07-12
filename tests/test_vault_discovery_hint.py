@@ -19,7 +19,7 @@ import hashlib
 
 import pytest
 
-from populis_puzzles.vault_driver import (
+from solslot_puzzles.vault_driver import (
     AUTH_TYPE_BLS,
     AUTH_TYPE_SECP256K1,
     AUTH_TYPE_SECP256R1,

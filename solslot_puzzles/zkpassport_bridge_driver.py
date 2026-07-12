@@ -11,9 +11,9 @@ from chia_rs import G2Element, SpendBundle
 from chia_rs.sized_bytes import bytes32
 from chia_rs.sized_ints import uint64
 
-from populis_puzzles import load_puzzle
-from populis_puzzles.vault_driver import build_vault_update_identity_spend
-from populis_puzzles.zkpassport_attestation import (
+from solslot_puzzles import load_puzzle
+from solslot_puzzles.vault_driver import build_vault_update_identity_spend
+from solslot_puzzles.zkpassport_attestation import (
     compute_attestation_bridge_message,
     compute_validator_bridge_message,
 )

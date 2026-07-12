@@ -40,8 +40,9 @@ from chia_rs import AugSchemeMPL, G2Element
 from chia_rs.sized_bytes import bytes32
 from chia_rs.sized_ints import uint64
 
-from populis_puzzles.protocol_deployment import (
+from solslot_puzzles.protocol_deployment import (
     DEFAULT_MIN_PROPOSAL_STAKE,
+    DEFAULT_MIN_NAV_REGISTRY_VERSION,
     DEFAULT_PGT_TOTAL_SUPPLY,
     DEFAULT_QUORUM_BPS,
     ProtocolDeploymentParams,
@@ -63,6 +64,17 @@ PGT_GENESIS = bytes32(b"\xa0" * 32)
 POOL_GENESIS = bytes32(b"\xb0" * 32)
 DID_GENESIS = bytes32(b"\xc0" * 32)
 GOV_GENESIS = bytes32(b"\xd0" * 32)
+TRUSTED_NAV_REGISTRY_GOV_PUBKEY = b"\x91" * 48
+TRUSTED_NAV_REGISTRY_LAUNCHER_ID = bytes32(b"\x92" * 32)
+TRUSTED_GOVERNANCE_REWARDS_ROOT = bytes32(b"\x93" * 32)
+
+
+def trusted_v2_kwargs() -> dict:
+    return {
+        "trusted_nav_registry_gov_pubkey": TRUSTED_NAV_REGISTRY_GOV_PUBKEY,
+        "trusted_nav_registry_launcher_id": TRUSTED_NAV_REGISTRY_LAUNCHER_ID,
+        "trusted_governance_rewards_root": TRUSTED_GOVERNANCE_REWARDS_ROOT,
+    }
 
 
 class _FakeFaucet:
@@ -108,6 +120,7 @@ def plan(faucet) -> ProtocolDeploymentPlan:
         pool_genesis_coin_id=POOL_GENESIS,
         did_genesis_coin_id=DID_GENESIS,
         gov_genesis_coin_id=GOV_GENESIS,
+        **trusted_v2_kwargs(),
     )
 
 
@@ -139,6 +152,7 @@ class TestPlanDerivation:
             pool_genesis_coin_id=POOL_GENESIS,
             did_genesis_coin_id=DID_GENESIS,
             gov_genesis_coin_id=GOV_GENESIS,
+            **trusted_v2_kwargs(),
         )
         assert plan.pgt_tail_hash != other.pgt_tail_hash
 
@@ -181,6 +195,7 @@ class TestPlanDerivation:
             pool_genesis_coin_id=POOL_GENESIS,
             did_genesis_coin_id=DID_GENESIS,
             gov_genesis_coin_id=GOV_GENESIS,
+            **trusted_v2_kwargs(),
         )
         b = ProtocolDeploymentPlan(
             network="testnet11",
@@ -190,14 +205,53 @@ class TestPlanDerivation:
             pool_genesis_coin_id=POOL_GENESIS,
             did_genesis_coin_id=DID_GENESIS,
             gov_genesis_coin_id=GOV_GENESIS,
+            **trusted_v2_kwargs(),
         )
         assert a.tracker_inner_puzhash != b.tracker_inner_puzhash
+
+    def test_changing_nav_registry_floor_changes_pool_hash(self, faucet):
+        """Different minimum NAV registry versions commit different pool inners."""
+        a = ProtocolDeploymentPlan(
+            network="testnet11",
+            params=ProtocolDeploymentParams(min_nav_registry_version=7),
+            faucet_inner_puzhash=faucet.address_puzzle_hash,
+            pgt_genesis_coin_id=PGT_GENESIS,
+            pool_genesis_coin_id=POOL_GENESIS,
+            did_genesis_coin_id=DID_GENESIS,
+            gov_genesis_coin_id=GOV_GENESIS,
+            **trusted_v2_kwargs(),
+        )
+        b = ProtocolDeploymentPlan(
+            network="testnet11",
+            params=ProtocolDeploymentParams(min_nav_registry_version=8),
+            faucet_inner_puzhash=faucet.address_puzzle_hash,
+            pgt_genesis_coin_id=PGT_GENESIS,
+            pool_genesis_coin_id=POOL_GENESIS,
+            did_genesis_coin_id=DID_GENESIS,
+            gov_genesis_coin_id=GOV_GENESIS,
+            **trusted_v2_kwargs(),
+        )
+        assert a.pool_inner_puzhash != b.pool_inner_puzhash
+
+    def test_empty_v2_trust_anchors_rejected(self, faucet):
+        """Deployment plans must not silently curry sentinel V2 trust anchors."""
+        with pytest.raises(ValueError, match="trusted_nav_registry_gov_pubkey"):
+            ProtocolDeploymentPlan(
+                network="testnet11",
+                params=ProtocolDeploymentParams(),
+                faucet_inner_puzhash=faucet.address_puzzle_hash,
+                pgt_genesis_coin_id=PGT_GENESIS,
+                pool_genesis_coin_id=POOL_GENESIS,
+                did_genesis_coin_id=DID_GENESIS,
+                gov_genesis_coin_id=GOV_GENESIS,
+            )
 
 
 # ── Manifest round-trip ──────────────────────────────────────────────────────
 class TestManifestRoundtrip:
     def test_to_dict_contains_all_fields(self, plan):
         m = plan_to_manifest_dict(plan)
+        assert m["params"]["min_nav_registry_version"] == DEFAULT_MIN_NAV_REGISTRY_VERSION
         for required in [
             "network", "params", "faucet_inner_puzhash",
             "pgt_genesis_coin_id", "pool_genesis_coin_id",
@@ -283,6 +337,7 @@ class TestBundleBuilder:
             pool_genesis_coin_id=pool_coin.name(),
             did_genesis_coin_id=did_coin.name(),
             gov_genesis_coin_id=gov_coin.name(),
+            **trusted_v2_kwargs(),
         )
 
         result = build_deployment_bundle(
@@ -310,6 +365,7 @@ class TestBundleBuilder:
             pool_genesis_coin_id=pool_coin.name(),
             did_genesis_coin_id=did_coin.name(),
             gov_genesis_coin_id=gov_coin.name(),
+            **trusted_v2_kwargs(),
         )
         result = build_deployment_bundle(
             plan=plan, faucet=faucet,
@@ -335,6 +391,7 @@ class TestBundleBuilder:
             pool_genesis_coin_id=pool_coin.name(),
             did_genesis_coin_id=did_coin.name(),
             gov_genesis_coin_id=gov_coin.name(),
+            **trusted_v2_kwargs(),
         )
         result = build_deployment_bundle(
             plan=plan, faucet=faucet,
@@ -380,6 +437,7 @@ class TestBundleBuilder:
             pool_genesis_coin_id=pool_coin.name(),
             did_genesis_coin_id=did_coin.name(),
             gov_genesis_coin_id=gov_coin.name(),
+            **trusted_v2_kwargs(),
         )
         with pytest.raises(ValueError, match="pgt_coin name does not match"):
             build_deployment_bundle(
@@ -403,6 +461,7 @@ class TestBundleBuilder:
             pool_genesis_coin_id=pool_coin.name(),
             did_genesis_coin_id=did_coin.name(),
             gov_genesis_coin_id=gov_coin.name(),
+            **trusted_v2_kwargs(),
         )
         with pytest.raises(ValueError, match="amount.*<.*required"):
             build_deployment_bundle(
@@ -427,6 +486,7 @@ class TestPostFixGovernance:
             pool_genesis_coin_id=POOL_GENESIS,
             did_genesis_coin_id=DID_GENESIS,
             gov_genesis_coin_id=GOV_GENESIS,
+            **trusted_v2_kwargs(),
         )
         a = ProtocolDeploymentPlan(params=params_default, **kwargs)
         b = ProtocolDeploymentPlan(params=params_doubled, **kwargs)

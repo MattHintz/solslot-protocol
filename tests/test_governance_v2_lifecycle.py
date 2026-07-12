@@ -27,7 +27,7 @@ from chia.types.blockchain_format.program import Program
 from chia.wallet.puzzles.load_clvm import load_clvm
 from chia_rs.sized_bytes import bytes32
 
-from populis_puzzles.pgt_driver import (
+from solslot_puzzles.pgt_driver import (
     PGT_LOCK,
     SINGLETON_LAUNCHER_HASH,
     TRK_EXECUTE,
@@ -48,7 +48,7 @@ from populis_puzzles.pgt_driver import (
 # ── Compiled puzzles for cross-side verification ─────────────────────────────
 QUORUM_DID_MOD = load_clvm(
     "quorum_did_inner.clsp",
-    package_or_requirement="populis_puzzles",
+    package_or_requirement="solslot_puzzles",
     recompile=True,
 )
 

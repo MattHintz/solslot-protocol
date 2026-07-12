@@ -20,7 +20,7 @@ from chia_rs.sized_bytes import bytes32
 # Load the compiled smart deed inner puzzle
 SMART_DEED_INNER_MOD: Program = load_clvm(
     "smart_deed_inner.clsp",
-    package_or_requirement="populis_puzzles",
+    package_or_requirement="solslot_puzzles",
     recompile=True,
 )
 
@@ -28,7 +28,7 @@ SMART_DEED_INNER_MOD: Program = load_clvm(
 # puzhash the deposit path should target.
 P2_POOL_MOD: Program = load_clvm(
     "p2_pool.clsp",
-    package_or_requirement="populis_puzzles",
+    package_or_requirement="solslot_puzzles",
     recompile=True,
 )
 

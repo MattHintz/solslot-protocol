@@ -33,7 +33,7 @@ from chia_rs import CoinSpend
 from chia_rs.sized_bytes import bytes32
 from chia_rs.sized_ints import uint64
 
-from populis_puzzles.pgt_driver import (
+from solslot_puzzles.pgt_driver import (
     PGT_LOCK,
     TRK_VOTE,
     bill_mint,
@@ -225,7 +225,7 @@ class TestBuildPgtLockCoinSpend:
         pgt_coin = _make_fake_coin(puzzle_hash=expected_puzzle_hash, amount=amount)
         # Identity inner: solution IS the conditions list.  Emit one
         # CREATE_COIN to the canonical locked puzhash with amount = coin.amount.
-        from populis_puzzles.pgt_driver import (
+        from solslot_puzzles.pgt_driver import (
             pgt_free_inner_puzzle,
             pgt_locked_inner_hash,
         )
@@ -501,7 +501,7 @@ class TestLockVotePairing:
 
         # ── PGT lock spend ──
         voter_ph = IDENTITY_HASH
-        from populis_puzzles.pgt_driver import pgt_locked_inner_hash
+        from solslot_puzzles.pgt_driver import pgt_locked_inner_hash
 
         locked_ph = pgt_locked_inner_hash(
             PGT_FREE_MOD_HASH, TRACKER_STRUCT, voter_ph, proposal_hash, deadline
@@ -516,7 +516,7 @@ class TestLockVotePairing:
             voter_ph,
         )
         pgt_coin = _make_fake_coin(puzzle_hash=pgt_ph, amount=vote_amount)
-        from populis_puzzles.pgt_driver import pgt_free_inner_puzzle as _pfp
+        from solslot_puzzles.pgt_driver import pgt_free_inner_puzzle as _pfp
 
         lock_spend = build_pgt_lock_coin_spend(
             pgt_coin=pgt_coin,

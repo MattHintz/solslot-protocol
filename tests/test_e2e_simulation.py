@@ -55,52 +55,52 @@ from chia_rs.sized_ints import uint64
 # ─────────────────────────────────────────────────────────────────────
 POOL_INNER_MOD: Program = load_clvm(
     "pool_singleton_inner.clsp",
-    package_or_requirement="populis_puzzles",
+    package_or_requirement="solslot_puzzles",
     recompile=True,
 )
 GOV_INNER_MOD: Program = load_clvm(
     "governance_singleton_inner.clsp",
-    package_or_requirement="populis_puzzles",
+    package_or_requirement="solslot_puzzles",
     recompile=True,
 )
 SMART_DEED_INNER_MOD: Program = load_clvm(
     "smart_deed_inner.clsp",
-    package_or_requirement="populis_puzzles",
+    package_or_requirement="solslot_puzzles",
     recompile=True,
 )
 POOL_TOKEN_TAIL_MOD: Program = load_clvm(
     "pool_token_tail.clsp",
-    package_or_requirement="populis_puzzles",
+    package_or_requirement="solslot_puzzles",
     recompile=True,
 )
 MINT_OFFER_MOD: Program = load_clvm(
     "mint_offer_delegate.clsp",
-    package_or_requirement="populis_puzzles",
+    package_or_requirement="solslot_puzzles",
     recompile=True,
 )
 PURCHASE_PAYMENT_MOD: Program = load_clvm(
     "purchase_payment.clsp",
-    package_or_requirement="populis_puzzles",
+    package_or_requirement="solslot_puzzles",
     recompile=True,
 )
 QUORUM_DID_MOD: Program = load_clvm(
     "quorum_did_inner.clsp",
-    package_or_requirement="populis_puzzles",
+    package_or_requirement="solslot_puzzles",
     recompile=True,
 )
 SINGLETON_LAUNCHER_WITH_DID_MOD: Program = load_clvm(
     "singleton_launcher_with_did.clsp",
-    package_or_requirement="populis_puzzles",
+    package_or_requirement="solslot_puzzles",
     recompile=True,
 )
 P2_VAULT_MOD: Program = load_clvm(
     "p2_vault.clsp",
-    package_or_requirement="populis_puzzles",
+    package_or_requirement="solslot_puzzles",
     recompile=True,
 )
 P2_POOL_MOD: Program = load_clvm(
     "p2_pool.clsp",
-    package_or_requirement="populis_puzzles",
+    package_or_requirement="solslot_puzzles",
     recompile=True,
 )
 
@@ -134,6 +134,14 @@ GOV_MOD_HASH = GOV_INNER_MOD.get_tree_hash()
 P2_VAULT_MOD_HASH = P2_VAULT_MOD.get_tree_hash()
 P2_POOL_MOD_HASH = P2_POOL_MOD.get_tree_hash()
 PURCHASE_MOD_HASH = PURCHASE_PAYMENT_MOD.get_tree_hash()
+NAV_REGISTRY_MOD_HASH = bytes32(b"\x18" * 32)
+NAV_REGISTRY_GOV_PUBKEY = b"\x19" * 48
+NAV_REGISTRY_LAUNCHER_ID = bytes32(b"\x1a" * 32)
+MIN_NAV_REGISTRY_VERSION = 0
+TRUSTED_TREASURY_RESERVE_PUZHASH = bytes32(b"\xf1" * 32)
+TRUSTED_PROTOCOL_TREASURY_PUZHASH = bytes32(b"\xf2" * 32)
+TRUSTED_GOVERNANCE_REWARDS_PUZHASH = bytes32(b"\xf3" * 32)
+TRUSTED_GOVERNANCE_REWARDS_ROOT = bytes32(b"\xf4" * 32)
 
 # Placeholder hashes for contracts not directly exercised in deposit/redeem path
 CAT_MOD_HASH = bytes32(b"\x05" * 32)
@@ -215,6 +223,14 @@ def curry_pool(
         CAT_MOD_HASH,
         OFFER_MOD_HASH,
         P2_VAULT_MOD_HASH,
+        NAV_REGISTRY_MOD_HASH,
+        NAV_REGISTRY_GOV_PUBKEY,
+        NAV_REGISTRY_LAUNCHER_ID,
+        MIN_NAV_REGISTRY_VERSION,
+        TRUSTED_TREASURY_RESERVE_PUZHASH,
+        TRUSTED_PROTOCOL_TREASURY_PUZHASH,
+        TRUSTED_GOVERNANCE_REWARDS_PUZHASH,
+        TRUSTED_GOVERNANCE_REWARDS_ROOT,
         FP_SCALE,
         pool_status,
         tvl,
@@ -553,7 +569,7 @@ class TestPhase5Deposit:
         assert pool_send[2] == deed_recv[2], "Pool↔Deed deposit message mismatch"
 
     def test_pool_token_announcement_match(self):
-        """Pool CREATE_PUZZLE_ANNOUNCEMENT matches Token TAIL ASSERT_PUZZLE_ANNOUNCEMENT."""
+        """Pool token auth announcements match Token TAIL assertions."""
         pool_sol = Program.to([
             POOL_COIN_ID, self.pool_inner_ph, 1,
             POOL_SPEND_DEPOSIT,
@@ -562,6 +578,8 @@ class TestPhase5Deposit:
         pool_conds = self.pool_inner.run(pool_sol).as_python()
         pool_announce = extract_cond(pool_conds, 62)  # CREATE_PUZZLE_ANNOUNCEMENT
         pool_announce_content = pool_announce[1]
+        pool_coin_announce = extract_cond(pool_conds, 60)  # CREATE_COIN_ANNOUNCEMENT
+        assert pool_coin_announce[1] == pool_announce_content
 
         # Token TAIL
         tail_sol = Program.to([
@@ -571,14 +589,18 @@ class TestPhase5Deposit:
         ])
         tail_conds = self.tail.run(tail_sol).as_python()
         tail_assert = extract_cond(tail_conds, 63)  # ASSERT_PUZZLE_ANNOUNCEMENT
+        tail_coin_assert = extract_cond(tail_conds, 61)  # ASSERT_COIN_ANNOUNCEMENT
 
-        # Compute expected full hash: sha256(pool_full_ph || announcement_content)
+        # Compute expected hashes over the same authorization content.
         pool_full_ph = full_puzzle_hash(POOL_SINGLETON_STRUCT, self.pool_inner)
-
         computed_hash = bytes32(
             hashlib.sha256(bytes(pool_full_ph) + pool_announce_content).digest()
         )
+        computed_coin_hash = bytes32(
+            hashlib.sha256(bytes(POOL_COIN_ID) + pool_announce_content).digest()
+        )
         assert bytes32(tail_assert[1]) == computed_hash, "Pool↔Token announcement mismatch"
+        assert bytes32(tail_coin_assert[1]) == computed_coin_hash
 
     def test_deed_sends_to_p2_pool(self):
         """Regression for CRIT-1: Deed CREATE_COIN destination must be the
@@ -735,7 +757,7 @@ class TestPhase6Redeem:
         )
 
     def test_pool_redeem_token_melt_announcement(self):
-        """Pool CREATE_PUZZLE_ANNOUNCEMENT for token melt matches TAIL assertion."""
+        """Pool token melt announcements match TAIL assertions."""
         pool_sol = Program.to([
             POOL_COIN_ID, self.pool_inner_ph, 1,
             POOL_SPEND_REDEEM,
@@ -744,6 +766,8 @@ class TestPhase6Redeem:
         pool_conds = self.pool_inner.run(pool_sol).as_python()
         pool_announce = extract_cond(pool_conds, 62)
         pool_announce_content = pool_announce[1]
+        pool_coin_announce = extract_cond(pool_conds, 60)
+        assert pool_coin_announce[1] == pool_announce_content
 
         # Verify content: PROTOCOL_PREFIX + sha256tree(list TOKEN_MELT token_coin_id amount)
         expected_tree = Program.to([TOKEN_MELT, TOKEN_COIN_ID, self.expected_token_amount])
@@ -758,12 +782,17 @@ class TestPhase6Redeem:
         ])
         tail_conds = self.tail.run(tail_sol).as_python()
         tail_assert = extract_cond(tail_conds, 63)
+        tail_coin_assert = extract_cond(tail_conds, 61)
 
         pool_full_ph = full_puzzle_hash(POOL_SINGLETON_STRUCT, self.pool_inner)
         computed_hash = bytes32(
             hashlib.sha256(bytes(pool_full_ph) + pool_announce_content).digest()
         )
+        computed_coin_hash = bytes32(
+            hashlib.sha256(bytes(POOL_COIN_ID) + pool_announce_content).digest()
+        )
         assert bytes32(tail_assert[1]) == computed_hash, "Pool↔Token melt announcement mismatch"
+        assert bytes32(tail_coin_assert[1]) == computed_coin_hash
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -1556,7 +1585,7 @@ class TestFullLifecycleRoundTrip:
 
 VAULT_INNER_MOD: Program = load_clvm(
     "vault_singleton_inner.clsp",
-    package_or_requirement="populis_puzzles",
+    package_or_requirement="solslot_puzzles",
     recompile=True,
 )
 

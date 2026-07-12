@@ -1,7 +1,7 @@
 """Generate the fixture for the portal's TS new-vault launch builder (Brick 6a).
 
 The TS service ``vault-launch-spend.service.ts`` reproduces the vault
-launch primitives from ``populis_puzzles/vault_driver.py`` so the portal can
+launch primitives from ``solslot_puzzles/vault_driver.py`` so the portal can
 build a fresh vault launcher spend entirely client-side during a one-click
 upgrade — no Populis API:
 
@@ -36,14 +36,14 @@ from chia.wallet.puzzles.singleton_top_layer_v1_1 import (
 )
 from chia_rs.sized_bytes import bytes32
 
-from populis_puzzles.vault_driver import (
+from solslot_puzzles.vault_driver import (
     AUTH_TYPE_BLS,
     VAULT_INNER_MOD,
     one_leaf_merkle_root,
     puzzle_for_vault_full,
     puzzle_for_vault_inner,
 )
-from populis_puzzles.vault_version_registry_driver import (
+from solslot_puzzles.vault_version_registry_driver import (
     compute_canonical_params_hash,
 )
 

@@ -25,7 +25,7 @@ from chia.wallet.puzzles.singleton_top_layer_v1_1 import puzzle_for_singleton
 from chia_rs.sized_bytes import bytes32
 from chia_rs.sized_ints import uint64
 
-from populis_puzzles.property_registry_driver import (
+from solslot_puzzles.property_registry_driver import (
     EMPTY_REGISTERED_IDS_ROOT,
     PropertyRegistryState,
     build_registration_coin_spend,
@@ -54,7 +54,7 @@ class TestCompile:
     def test_module_compiles(self):
         mod = load_clvm(
             "property_registry_inner.clsp",
-            package_or_requirement="populis_puzzles",
+            package_or_requirement="solslot_puzzles",
             recompile=True,
         )
         assert mod is not None

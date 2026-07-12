@@ -1,5 +1,5 @@
 [project]
-name = "populis-protocol"
+name = "solslot-protocol"
 version = "0.1.0"
 requires-python = ">= 3.10"
 license = { text = "Proprietary - All Rights Reserved" }
@@ -31,4 +31,4 @@ requires = ["setuptools>=68.0"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["populis_puzzles*"]
+include = ["solslot_puzzles*", "solslot_puzzles*"]

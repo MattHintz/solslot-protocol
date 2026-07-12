@@ -5,7 +5,7 @@ from chia.types.blockchain_format.program import Program
 from chia.wallet.puzzles.load_clvm import load_clvm
 from chia_rs.sized_bytes import bytes32
 
-from populis_puzzles.collection_nav_registry_driver import (
+from solslot_puzzles.collection_nav_registry_driver import (
     EMPTY_COLLECTION_NAV_ROOT,
     CollectionNavRegistryState,
     NAV_EVIDENCE_TAG,
@@ -33,7 +33,7 @@ def b32(byte: int) -> bytes32:
 def test_module_compiles():
     mod = load_clvm(
         "collection_nav_registry_inner.clsp",
-        package_or_requirement="populis_puzzles",
+        package_or_requirement="solslot_puzzles",
         recompile=True,
     )
     assert mod is not None

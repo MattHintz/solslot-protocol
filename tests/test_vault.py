@@ -24,17 +24,17 @@ from chia_rs.sized_bytes import bytes32
 # ── Load compiled puzzles ──────────────────────────────────────────────────
 VAULT_INNER_MOD: Program = load_clvm(
     "vault_singleton_inner.clsp",
-    package_or_requirement="populis_puzzles",
+    package_or_requirement="solslot_puzzles",
     recompile=True,
 )
 P2_VAULT_MOD: Program = load_clvm(
     "p2_vault.clsp",
-    package_or_requirement="populis_puzzles",
+    package_or_requirement="solslot_puzzles",
     recompile=True,
 )
 P2_POOL_MOD: Program = load_clvm(
     "p2_pool.clsp",
-    package_or_requirement="populis_puzzles",
+    package_or_requirement="solslot_puzzles",
     recompile=True,
 )
 
@@ -355,7 +355,7 @@ class TestVaultBLSAcceptOffer:
         ]
 
     def test_accept_offer_driver_solution_vector(self):
-        from populis_puzzles.vault_driver import _inner_solution_for_accept_offer
+        from solslot_puzzles.vault_driver import _inner_solution_for_accept_offer
 
         curried = self._curried_enrolled()
         my_id = bytes32(b"\x11" * 32)
@@ -391,7 +391,7 @@ class TestVaultBLSAcceptOffer:
         assert params[6].as_atom() == b""
 
     def test_accept_offer_vector_outputs_are_stable(self):
-        from populis_puzzles.vault_driver import _inner_solution_for_accept_offer
+        from solslot_puzzles.vault_driver import _inner_solution_for_accept_offer
 
         curried = self._curried_enrolled()
         my_id = bytes32(b"\x11" * 32)
@@ -574,7 +574,7 @@ class TestVaultSecp256k1RealSignature:
         return pub, compact
 
     def _run_for_spend_case(self, spend_case_byte: int, spend_case_bytes: bytes):
-        from populis_puzzles.vault_driver import signing_message_for_vault_spend
+        from solslot_puzzles.vault_driver import signing_message_for_vault_spend
 
         my_id = bytes32(b"\x11" * 32)
 
@@ -632,7 +632,7 @@ class TestVaultSecp256k1RealSignature:
         This is the CRIT-2 + HIGH-5 combined guarantee: binding vault_coin_id
         into the EIP-712 digest prevents cross-coin replay.
         """
-        from populis_puzzles.vault_driver import signing_message_for_vault_spend
+        from solslot_puzzles.vault_driver import signing_message_for_vault_spend
 
         my_id_a = bytes32(b"\x11" * 32)
         my_id_b = bytes32(b"\x22" * 32)
@@ -815,7 +815,7 @@ class TestVaultDriverHelpers:
     """Unit tests for vault_driver.py pure functions."""
 
     def test_signing_message_is_deterministic(self):
-        from populis_puzzles.vault_driver import signing_message_for_vault_spend
+        from solslot_puzzles.vault_driver import signing_message_for_vault_spend
         deed_id = bytes32(b"\xdd" * 32)
         vault_coin_id = bytes32(b"\x11" * 32)
         msg1 = signing_message_for_vault_spend(b"o", deed_id, vault_coin_id)
@@ -824,7 +824,7 @@ class TestVaultDriverHelpers:
         assert len(msg1) == 32
 
     def test_signing_message_differs_by_spend_case(self):
-        from populis_puzzles.vault_driver import signing_message_for_vault_spend
+        from solslot_puzzles.vault_driver import signing_message_for_vault_spend
         deed_id = bytes32(b"\xdd" * 32)
         vault_coin_id = bytes32(b"\x11" * 32)
         msg_o = signing_message_for_vault_spend(b"o", deed_id, vault_coin_id)
@@ -835,21 +835,21 @@ class TestVaultDriverHelpers:
         assert msg_i != msg_a
 
     def test_signing_message_differs_by_deed_launcher_id(self):
-        from populis_puzzles.vault_driver import signing_message_for_vault_spend
+        from solslot_puzzles.vault_driver import signing_message_for_vault_spend
         vault_coin_id = bytes32(b"\x11" * 32)
         msg_a = signing_message_for_vault_spend(b"o", bytes32(b"\xaa" * 32), vault_coin_id)
         msg_b = signing_message_for_vault_spend(b"o", bytes32(b"\xbb" * 32), vault_coin_id)
         assert msg_a != msg_b
 
     def test_signing_message_differs_by_vault_coin_id(self):
-        from populis_puzzles.vault_driver import signing_message_for_vault_spend
+        from solslot_puzzles.vault_driver import signing_message_for_vault_spend
         deed_id = bytes32(b"\xdd" * 32)
         msg_a = signing_message_for_vault_spend(b"o", deed_id, bytes32(b"\x11" * 32))
         msg_b = signing_message_for_vault_spend(b"o", deed_id, bytes32(b"\x22" * 32))
         assert msg_a != msg_b
 
     def test_puzzle_for_vault_inner_bls_curry(self):
-        from populis_puzzles.vault_driver import (
+        from solslot_puzzles.vault_driver import (
             puzzle_for_vault_inner, AUTH_TYPE_BLS,
         )
         from chia.wallet.puzzles.singleton_top_layer_v1_1 import SINGLETON_LAUNCHER_HASH, SINGLETON_MOD_HASH
@@ -864,7 +864,7 @@ class TestVaultDriverHelpers:
         assert len(bytes(inner.get_tree_hash())) == 32
 
     def test_puzzle_for_vault_inner_secp_curry(self):
-        from populis_puzzles.vault_driver import (
+        from solslot_puzzles.vault_driver import (
             puzzle_for_vault_inner, AUTH_TYPE_SECP256K1,
         )
         inner = puzzle_for_vault_inner(
@@ -878,7 +878,7 @@ class TestVaultDriverHelpers:
         assert len(bytes(inner.get_tree_hash())) == 32
 
     def test_puzzle_for_vault_inner_rejects_compressed_secp256r1_pubkey(self):
-        from populis_puzzles.vault_driver import (
+        from solslot_puzzles.vault_driver import (
             puzzle_for_vault_inner, AUTH_TYPE_SECP256R1,
         )
         with pytest.raises(ValueError, match="65 bytes uncompressed"):
@@ -893,7 +893,7 @@ class TestVaultDriverHelpers:
     def test_build_create_vault_bundle_rejects_compressed_secp256r1_pubkey(self):
         from chia.types.blockchain_format.coin import Coin
         from chia_rs.sized_ints import uint64
-        from populis_puzzles.vault_driver import (
+        from solslot_puzzles.vault_driver import (
             build_create_vault_bundle, AUTH_TYPE_SECP256R1,
         )
         with pytest.raises(ValueError, match="65 bytes uncompressed"):
@@ -909,7 +909,7 @@ class TestVaultDriverHelpers:
     def test_build_vault_accept_offer_spend_pins_builder_boundary(self):
         from chia.types.blockchain_format.coin import Coin
         from chia.wallet.lineage_proof import LineageProof
-        from populis_puzzles.vault_driver import (
+        from solslot_puzzles.vault_driver import (
             build_vault_accept_offer_spend,
             puzzle_for_vault_inner,
         )
@@ -945,7 +945,7 @@ class TestVaultDriverHelpers:
     def test_build_vault_accept_offer_spend_rejects_missing_identity_root(self):
         from chia.types.blockchain_format.coin import Coin
         from chia.wallet.lineage_proof import LineageProof
-        from populis_puzzles.vault_driver import (
+        from solslot_puzzles.vault_driver import (
             DEFAULT_IDENTITY_ATTEST_ROOT,
             build_vault_accept_offer_spend,
             puzzle_for_vault_inner,
@@ -978,7 +978,7 @@ class TestVaultDriverHelpers:
             )
 
     def test_puzzle_for_vault_inner_defaults_identity_state(self):
-        from populis_puzzles.vault_driver import (
+        from solslot_puzzles.vault_driver import (
             DEFAULT_IDENTITY_ATTEST_ROOT,
             DEFAULT_ZKPASSPORT_BRIDGE_POLICY_HASH,
             AUTH_TYPE_BLS,
@@ -1001,7 +1001,7 @@ class TestVaultDriverHelpers:
         assert state.pool_launcher_id == POOL_LAUNCHER_ID
 
     def test_puzzle_for_vault_inner_accepts_custom_identity_state(self):
-        from populis_puzzles.vault_driver import (
+        from solslot_puzzles.vault_driver import (
             AUTH_TYPE_BLS,
             parse_vault_inner_puzzle,
             puzzle_for_vault_inner,
@@ -1030,7 +1030,7 @@ class TestVaultDriverHelpers:
         assert state.zkpassport_bridge_policy_hash == bridge_policy_hash
 
     def test_bls_and_secp_inner_puzzles_have_different_hashes(self):
-        from populis_puzzles.vault_driver import (
+        from solslot_puzzles.vault_driver import (
             puzzle_for_vault_inner, AUTH_TYPE_BLS, AUTH_TYPE_SECP256K1,
         )
         inner_bls = puzzle_for_vault_inner(
@@ -1042,7 +1042,7 @@ class TestVaultDriverHelpers:
         assert inner_bls.get_tree_hash() != inner_secp.get_tree_hash()
 
     def test_owner_pubkey_bytes_from_bls(self):
-        from populis_puzzles.vault_driver import owner_pubkey_bytes_from_bls
+        from solslot_puzzles.vault_driver import owner_pubkey_bytes_from_bls
         from chia_rs import G1Element
         pk = G1Element.generator()
         b = owner_pubkey_bytes_from_bls(pk)
@@ -1201,7 +1201,7 @@ class TestVaultBLSMigrate:
             curried.run(self._sol(my_id, curried.get_tree_hash(), bytes32(b"\x77" * 32), sig=b"\x00" * 64))
 
     def test_migrate_driver_solution_and_signing_tree(self):
-        from populis_puzzles.vault_driver import (
+        from solslot_puzzles.vault_driver import (
             _inner_solution_for_migrate, puzzle_for_p2_vault,
             migrate_bls_signing_tree, SPEND_MIGRATE as DRV_SPEND_MIGRATE,
         )
@@ -1220,7 +1220,7 @@ class TestVaultBLSMigrate:
     def test_build_vault_migrate_spend_carries_destination(self):
         from chia.types.blockchain_format.coin import Coin
         from chia.wallet.lineage_proof import LineageProof
-        from populis_puzzles.vault_driver import (
+        from solslot_puzzles.vault_driver import (
             build_vault_migrate_spend, puzzle_for_vault_inner, puzzle_for_p2_vault,
         )
 
@@ -1327,8 +1327,8 @@ class TestVaultUpdateIdentity:
 
     def test_update_identity_asserts_bridge_message_and_updates_root(self):
         from chia.types.blockchain_format.coin import Coin
-        from populis_puzzles.vault_driver import puzzle_for_vault_inner
-        from populis_puzzles.zkpassport_attestation import compute_attestation_bridge_message
+        from solslot_puzzles.vault_driver import puzzle_for_vault_inner
+        from solslot_puzzles.zkpassport_attestation import compute_attestation_bridge_message
 
         curried = self._curry_with_identity_root()
         my_id = bytes32(b"\x11" * 32)
@@ -1422,7 +1422,7 @@ class TestVaultUpdateIdentity:
     def test_build_vault_update_identity_spend_validates_one_time_inputs(self):
         from chia.types.blockchain_format.coin import Coin
         from chia.wallet.lineage_proof import LineageProof
-        from populis_puzzles.vault_driver import build_vault_update_identity_spend
+        from solslot_puzzles.vault_driver import build_vault_update_identity_spend
 
         current_inner = self._curry_with_identity_root()
         vault_coin = Coin(bytes32(b"\x99" * 32), current_inner.get_tree_hash(), 1)
@@ -1870,7 +1870,7 @@ class TestEVMWalletLoginEndToEnd:
         would be computed over a different digest than the one the puzzle
         verifies, and every secp deposit would fail on chain.
         """
-        from populis_puzzles.vault_driver import (
+        from solslot_puzzles.vault_driver import (
             signing_message_for_vault_spend,
             eip712_typed_data_for_vault_spend,
         )
@@ -1889,7 +1889,7 @@ class TestEVMWalletLoginEndToEnd:
 
     def test_step1_typed_data_shape(self):
         """Typed-data JSON is the exact shape `eth_signTypedData_v4` expects."""
-        from populis_puzzles.vault_driver import (
+        from solslot_puzzles.vault_driver import (
             eip712_typed_data_for_vault_spend,
             EIP712_DOMAIN_NAME,
             EIP712_DOMAIN_VERSION,
@@ -1914,7 +1914,7 @@ class TestEVMWalletLoginEndToEnd:
 
     def test_step2_compact_signature_strips_v_and_low_s_normalizes(self):
         """65-byte EVM sig → 64-byte compact, with s in low half-order."""
-        from populis_puzzles.vault_driver import compact_signature_from_evm, _SECP256K1_N
+        from solslot_puzzles.vault_driver import compact_signature_from_evm, _SECP256K1_N
 
         # Construct an artificial high-s signature: pick r=1, s=N-1 (explicitly high-s)
         r = 1
@@ -1935,7 +1935,7 @@ class TestEVMWalletLoginEndToEnd:
 
     def test_step2_compact_signature_rejects_wrong_length(self):
         import pytest as _pytest
-        from populis_puzzles.vault_driver import compact_signature_from_evm
+        from solslot_puzzles.vault_driver import compact_signature_from_evm
         with _pytest.raises(ValueError):
             compact_signature_from_evm(bytes(64))  # compact, not evm — reject
         with _pytest.raises(ValueError):
@@ -1943,7 +1943,7 @@ class TestEVMWalletLoginEndToEnd:
 
     def test_step3_verify_evm_signature_round_trip(self):
         """Server-side validation helper accepts a valid sig, rejects invalid ones."""
-        from populis_puzzles.vault_driver import (
+        from solslot_puzzles.vault_driver import (
             compact_signature_from_evm,
             signing_message_for_vault_spend,
             verify_evm_signature,
@@ -1982,7 +1982,7 @@ class TestEVMWalletLoginEndToEnd:
         from chia.types.blockchain_format.coin import Coin
         from chia.wallet.lineage_proof import LineageProof
         from chia_rs.sized_ints import uint64
-        from populis_puzzles.vault_driver import (
+        from solslot_puzzles.vault_driver import (
             compact_signature_from_evm,
             signing_message_for_vault_spend,
             puzzle_for_vault_inner,
@@ -2080,7 +2080,7 @@ class TestEVMWalletLoginEndToEnd:
         from chia.types.blockchain_format.coin import Coin
         from chia.wallet.lineage_proof import LineageProof
         from chia_rs.sized_ints import uint64
-        from populis_puzzles.vault_driver import (
+        from solslot_puzzles.vault_driver import (
             compact_signature_from_evm,
             signing_message_for_vault_spend,
             puzzle_for_vault_full,

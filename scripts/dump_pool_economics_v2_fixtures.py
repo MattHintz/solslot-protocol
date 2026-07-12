@@ -1,6 +1,6 @@
 """Generate portal fixtures for Pool Economic V2 action specs.
 
-The portal mirrors :mod:`populis_puzzles.pool_economics_v2` for quote display
+The portal mirrors :mod:`solslot_puzzles.pool_economics_v2` for quote display
 and pre-bundle action messages.  This fixture pins the Python source of truth
 so the TypeScript service can prove byte-equivalence before spend builders and
 UI controls consume the values.
@@ -29,8 +29,12 @@ from chia.wallet.trading.offer import OFFER_MOD_HASH
 from chia_rs.sized_bytes import bytes32
 from chia_rs.sized_ints import uint64
 
-from populis_puzzles.collection_nav_registry_driver import NAV_EVIDENCE_TAG
-from populis_puzzles.pool_economics_v2 import (
+from solslot_puzzles.collection_nav_registry_driver import (
+    NAV_EVIDENCE_TAG,
+    collection_nav_registry_inner_mod_hash,
+    make_inner_puzzle_hash,
+)
+from solslot_puzzles.pool_economics_v2 import (
     DEED_SPEND_POOL_DEPOSIT,
     DEED_SPEND_POOL_REDEEM,
     DEFAULT_GOVERNANCE_FEE_BPS,
@@ -54,7 +58,8 @@ from populis_puzzles.pool_economics_v2 import (
     build_true_redemption_spec,
     token_settlement_payment_message,
 )
-from populis_puzzles.vault_driver import puzzle_for_p2_vault
+from solslot_puzzles.protocol_deployment import singleton_full_puzzle_hash
+from solslot_puzzles.vault_driver import puzzle_for_p2_vault
 
 
 def b32(byte: int) -> bytes32:
@@ -98,12 +103,25 @@ PROTOCOL_TREASURY = b32(0xF2)
 GOVERNANCE_REWARDS = b32(0xF3)
 GOVERNANCE_REWARDS_ROOT = b32(0xF4)
 SELLER = b32(0xB1)
+NAV_REGISTRY_MOD_HASH = collection_nav_registry_inner_mod_hash()
+NAV_REGISTRY_GOV_PUBKEY = b"\xc8" * 48
+NAV_REGISTRY_LAUNCHER_ID = b32(0xC9)
+MIN_NAV_REGISTRY_VERSION = 7
+
+
+def nav_registry_puzzle_hash(nav_root: bytes32, registry_version: int) -> bytes32:
+    inner_hash = make_inner_puzzle_hash(
+        gov_pubkey=NAV_REGISTRY_GOV_PUBKEY,
+        registry_version=registry_version,
+        nav_root=nav_root,
+    )
+    return singleton_full_puzzle_hash(NAV_REGISTRY_LAUNCHER_ID, inner_hash)
 
 
 def _pool_token_tail_hash() -> bytes32:
     mod = load_clvm(
         "pool_token_tail.clsp",
-        package_or_requirement="populis_puzzles",
+        package_or_requirement="solslot_puzzles",
         recompile=True,
     )
     return bytes32(
@@ -118,7 +136,7 @@ def _pool_token_tail_hash() -> bytes32:
 def _p2_vault_mod_hash() -> bytes32:
     mod = load_clvm(
         "p2_vault.clsp",
-        package_or_requirement="populis_puzzles",
+        package_or_requirement="solslot_puzzles",
         recompile=True,
     )
     return bytes32(mod.get_tree_hash())
@@ -127,7 +145,7 @@ def _p2_vault_mod_hash() -> bytes32:
 def _pool_inner_mod() -> Program:
     return load_clvm(
         "pool_singleton_inner.clsp",
-        package_or_requirement="populis_puzzles",
+        package_or_requirement="solslot_puzzles",
         recompile=True,
     )
 
@@ -144,6 +162,14 @@ POOL_INNER = POOL_INNER_MOD.curry(
     CAT_MOD_HASH,
     OFFER_MOD_HASH,
     P2_VAULT_MOD_HASH,
+    NAV_REGISTRY_MOD_HASH,
+    NAV_REGISTRY_GOV_PUBKEY,
+    NAV_REGISTRY_LAUNCHER_ID,
+    MIN_NAV_REGISTRY_VERSION,
+    TREASURY_RESERVE,
+    PROTOCOL_TREASURY,
+    GOVERNANCE_REWARDS,
+    GOVERNANCE_REWARDS_ROOT,
     FP_SCALE,
     POOL_ACTIVE,
     STATE.total_nav_locked_mojos,
@@ -164,7 +190,7 @@ POOL_LINEAGE_PROOF = [
 
 NAV_EVIDENCE = CollectionNavEvidence(
     registry_coin_id=b32(0xC1),
-    registry_puzzle_hash=b32(0xC2),
+    registry_puzzle_hash=nav_registry_puzzle_hash(b32(0xC3), 7),
     collection_id_canon=COLLECTION_ID,
     nav_value_mojos=1_000_000_000,
     collection_nav_root=b32(0xC3),
@@ -173,7 +199,7 @@ NAV_EVIDENCE = CollectionNavEvidence(
 
 ACQUISITION_NAV_EVIDENCE = CollectionNavEvidence(
     registry_coin_id=b32(0xC1),
-    registry_puzzle_hash=b32(0xC2),
+    registry_puzzle_hash=nav_registry_puzzle_hash(b32(0xC3), 7),
     collection_id_canon=COLLECTION_ID,
     nav_value_mojos=400_000_000,
     collection_nav_root=b32(0xC3),
@@ -343,8 +369,7 @@ def build_fixture() -> dict[str, Any]:
         share_ppm=500_000,
         nav_evidence=ACQUISITION_NAV_EVIDENCE,
         seller_puzhash=SELLER,
-        seller_token_price=250_000_000,
-        mint_token_coin_id=TOKEN_COIN_ID,
+        seller_token_price=200_000_000,
     )
     swap_params = [
         DEED_ID,
@@ -388,8 +413,8 @@ def build_fixture() -> dict[str, Any]:
         ACQUISITION_NAV_EVIDENCE.registry_coin_id,
         ACQUISITION_NAV_EVIDENCE.registry_puzzle_hash,
         SELLER,
-        250_000_000,
-        TOKEN_COIN_ID,
+        200_000_000,
+        None,
     ]
 
     return {
@@ -422,6 +447,7 @@ def build_fixture() -> dict[str, Any]:
             "pool_inner_puzzle_hex": _hex(bytes(POOL_INNER)),
             "pool_inner_puzzle_hash": _hex(POOL_INNER_PUZZLE_HASH),
             "pool_full_puzzle_hash": _hex(POOL_FULL_PUZZLE_HASH),
+            "min_nav_registry_version": MIN_NAV_REGISTRY_VERSION,
             "pool_amount": int(POOL_AMOUNT),
             "deed_id": _hex(DEED_ID),
             "p2_vault_puzzle_hash": _hex(P2_VAULT),
@@ -478,7 +504,7 @@ def build_fixture() -> dict[str, Any]:
                 "par_value_mojos": 123_000,
                 "asset_class": 1,
                 "seller_puzhash": _hex(SELLER),
-                "seller_token_price": 250_000_000,
+                "seller_token_price": 200_000_000,
             },
             "expected": {
                 **_spec_expected_dict(acquisition),

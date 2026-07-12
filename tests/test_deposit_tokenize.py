@@ -16,6 +16,7 @@ announcements and messages so they can co-spend atomically:
 
   3. pool_token_tail (mint case)
        → ASSERT_PUZZLE_ANNOUNCEMENT (must match pool's CREATE_PUZZLE_ANNOUNCEMENT)
+       → ASSERT_COIN_ANNOUNCEMENT (must match pool coin's CREATE_COIN_ANNOUNCEMENT)
 """
 import hashlib
 import pytest
@@ -30,22 +31,22 @@ from chia_rs.sized_bytes import bytes32
 # ── Load all three puzzles ──
 POOL_INNER_MOD: Program = load_clvm(
     "pool_singleton_inner.clsp",
-    package_or_requirement="populis_puzzles",
+    package_or_requirement="solslot_puzzles",
     recompile=True,
 )
 SMART_DEED_INNER_MOD: Program = load_clvm(
     "smart_deed_inner.clsp",
-    package_or_requirement="populis_puzzles",
+    package_or_requirement="solslot_puzzles",
     recompile=True,
 )
 POOL_TOKEN_TAIL_MOD: Program = load_clvm(
     "pool_token_tail.clsp",
-    package_or_requirement="populis_puzzles",
+    package_or_requirement="solslot_puzzles",
     recompile=True,
 )
 P2_POOL_MOD: Program = load_clvm(
     "p2_pool.clsp",
-    package_or_requirement="populis_puzzles",
+    package_or_requirement="solslot_puzzles",
     recompile=True,
 )
 
@@ -58,6 +59,14 @@ CAT_MOD_HASH = bytes32(b"\x05" * 32)
 OFFER_MOD_HASH = bytes32(b"\x06" * 32)
 P2_POOL_MOD_HASH = P2_POOL_MOD.get_tree_hash()
 P2_VAULT_MOD_HASH = bytes32(b"\x07" * 32)
+NAV_REGISTRY_MOD_HASH = bytes32(b"\x08" * 32)
+NAV_REGISTRY_GOV_PUBKEY = b"\x09" * 48
+NAV_REGISTRY_LAUNCHER_ID = bytes32(b"\x0a" * 32)
+MIN_NAV_REGISTRY_VERSION = 0
+TRUSTED_TREASURY_RESERVE_PUZHASH = bytes32(b"\xf1" * 32)
+TRUSTED_PROTOCOL_TREASURY_PUZHASH = bytes32(b"\xf2" * 32)
+TRUSTED_GOVERNANCE_REWARDS_PUZHASH = bytes32(b"\xf3" * 32)
+TRUSTED_GOVERNANCE_REWARDS_ROOT = bytes32(b"\xf4" * 32)
 PROTOCOL_PREFIX = b"\x50"
 
 # Pool singleton identity
@@ -106,6 +115,14 @@ def curry_pool(
         CAT_MOD_HASH,
         OFFER_MOD_HASH,
         P2_VAULT_MOD_HASH,
+        NAV_REGISTRY_MOD_HASH,
+        NAV_REGISTRY_GOV_PUBKEY,
+        NAV_REGISTRY_LAUNCHER_ID,
+        MIN_NAV_REGISTRY_VERSION,
+        TRUSTED_TREASURY_RESERVE_PUZHASH,
+        TRUSTED_PROTOCOL_TREASURY_PUZHASH,
+        TRUSTED_GOVERNANCE_REWARDS_PUZHASH,
+        TRUSTED_GOVERNANCE_REWARDS_ROOT,
         FP_SCALE,
         pool_status,
         tvl,
@@ -145,10 +162,14 @@ def curry_tail() -> Program:
 
 # ── Helper: compute pool full puzzle hash from inner ──
 def pool_full_puzzle_hash(pool_inner: Program) -> bytes32:
-    """Compute singleton full puzzle hash: sha256tree(singleton_top_layer(struct, inner))"""
-    from chia.wallet.puzzles.singleton_top_layer_v1_1 import SINGLETON_MOD as REAL_SINGLETON_MOD
-    full = REAL_SINGLETON_MOD.curry(POOL_SINGLETON_STRUCT, pool_inner)
-    return full.get_tree_hash()
+    """Compute the singleton full puzzle hash for the test singleton constants."""
+    return bytes32(
+        curry_and_treehash(
+            calculate_hash_of_quoted_mod_hash(SINGLETON_MOD_HASH),
+            bytes32(POOL_SINGLETON_STRUCT.get_tree_hash()),
+            bytes32(pool_inner.get_tree_hash()),
+        )
+    )
 
 
 def extract_condition(conditions: list, opcode: int, index: int = 0) -> list:
@@ -244,12 +265,14 @@ class TestPoolDeedMessageMatch:
 
 
 class TestPoolTokenAnnouncementMatch:
-    """Verify pool DEPOSIT CREATE_PUZZLE_ANNOUNCEMENT matches token TAIL ASSERT_PUZZLE_ANNOUNCEMENT.
+    """Verify pool DEPOSIT token announcements match token TAIL assertions.
 
     Pool announces:
       (CREATE_PUZZLE_ANNOUNCEMENT (concat PROTOCOL_PREFIX (sha256tree (list 1 token_coin_id token_amount))))
+      (CREATE_COIN_ANNOUNCEMENT (concat PROTOCOL_PREFIX (sha256tree (list 1 token_coin_id token_amount))))
     Token TAIL asserts:
       (ASSERT_PUZZLE_ANNOUNCEMENT (sha256 pool_full_ph (concat PROTOCOL_PREFIX (sha256tree (list 1 my_coin_id amount)))))
+      (ASSERT_COIN_ANNOUNCEMENT (sha256 pool_coin_id (concat PROTOCOL_PREFIX (sha256tree (list 1 my_coin_id amount)))))
 
     The announcement content (after PROTOCOL_PREFIX) must match.
     """
@@ -277,6 +300,8 @@ class TestPoolTokenAnnouncementMatch:
         # Pool's CREATE_PUZZLE_ANNOUNCEMENT (opcode 62) — content is element [1]
         pool_announce = extract_condition(pool_conditions, 62)
         pool_announce_content = pool_announce[1]
+        pool_coin_announce = extract_condition(pool_conditions, 60)
+        assert pool_coin_announce[1] == pool_announce_content
 
         # --- Run token TAIL (mint) ---
         tail = curry_tail()
@@ -296,6 +321,8 @@ class TestPoolTokenAnnouncementMatch:
         # Token TAIL's ASSERT_PUZZLE_ANNOUNCEMENT (opcode 63) — the full hash is element [1]
         tail_assert = extract_condition(tail_conditions, 63)
         tail_expected_announcement_hash = bytes32(tail_assert[1])
+        tail_coin_assert = extract_condition(tail_conditions, 61)
+        tail_expected_coin_announcement_hash = bytes32(tail_coin_assert[1])
 
         # The TAIL computes: sha256(pool_full_puzzle_hash, announcement_content)
         # We need to verify the announcement_content part matches.
@@ -379,6 +406,8 @@ class TestPoolTokenAnnouncementMatch:
         tail_conditions = tail.run(tail_sol).as_python()
         tail_assert = extract_condition(tail_conditions, 63)
         tail_expected_hash = bytes32(tail_assert[1])
+        tail_coin_assert = extract_condition(tail_conditions, 61)
+        tail_expected_coin_announcement_hash = bytes32(tail_coin_assert[1])
 
         # --- Compute what the TAIL should expect ---
         # ASSERT_PUZZLE_ANNOUNCEMENT hash = sha256(puzzle_hash || message)
@@ -386,6 +415,7 @@ class TestPoolTokenAnnouncementMatch:
 
         # The expected announcement hash
         computed_hash = bytes32(hashlib.sha256(bytes(pool_full_ph) + pool_announce_content).digest())
+        computed_coin_hash = bytes32(hashlib.sha256(bytes(pool_id) + pool_announce_content).digest())
 
         assert tail_expected_hash == computed_hash, (
             f"Token TAIL announcement hash mismatch!\n"
@@ -394,6 +424,7 @@ class TestPoolTokenAnnouncementMatch:
             f"  Pool full PH:  {pool_full_ph.hex()}\n"
             f"  Announce data: {pool_announce_content.hex()}"
         )
+        assert tail_expected_coin_announcement_hash == computed_coin_hash
 
 
 class TestFullDepositTokenizeRoundTrip:
@@ -446,8 +477,11 @@ class TestFullDepositTokenizeRoundTrip:
         assert pool_conds[0][0] == bytes([51])
         # CREATE_PUZZLE_ANNOUNCEMENT (token mint auth)
         assert pool_conds[1][0] == bytes([62])
+        # CREATE_COIN_ANNOUNCEMENT (same token mint auth)
+        assert pool_conds[2][0] == bytes([60])
+        assert pool_conds[2][1] == pool_conds[1][1]
         # SEND_MESSAGE (to deed)
-        assert pool_conds[2][0] == bytes([66])
+        assert pool_conds[3][0] == bytes([66])
 
         # --- Verify deed produced expected conditions ---
         # CREATE_COIN (send deed to pool escrow)
@@ -463,12 +497,17 @@ class TestFullDepositTokenizeRoundTrip:
         assert tail_conds[0][1] == token_coin_id
         # ASSERT_PUZZLE_ANNOUNCEMENT
         assert tail_conds[1][0] == bytes([63])
+        # ASSERT_COIN_ANNOUNCEMENT
+        assert tail_conds[2][0] == bytes([61])
 
         # --- Cross-contract verification ---
         # Pool SEND_MESSAGE content == Deed RECEIVE_MESSAGE content
         pool_msg = extract_condition(pool_conds, 66)[2]
         deed_msg = extract_condition(deed_conds, 67)[2]
         assert pool_msg == deed_msg, "Pool↔Deed message mismatch"
+
+        token_message = extract_condition(pool_conds, 62)[1]
+        assert tail_conds[2][1] == hashlib.sha256(bytes(pool_id) + token_message).digest()
 
         # Pool state recreation matches expected new state
         expected_new_pool = curry_pool(

@@ -42,7 +42,7 @@ from dataclasses import dataclass
 from chia.types.blockchain_format.program import Program
 from chia_rs.sized_bytes import bytes32
 
-from populis_puzzles import load_puzzle
+from solslot_puzzles import load_puzzle
 
 
 # \u2500\u2500\u2500 Constants (kept in lock-step with mint_proposal_inner_v2.clsp) \u2500\u2500\u2500\u2500\u2500\u2500\u2500

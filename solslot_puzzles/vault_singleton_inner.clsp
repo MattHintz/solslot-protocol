@@ -78,7 +78,7 @@
   ;; signature is a typed-data attestation, never a valid Ethereum tx, so it
   ;; carries no cross-chain replay risk.  To regenerate this constant after a
   ;; domain change run:
-  ;;   python -c "from populis_puzzles.vault_driver import eip712_prefix_and_domain_separator as f; print('0x'+f().hex())"
+  ;;   python -c "from solslot_puzzles.vault_driver import eip712_prefix_and_domain_separator as f; print('0x'+f().hex())"
   (defconstant PREFIX_AND_DOMAIN_SEPARATOR 0x1901a0214ddc79441c42a8c07069114bb656bd36511866db2570c2ed9cd5e4695d69)
   ;; POPULIS_VAULT_TYPEHASH = keccak256("PopulisVaultSpend(bytes32 spend_case,bytes32 deed_launcher_id,bytes32 vault_coin_id)")
   (defconstant POPULIS_VAULT_TYPEHASH 0x8b3b93e042ecfbb633e42c5bb8477fa782ab7824c28ba0a0e95566f5041b5e32)

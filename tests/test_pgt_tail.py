@@ -17,7 +17,7 @@ import pytest
 from chia.types.blockchain_format.program import Program
 from chia_rs.sized_bytes import bytes32
 
-from populis_puzzles.pgt_driver import (
+from solslot_puzzles.pgt_driver import (
     make_cat_truths,
     pgt_tail_hash,
     pgt_tail_puzzle,
