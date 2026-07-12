@@ -1,14 +1,14 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;; PGT locked-state inner puzzle.
+;;; SGT locked-state inner puzzle.
 ;;;
-;;; A PGT coin transitions to this puzzle when its owner LOCKs the coin to a
-;;; specific governance proposal via pgt_free_inner.  While locked, the coin
+;;; A SGT coin transitions to this puzzle when its owner LOCKs the coin to a
+;;; specific governance proposal via sgt_free_inner.  While locked, the coin
 ;;; can only be released back to its owner — it cannot transfer, vote again,
 ;;; or otherwise participate in governance.
 ;;;
 ;;; Two release paths:
 ;;;   1 — RELEASE_DEADLINE : after LOCK_DEADLINE has passed, anyone can spend
-;;;                          the coin to recreate it as a free PGT at the
+;;;                          the coin to recreate it as a free SGT at the
 ;;;                          original owner.  No further authorisation needed
 ;;;                          — the lock has expired.
 ;;;   2 — RELEASE_EXEC     : at any time, if the proposal tracker has emitted
@@ -16,12 +16,12 @@
 ;;;                          hash, the coin can be released early.  Tracker
 ;;;                          emits the announcement on EXECUTE (proposal
 ;;;                          passed) or EXPIRE (proposal failed) so locked
-;;;                          PGT can be reclaimed without waiting for the
+;;;                          SGT can be reclaimed without waiting for the
 ;;;                          deadline if governance has already concluded.
 ;;;
-;;; Curried parameters (immutable per locked PGT lineage):
+;;; Curried parameters (immutable per locked SGT lineage):
 ;;;   MOD_HASH                — self-reference (this mod's tree hash)
-;;;   FREE_MOD_HASH           — pgt_free_inner mod hash (re-curry on release)
+;;;   FREE_MOD_HASH           — sgt_free_inner mod hash (re-curry on release)
 ;;;   PROPOSAL_TRACKER_STRUCT — singleton struct of the tracker.
 ;;;   INNER_PUZZLE_HASH       — owner's user puzzle hash (preserved across lock).
 ;;;   LOCK_PROPOSAL_HASH      — the proposal this coin is locked to.
@@ -61,7 +61,7 @@
 
     ;; ----- Inline helpers (must remain inline so curried params resolve) -----
 
-    ;; Compute the puzzle hash of pgt_free_inner curried with the same owner.
+    ;; Compute the puzzle hash of sgt_free_inner curried with the same owner.
     (defun-inline free_puzhash_for_owner ()
         (curry_hashes FREE_MOD_HASH
             (sha256 1 FREE_MOD_HASH)
@@ -70,7 +70,7 @@
             (sha256 1 INNER_PUZZLE_HASH))
     )
 
-    ;; Conditions emitted on a successful release: recreate the PGT in
+    ;; Conditions emitted on a successful release: recreate the SGT in
     ;; free state at the same amount and owner.
     (defun-inline release_conditions (amount)
         (list

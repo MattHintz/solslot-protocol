@@ -1,14 +1,13 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Admin Authority Singleton v2 — MIPS-based per-admin key bundles.
 ;;;
-;;; Replaces the homegrown BLS-allowlist of admin_authority_inner.clsp (v1)
-;;; with a thin singleton inner that delegates authentication to a CHIP-0043
+;;; Delegates authentication to a CHIP-0043
 ;;; MIPS m_of_n quorum. Each admin slot holds a OneOfN of personal auth
 ;;; methods (BLS, EIP-712, passkey, etc.); the protocol-level admin set is
 ;;; an MofN over those slots.
 ;;;
 ;;; Design reference:
-;;;   research/POPULIS_ADMIN_AUTHORITY_V2_DESIGN.md
+;;;   research/SOLSLOT_ADMIN_AUTHORITY_V2_DESIGN.md
 ;;;
 ;;; This commit (C.2e) implements all six spend tags: OPERATIONAL (0x01),
 ;;; KEY_ADD_PROPOSE (0x02), KEY_ADD_ACTIVATE (0x03), KEY_ADD_VETO (0x04),
@@ -23,7 +22,7 @@
 ;;; or handle-op-activate-remove based on op_kind.
 ;;;
 ;;; Encoding decision (resolves design §9.1): admins and pending ops are
-;;; FLAT LISTS whose sha256tree is curried into state. For Populis's
+;;; FLAT LISTS whose sha256tree is curried into state. For Solslot's
 ;;; expected size (~5-10 admins, MAX_PENDING_OPS=8), flat lists are
 ;;; dramatically simpler than Merkle trees with no measurable cost penalty.
 ;;; Solutions for KEY_* spends carry the full lists; the shim verifies the
@@ -35,7 +34,7 @@
 ;;;   MAX_KEYS_PER_ADMIN               — policy cap on OneOfN cardinality (e.g. 10).
 ;;;   COOLDOWN_BLOCKS                  — blocks before pending ADD activates.
 ;;;   RECOVERY_TIMEOUT_BLOCKS          — blocks before emergency REMOVE activates.
-;;;   PGT_GOVERNANCE_PUZZLE_HASH       — for ADMIN_SLOT_* spends (out of scope here).
+;;;   SGT_GOVERNANCE_PUZZLE_HASH       — for ADMIN_SLOT_* spends (out of scope here).
 ;;;
 ;;; Curried [STATE] (recurried with new values on every state-changing spend):
 ;;;   MIPS_ROOT_HASH                   — tree hash of the active MIPS m_of_n
@@ -88,7 +87,7 @@
     MAX_KEYS_PER_ADMIN
     COOLDOWN_BLOCKS
     RECOVERY_TIMEOUT_BLOCKS
-    PGT_GOVERNANCE_PUZZLE_HASH
+    SGT_GOVERNANCE_PUZZLE_HASH
     ;; ── Curried [STATE] (recurried each spend) ──────────────────────
     MIPS_ROOT_HASH
     ADMINS_HASH
@@ -102,7 +101,7 @@
   )
 
   ;; Include order matters: utils.clib must come before utility_macros.clib
-  ;; (matches v1 admin_authority_inner.clsp). utils.clib transitively pulls
+  ;; (matches the canonical condition shape). utils.clib transitively pulls
   ;; in curry.clib + sha256tree.clib; including either of those directly
   ;; re-defines `TWO` and breaks the compile (project memory).
   (include condition_codes.clib)
@@ -151,10 +150,10 @@
   ;; State hash + self-recurry
   ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-  ;; The state hash is the Populis-protocol-prefixed sha256tree of the new
+  ;; The state hash is the Solslot-protocol-prefixed sha256tree of the new
   ;; [STATE] tuple. Off-chain monitors decode it via the same struct shape.
   ;; The protocol prefix prevents collision with announcements emitted by
-  ;; other Populis singletons.
+  ;; other Solslot singletons.
   (defun-inline state-hash
       (new_mips_root new_admins_hash new_pending_ops_hash new_authority_version)
     (sha256tree
@@ -189,7 +188,7 @@
       (sha256 1 MAX_KEYS_PER_ADMIN)
       (sha256 1 COOLDOWN_BLOCKS)
       (sha256 1 RECOVERY_TIMEOUT_BLOCKS)
-      (sha256 1 PGT_GOVERNANCE_PUZZLE_HASH)
+      (sha256 1 SGT_GOVERNANCE_PUZZLE_HASH)
       (sha256 1 new_mips_root)
       (sha256 1 new_admins_hash)
       (sha256 1 new_pending_ops_hash)
@@ -364,7 +363,7 @@
       ;; The announcement payload bundles the spend tag (so monitors can
       ;; decode the action that just happened) with the new state hash. The
       ;; PROTOCOL_PREFIX namespaces this announcement away from any other
-      ;; Populis singleton's announcements (POOL, GOV, etc.).
+      ;; Solslot singleton's announcements (POOL, GOV, etc.).
       (list CREATE_PUZZLE_ANNOUNCEMENT
         (concat PROTOCOL_PREFIX
                 spend_tag
@@ -738,7 +737,7 @@
       (is-uint64 admin_idx)
       (is-size-b32 target_member_hash)
       (is-uint64 activates_at)
-      ;; The admin must still exist (could have been removed via PGT
+      ;; The admin must still exist (could have been removed via SGT
       ;; governance during the cooldown window).
       (find-admin-by-idx current_admins_list admin_idx)
       ;; Dispatch on op_kind.
@@ -1077,7 +1076,7 @@
     (is-uint64 MAX_KEYS_PER_ADMIN)
     (is-uint64 COOLDOWN_BLOCKS)
     (is-uint64 RECOVERY_TIMEOUT_BLOCKS)
-    (is-size-b32 PGT_GOVERNANCE_PUZZLE_HASH)
+    (is-size-b32 SGT_GOVERNANCE_PUZZLE_HASH)
     ;; Curried state sanity.
     (is-size-b32 MIPS_ROOT_HASH)
     (is-size-b32 ADMINS_HASH)

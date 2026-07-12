@@ -1,11 +1,11 @@
-# Populis Admin Authority v2 Design
+# Solslot Admin Authority v2 Design
 
 Status: draft contract for implementation
 Date: 2026-05-10
 
 ## Purpose
 
-`admin_authority_v2_inner.clsp` is the protocol admin singleton for Populis.
+`admin_authority_v2_inner.clsp` is the protocol admin singleton for Solslot.
 It replaces the v1 flat BLS allowlist with a CHIP-0043-style authority model:
 
 - An **admin slot** represents one protocol admin.
@@ -28,7 +28,7 @@ MAX_ADMINS
 MAX_KEYS_PER_ADMIN
 COOLDOWN_BLOCKS
 RECOVERY_TIMEOUT_BLOCKS
-PGT_GOVERNANCE_PUZZLE_HASH
+SGT_GOVERNANCE_PUZZLE_HASH
 ```
 
 Mutable state:
@@ -67,14 +67,14 @@ OP_KIND_REMOVE
 
 ## Role Separation
 
-Admin authority and PGT governance are separate systems.
+Admin authority and SGT governance are separate systems.
 
 - **Admin authority** controls protocol admin decisions and admin roster/key lifecycle.
-- **PGT governance** controls governance-token participant decisions.
-- PGT holders do not automatically become admin-desk admins.
-- Admin-desk admins do not automatically represent PGT governance.
+- **SGT governance** controls governance-token participant decisions.
+- SGT holders do not automatically become admin-desk admins.
+- Admin-desk admins do not automatically represent SGT governance.
 
-The admin roster is self-governed by the existing admin authority, not by bootstrap tokens or PGT holder votes.
+The admin roster is self-governed by the existing admin authority, not by bootstrap tokens or SGT holder votes.
 
 ## Genesis
 
@@ -270,7 +270,7 @@ For the first post-genesis admin add:
 
 ## Non-Goals
 
-This design does not make PGT holders protocol admins.
+This design does not make SGT holders protocol admins.
 It does not use bootstrap credentials after genesis finalization.
 It does not overload `KEY_ADD_*` to mean admin-slot addition.
 It does not allow admin roster and MIPS root to drift independently.

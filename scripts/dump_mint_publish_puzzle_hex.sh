@@ -3,35 +3,35 @@
 # Regenerate the portal-side bundled puzzle hex constants for the
 # Phase 4 mint-publish flow.
 #
-# The TS service ``populis_portal/src/app/services/mint-proposal-v2/
+# The TS service ``solslot-portal/src/app/services/mint-proposal-v2/
 # mint-publish.service.ts`` re-implements ``build_mint_publish_artifacts``
 # in TS using the WASM ``Clvm`` shim.  It needs the same four puzzles
 # the Python driver loads via ``solslot_puzzles.load_puzzle`` —
 # bundled as TS string literals so the portal never round-trips to
-# populis_api just to obtain a puzzle.
+# solslot_api just to obtain a puzzle.
 #
 # Puzzles bundled by this script:
-#   * smart_deed_inner.clsp         → the post-purchase deed inner
+#   * smart_deed_inner_v2.clsp         → the post-purchase deed inner
 #   * mint_offer_delegate.clsp      → the eve deed inner (offer)
 #   * singleton_launcher_with_did.clsp → DID-gated deed launcher
 #   * purchase_payment.clsp         → ephemeral buyer payment coin
 #
 # Cross-repo guard: the byte-equivalence test in
-# ``populis_portal/src/app/services/mint-proposal-v2/
+# ``solslot-portal/src/app/services/mint-proposal-v2/
 # mint-publish.service.spec.ts`` reads the fixture emitted by
-# ``populis_protocol/scripts/dump_mint_publish_fixtures.py`` and
+# ``solslot-protocol/scripts/dump_mint_publish_fixtures.py`` and
 # asserts the TS service's recurried hashes match Python byte-for-byte.
 # Drift in any of these puzzle .clsp sources will surface there.
 #
 # Usage:
-#   cd populis_protocol
+#   cd solslot-protocol
 #   bash scripts/dump_mint_publish_puzzle_hex.sh
 
 set -euo pipefail
 
 REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." &> /dev/null && pwd)"
 PUZZLES_DIR="$REPO_ROOT/solslot_puzzles"
-DEST_DIR="$REPO_ROOT/../populis_portal/src/app/services/mint-proposal-v2"
+DEST_DIR="$REPO_ROOT/../solslot-portal/src/app/services/mint-proposal-v2"
 
 mkdir -p "$DEST_DIR"
 
@@ -48,7 +48,7 @@ dump_one() {
   if [[ ! -f "$src" ]]; then
     echo "ERROR: puzzle hex not found at $src" >&2
     echo "  Compile first:" >&2
-    echo "    cd populis_protocol && .venv/bin/python -c 'from solslot_puzzles import load_puzzle; load_puzzle(\"${puzzle}.clsp\")'" >&2
+    echo "    cd solslot-protocol && .venv/bin/python -c 'from solslot_puzzles import load_puzzle; load_puzzle(\"${puzzle}.clsp\")'" >&2
     exit 1
   fi
 
@@ -61,9 +61,9 @@ dump_one() {
  * Compiled bytecode of \`${puzzle}.clsp\` (Phase 4 mint-publish).
  *
  * Bundled at build time from
- * \`\`populis_protocol/solslot_puzzles/${puzzle}.clsp.hex\`\`
+ * \`\`solslot-protocol/solslot_puzzles/${puzzle}.clsp.hex\`\`
  * via the helper script
- * \`\`populis_protocol/scripts/dump_mint_publish_puzzle_hex.sh\`\`.
+ * \`\`solslot-protocol/scripts/dump_mint_publish_puzzle_hex.sh\`\`.
  *
  * Purpose: ${purpose}
  *
@@ -71,14 +71,14 @@ dump_one() {
  * to construct the puzzle Program client-side.  No API call needed.
  *
  * **CRITICAL**: this constant MUST stay in sync with the .hex file in
- * populis_protocol.  The cross-repo Karma spec
+ * solslot-protocol.  The cross-repo Karma spec
  * \`\`mint-publish.service.spec.ts\`\` reads the canonical fixture
- * emitted by \`\`populis_protocol/scripts/dump_mint_publish_fixtures.py\`\`
+ * emitted by \`\`solslot-protocol/scripts/dump_mint_publish_fixtures.py\`\`
  * and asserts byte-equivalence — drift here surfaces there.
  *
  * If the puzzle source changes, regenerate via:
  *
- *     cd populis_protocol
+ *     cd solslot-protocol
  *     bash scripts/dump_mint_publish_puzzle_hex.sh
  *
  * which rewrites this file.

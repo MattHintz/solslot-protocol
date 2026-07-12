@@ -6,7 +6,7 @@ security model, then add helpers, then add vault state, then add spend logic.
 
 ## Summary
 
-Populis uses zkPassport as a one-time identity attestation source for a vault.
+Solslot uses zkPassport as a one-time identity attestation source for a vault.
 The user proves eligibility in the zkPassport/EVM world, a verifier + bridge
 path produces a canonical attestation message, and the Chia vault consumes that
 message exactly once to enroll an anonymous identity-attestation root.
@@ -30,24 +30,24 @@ The KYC witness lives outside Chia:
 
 1. The user generates a zkPassport proof using `compressed-evm` mode.
 2. The EVM verifier validates the proof.
-3. A Populis/zkPassport verifier contract emits or sends a canonical
+3. A Solslot/zkPassport verifier contract emits or sends a canonical
    attestation through the chosen omnichain / Warp-style bridge path.
 4. The Chia vault consumes that bridge attestation in an identity-enrollment
    spend.
 
-The Chia puzzle verifies only the bridge-side commitment format that Populis
+The Chia puzzle verifies only the bridge-side commitment format that Solslot
 accepts.  It does not verify a full zk-SNARK locally.
 
 ## zkPassport public-input mapping
 
 Every zkPassport proof exposes public inputs in deterministic order:
 
-| Index | Field | Populis V1 use |
+| Index | Field | Solslot V1 use |
 |-------|-------|----------------|
 | 0 | `certificate_registry_root` | Must be accepted by the EVM verifier / registry at proof time. |
 | 1 | `circuit_registry_root` | Must be accepted by the EVM verifier / registry at proof time. |
 | 2 | `current_date` | Proof timestamp; verifier enforces freshness window. |
-| 3 | `service_scope` | `Poseidon2("populis.app")`. |
+| 3 | `service_scope` | `Poseidon2("solslot.app")`. |
 | 4 | `service_subscope` | Rotatable per use case.  V1 vault enrollment uses a vault-bound subscope. |
 | 5..N | `param_commitments` | Bound commitments such as launcher id / policy version. |
 | N+1 | `nullifier_type` | Document type discriminator. |
@@ -60,11 +60,11 @@ consumes a bridge-attested commitment derived from them.
 
 Use a stable domain and vault-bound subscope:
 
-- `domain = "populis.app"`
+- `domain = "solslot.app"`
 - `subscope = "vault:<vault_launcher_id>"`
 
 This makes the enrollment nullifier deterministic for recovery with the same
-passport and same vault, while avoiding linkability to other Populis use cases
+passport and same vault, while avoiding linkability to other Solslot use cases
 that can rotate the subscope later, for example:
 
 - `deed:<deed_launcher_id>`
@@ -79,7 +79,7 @@ For Chia, bind with zkPassport `custom_data`, not EVM `user_address` or `chain`.
 A V1 enrollment proof should bind at least:
 
 - `vault_launcher_id`
-- Populis zkPassport policy version
+- Solslot zkPassport policy version
 - bridge/verifier domain identifier
 
 Total zkPassport bind data must stay under the SDK's 500-byte limit.

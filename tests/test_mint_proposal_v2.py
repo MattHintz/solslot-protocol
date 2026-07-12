@@ -44,7 +44,7 @@ from solslot_puzzles.mint_proposal_v2_driver import (
 # Pinned mod hash for the V2 puzzle.  Update both here AND in the
 # portal's TS port if the .clsp source changes intentionally.
 PINNED_V2_MOD_HASH = bytes32.fromhex(
-    "1d3838f04de2d8b864c0b96f7f14d7fc8ec6bd39940806e2fa4087b520138517"
+    "a21505befe18b82a51a5644a184aad514b86a1c7e86fce04594e83bf376329d6"
 )
 
 # Sample proposal data.
@@ -400,7 +400,7 @@ class TestApproveSpendBls:
     def test_emits_announcement_with_protocol_prefix(self):
         """CREATE_PUZZLE_ANNOUNCEMENT body equals
         ``PROTOCOL_PREFIX || sha256tree([case, new_state, new_version])``,
-        wire-compatible with V1 monitors.
+        stable for Solslot V2 monitors.
         """
         puzzle, solution, artifacts = self._setup()
         conditions = list(puzzle.run(solution).as_iter())
@@ -409,7 +409,7 @@ class TestApproveSpendBls:
         )
         assert ann is not None
         body = bytes(ann.rest().first().as_atom())
-        expected_body = b"\x50" + bytes(
+        expected_body = b"\x53" + bytes(
             compute_transition_message(
                 transition_case=TRANSITION_APPROVE,
                 new_state=STATE_APPROVED,

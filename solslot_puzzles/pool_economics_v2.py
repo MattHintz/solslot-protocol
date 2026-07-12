@@ -20,7 +20,7 @@ DEFAULT_SWAP_FEE_BPS = 100
 DEFAULT_PROTOCOL_FEE_BPS = 30
 DEFAULT_GOVERNANCE_FEE_BPS = 70
 MAX_POOL_V2_TOKEN_OUTPUTS = 3
-PROTOCOL_PREFIX = b"\x50"
+PROTOCOL_PREFIX = b"\x53"
 
 TOKEN_MINT = 1
 TOKEN_MELT = -1
@@ -350,7 +350,7 @@ def token_settlement_payment_message(
 ) -> bytes32:
     """Message asserted against CAT(TOKEN_TAIL, settlement_payments).
 
-    Mirrors pool_singleton_inner.clsp's ``sha256tree(c my_id payments)`` shape.
+    Mirrors pool_singleton_inner_v3.clsp's ``sha256tree(c my_id payments)`` shape.
     ``pool_coin_id`` is the pool coin id performing the swap spend.
     """
     coin_id = _as_b32(pool_coin_id, "pool_coin_id")
@@ -542,7 +542,7 @@ def build_specific_deed_swap_spec(
             TokenOutput(
                 rewards_ph,
                 quote.fee_split.governance_fee_tokens,
-                "pgt_rewards_fee",
+                "sgt_rewards_fee",
                 (rewards_ph, rewards_root),
             ),
         ),

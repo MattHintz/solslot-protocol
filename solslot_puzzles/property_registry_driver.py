@@ -80,7 +80,7 @@ def canonicalise_property_id(human_id: str) -> bytes32:
         human_id  ──strip()──►  ──upper()──►  utf8 encode  ──sha256──►  bytes32
 
     The strip-and-upper canonicalisation matches the off-chain
-    ``MintProposalStore.create`` (POP-CANON-014 fix) so the same human
+    ``MintProposalStore.create`` (V1-CANON-014 fix) so the same human
     string always maps to the same bytes32 regardless of casing or
     surrounding whitespace.
 
@@ -277,7 +277,7 @@ class RegistrationSpendArtifacts:
     agg_sig_me_message: bytes32
     """What GOV_PUBKEY signs (the result of :func:`compute_signing_message`)."""
     announcement_message: bytes
-    """Full announcement body — ``PROTOCOL_PREFIX (0x50) || property_id_canon``.
+    """Full announcement body — ``PROTOCOL_PREFIX (0x53) || property_id_canon``.
 
     Other coins ASSERT_PUZZLE_ANNOUNCEMENT this exact bytes value to
     confirm a property registration on-chain.
@@ -355,8 +355,8 @@ def build_registration_spend(
             new_registry_version,
         ]
     )
-    # PROTOCOL_PREFIX is 0x50 (matches utility_macros.clib).
-    announcement_message = b"\x50" + bytes(property_id_canon)
+    # PROTOCOL_PREFIX is 0x53 (matches utility_macros.clib).
+    announcement_message = b"\x53" + bytes(property_id_canon)
     return RegistrationSpendArtifacts(
         inner_solution=inner_solution,
         new_inner_puzzle_hash=new_inner_puzzle_hash,
@@ -374,12 +374,12 @@ def registration_announcement_message(property_id_canon: bytes | bytes32) -> byt
     """Return the registry announcement body for ``property_id_canon``.
 
     Shape is ``PROTOCOL_PREFIX || property_id_canon`` where
-    ``PROTOCOL_PREFIX`` is ``0x50``.
+    ``PROTOCOL_PREFIX`` is ``0x53``.
     """
     property_id_canon = _as_property_id_atom(
         property_id_canon, "property_id_canon"
     )
-    return b"\x50" + bytes(property_id_canon)
+    return b"\x53" + bytes(property_id_canon)
 
 
 def registration_announcement_id(
@@ -391,7 +391,7 @@ def registration_announcement_id(
     Chia puzzle announcements are keyed by the announcing coin's puzzle hash,
     not its coin id:
 
-        ``sha256(registry_full_puzzle_hash || (0x50 || property_id_canon))``
+        ``sha256(registry_full_puzzle_hash || (0x53 || property_id_canon))``
 
     This is the consensus bridge between the property-registry singleton spend
     and the mint-publish/proposal spend that consumes that registration.

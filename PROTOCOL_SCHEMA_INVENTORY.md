@@ -1,4 +1,4 @@
-# Populis Protocol Schema Inventory
+# Solslot Protocol Schema Inventory
 
 This inventory is the cross-repo contract for the current alpha protocol
 surface. Code remains authoritative; this document names where each schema is
@@ -6,10 +6,10 @@ defined and which tests should fail on drift.
 
 ## Mint Publish
 
-- Chialisp and Python source: `smart_deed_inner.clsp`,
+- Chialisp and Python source: `smart_deed_inner_v2.clsp`,
   `mint_proposal_inner_v2.clsp`, `governance_singleton_inner.clsp`,
   `mint_publish_driver.py`.
-- API guard: `populis_api.mint_publish_validation` re-derives
+- API guard: `solslot_api.mint_publish_validation` re-derives
   `build_mint_publish_artifacts` from `proposal_metadata` and rejects bundles
   whose tracker proposal hash, bill op, or Artifact A launch commitments drift.
 - MINT bill op is
@@ -36,7 +36,7 @@ defined and which tests should fail on drift.
   registries reconstruct current state from the latest prior registry spend and
   reject if the rebuilt full puzzle hash does not match the current coin.
 - `MintProposalV2PublishRunnerService` signs/posts a five-spend bundle: XCH
-  parent, Artifact A launcher, governance tracker `PROPOSE`, PGT first-vote
+  parent, Artifact A launcher, governance tracker `PROPOSE`, SGT first-vote
   `LOCK`, and property-registry registration. The XCH parent asserts the A4
   property-registration announcement; the registry co-spend creates it.
 - API validation requires the expected property-registry
@@ -49,10 +49,10 @@ defined and which tests should fail on drift.
 
 ## zkPassport Bridge
 
-- EVM source: `PopulisZkPassportAttestationEmitter.sol`,
-  `ZkPassportRealVerifierAdapter.sol`, `PopulisForwarder.sol`.
+- EVM source: `SolslotZkPassportAttestationEmitter.sol`,
+  `ZkPassportRealVerifierAdapter.sol`, `SolslotForwarder.sol`.
 - EVM ABI guard:
-  `populis_evm/test/PopulisZkPassportAttestationEmitter.test.js` pins the
+  `solslot_evm/test/SolslotZkPassportAttestationEmitter.test.js` pins the
   constructor, `verifyAndEmit` tuple, `validatorMessageFields` tuple, and
   `VaultAttestationVerified` event names/types/indexed flags.
 - EVM deployment requires non-zero verifier and ERC-2771 trusted forwarder
@@ -76,8 +76,8 @@ defined and which tests should fail on drift.
   browser audit cache. On-chain spends are authoritative after publish.
 - Successful portal publish stores computed artifact hashes, proposal singleton
   launcher id, deed launcher id, bundle id, deadline, and `published_at`.
-  It also stores `pgt_lock_coin_id`, derived as the CAT-created first-vote
-  locked child id from the selected free PGT coin, locked CAT puzzle hash, and
+  It also stores `sgt_lock_coin_id`, derived as the CAT-created first-vote
+  locked child id from the selected free SGT coin, locked CAT puzzle hash, and
   stake amount.
 - Portal chain evidence for a published draft walks the stored proposal
   singleton launcher id and compares the live state coin's puzzle hash against
@@ -88,7 +88,7 @@ defined and which tests should fail on drift.
   state plus inner transition solution, verifies the
   `PROTOCOL_PREFIX || transition_message` announcement, and compares the live
   child puzzle hash against the recomputed APPROVED/CANCELLED singleton hash.
-  When `pgt_lock_coin_id` is stored, the same check fetches that coin record
+  When `sgt_lock_coin_id` is stored, the same check fetches that coin record
   from chain and marks it as confirmed-unspent, confirmed-spent, unconfirmed,
   or malformed local metadata.
   While the proposal singleton is still DRAFT-v0, the check also reads the
@@ -144,7 +144,7 @@ defined and which tests should fail on drift.
 
 - API settings, portal environment, and protocol deployment manifests must agree
   on: protocol DID singleton struct, protocol DID puzzle hash, `p2_pool` mod
-  hash, `p2_vault` mod hash, PGT tail genesis coin id, governance launcher id,
+  hash, `p2_vault` mod hash, SGT tail genesis coin id, governance launcher id,
   zkPassport bridge policy hash, and vault version registry coordinates.
 - Hardening target: replace hand-copied constants with generated runtime
   artifacts and drift tests across API, portal, protocol fixtures, and EVM ABI.
@@ -160,7 +160,7 @@ defined and which tests should fail on drift.
     Covered by `tests/test_p2_deed_settlement.py`.
   - Governance settlement release-set binding:
     SETTLE bills now carry `deed_releases_hash = sha256tree(deed_releases)`,
-    and `pool_singleton_inner.clsp` recomputes that hash from the release list
+    and `pool_singleton_inner_v3.clsp` recomputes that hash from the release list
     before accepting the governance message. Covered by
     `tests/test_governance.py::TestExecute::test_execute_settle_sends_message_to_pool`
     and `tests/test_pool.py::TestPoolSettlementBinding`.

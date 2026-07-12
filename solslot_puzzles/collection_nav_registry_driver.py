@@ -164,7 +164,7 @@ def nav_announcement_message(
     new_root: bytes32,
     new_registry_version: int,
 ) -> bytes:
-    return b"\x50" + compute_nav_message(
+    return b"\x53" + compute_nav_message(
         collection_id_canon,
         nav_value_mojos,
         old_root,
@@ -179,7 +179,7 @@ def nav_evidence_announcement_message(
     current_root: bytes32,
     registry_version: int,
 ) -> bytes:
-    return b"\x50" + compute_nav_evidence_message(
+    return b"\x53" + compute_nav_evidence_message(
         collection_id_canon,
         nav_value_mojos,
         current_root,
@@ -314,7 +314,7 @@ def build_nav_update_spend(
             new_root,
         ),
         signing_message=signing_message,
-        announcement_message=b"\x50" + signing_message,
+        announcement_message=b"\x53" + signing_message,
     )
 
 
@@ -358,7 +358,7 @@ def build_nav_read_evidence_spend(
             current.collection_nav_root,
         ),
         evidence_message=evidence_message,
-        announcement_message=b"\x50" + evidence_message,
+        announcement_message=b"\x53" + evidence_message,
     )
 
 

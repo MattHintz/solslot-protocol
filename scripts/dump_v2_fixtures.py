@@ -35,7 +35,7 @@ from solslot_puzzles.admin_authority_v2_driver import (
     DEFAULT_COOLDOWN_BLOCKS,
     DEFAULT_MAX_ADMINS,
     DEFAULT_MAX_KEYS_PER_ADMIN,
-    DEFAULT_PGT_GOVERNANCE_PUZZLE_HASH,
+    DEFAULT_SGT_GOVERNANCE_PUZZLE_HASH,
     DEFAULT_RECOVERY_TIMEOUT_BLOCKS,
     EMPTY_LIST_HASH,
     AdminRecord,
@@ -206,7 +206,7 @@ def build_fixture() -> dict[str, Any]:
                 "max_keys_per_admin": 5,
                 "cooldown_blocks": 100,
                 "recovery_timeout_blocks": 1000,
-                "pgt_governance_puzzle_hash": h1,
+                "sgt_governance_puzzle_hash": h1,
             },
             "custom-policy-with-pending-op",
         ),
@@ -351,8 +351,8 @@ def build_fixture() -> dict[str, Any]:
             "default_max_keys_per_admin": DEFAULT_MAX_KEYS_PER_ADMIN,
             "default_cooldown_blocks": DEFAULT_COOLDOWN_BLOCKS,
             "default_recovery_timeout_blocks": DEFAULT_RECOVERY_TIMEOUT_BLOCKS,
-            "default_pgt_governance_puzzle_hash": _hex(
-                DEFAULT_PGT_GOVERNANCE_PUZZLE_HASH
+            "default_sgt_governance_puzzle_hash": _hex(
+                DEFAULT_SGT_GOVERNANCE_PUZZLE_HASH
             ),
             # Canonical chia singleton constants — bundled here so the
             # TS port can hardcode them and have a fixture-level guard

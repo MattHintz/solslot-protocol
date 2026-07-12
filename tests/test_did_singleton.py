@@ -32,7 +32,7 @@ from chia_rs import Coin, CoinSpend, G2Element, SpendBundle
 from chia_rs.sized_bytes import bytes32
 from chia_rs.sized_ints import uint64
 
-# Load our forked launcher from the populis package
+# Load our forked launcher from the solslot package
 SINGLETON_APPROVAL_LAUNCHER_MOD: Program = load_clvm(
     "singleton_launcher_with_did.clsp",
     package_or_requirement="solslot_puzzles",

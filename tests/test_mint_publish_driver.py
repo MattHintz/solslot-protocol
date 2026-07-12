@@ -60,7 +60,7 @@ from solslot_puzzles.mint_publish_driver import (
     MintPublishArtifacts,
     ProposalEveLaunchSpend,
     build_mint_publish_artifacts,
-    build_pgt_first_vote_coin_spend,
+    build_sgt_first_vote_coin_spend,
     build_proposal_eve_launch_spend,
     build_tracker_propose_coin_spend,
     compute_deed_full_puzzle_hash,
@@ -781,20 +781,19 @@ class TestBuildMintPublishArtifacts:
         # current observed value in the assertion diff, copy the new
         # hex into the slot, and bump the freeze comment below.
         #
-        # Refrozen 2026-07-11: Solslot v2 uses smart_deed_inner_v2 and
-        # p2_pool_v2, binding the canonical deed commitment into escrow.
+        # Refrozen 2026-07-12 for the Solslot-only namespace and 0x53 prefix.
         pinned = {
             "smart_deed_inner_puzhash": (
-                "7c136b467c78029bad205002a0c2f57bdd92a5f87dcaedc2bac233d378e3e0dd"
+                "d775fb9d532798e7bb6b34dc063bc6654ef424311dafbf9b134d90897c86802d"
             ),
             "eve_inner_puzhash": (
-                "a88e74279e1f8b22d052d469f8e6505bbacba24aea48d5f18aa43d20d232383f"
+                "0c2931b61be08612a562a5165e786de126cadbb8c99d7c5ec73ed8824e99fb23"
             ),
             "deed_full_puzhash": (
-                "fbabfd153e14099e9b4f6241c12a3a955ba734ba6ab63213ad3095c587a24a83"
+                "31b8d068651f77b3d9fbb06633c0680609d2801df952247d33f15e57cc552eac"
             ),
             "proposal_hash": (
-                "2687dd7f1541480a5b0167bca6d938b353ad4f93e21d6a0adaf9fda742afacda"
+                "edf064e987a400b9b8f399702aa7ccb786b4f7721df58102f3d3e8e24e5f0019"
             ),
             "deed_launcher_id": (
                 "1310b78bf387ea58bb9365e261ff099a6971fd2ca5cc98e750b1d07e92e29b1d"
@@ -1006,7 +1005,7 @@ class TestBuildTrackerProposeCoinSpend:
       4. Run the curried tracker inner puzzle on the builder's inner
          solution and confirm the emitted conditions match the
          PROPOSE handler's expected output (CREATE_COIN to next state,
-         ASSERT_PUZZLE_ANNOUNCEMENT for PGT lock, time bounds, REMARK).
+         ASSERT_PUZZLE_ANNOUNCEMENT for SGT lock, time bounds, REMARK).
     """
 
     # Tracker curry parameters — mirror test_governance.py's defaults.
@@ -1023,18 +1022,18 @@ class TestBuildTrackerProposeCoinSpend:
 
     def _idle_tracker_inner(self) -> Program:
         """Build an idle (no-active-proposal) tracker inner puzzle."""
-        from solslot_puzzles.pgt_driver import (
-            pgt_free_inner_mod,
-            pgt_locked_inner_mod,
+        from solslot_puzzles.sgt_driver import (
+            sgt_free_inner_mod,
+            sgt_locked_inner_mod,
             proposal_tracker_inner_puzzle,
         )
 
         return proposal_tracker_inner_puzzle(
             self._tracker_struct(),
-            bytes32(pgt_free_inner_mod().get_tree_hash()),
-            bytes32(pgt_locked_inner_mod().get_tree_hash()),
+            bytes32(sgt_free_inner_mod().get_tree_hash()),
+            bytes32(sgt_locked_inner_mod().get_tree_hash()),
             bytes32(b"\xca" * 32),  # cat_mod_hash
-            bytes32(b"\xea" * 32),  # pgt_tail_hash
+            bytes32(b"\xea" * 32),  # sgt_tail_hash
             bytes32(b"\xd0" * 32),  # did_puzhash
             Program.to(
                 (
@@ -1044,7 +1043,7 @@ class TestBuildTrackerProposeCoinSpend:
             ),  # pool_struct
             5000,  # quorum_bps (50%)
             300,  # voting_window (5 min)
-            1_000_000,  # pgt_total_supply
+            1_000_000,  # sgt_total_supply
             10_000,  # min_proposal_stake
             proposal_hash=0,
             bill_operation=0,
@@ -1125,7 +1124,7 @@ class TestBuildTrackerProposeCoinSpend:
         items = list(inner_sol.as_iter())
         # (my_id my_inner_puzzlehash my_amount TRK_PROPOSE params)
         assert len(items) == 5
-        from solslot_puzzles.pgt_driver import TRK_PROPOSE
+        from solslot_puzzles.sgt_driver import TRK_PROPOSE
 
         assert int.from_bytes(items[3].atom or b"\x00", "big") == TRK_PROPOSE
         # params = (proposal_hash bill_op voter_inner_puzhash first_vote deadline)
@@ -1243,31 +1242,31 @@ class TestBuildTrackerProposeCoinSpend:
             )
 
 
-class TestBuildPgtFirstVoteCoinSpend:
-    """Confirm the first-vote wrapper delegates to ``build_pgt_lock_coin_spend``.
+class TestBuildSgtFirstVoteCoinSpend:
+    """Confirm the first-vote wrapper delegates to ``build_sgt_lock_coin_spend``.
 
     The Phase 3 LOCK spend already has coin-sim coverage via
-    ``test_pgt_e2e.py``; this brick adds only the publish-flow-named
+    ``test_sgt_e2e.py``; this brick adds only the publish-flow-named
     entry point.  We assert the wrapper produces a byte-equal
     ``CoinSpend`` to the underlying helper for identical args, which
     is the strongest test we can give a delegating function.
     """
 
-    # The PGT_TAIL_HASH used in the test must match what cat_pgt_free_puzzle_hash
+    # The SGT_TAIL_HASH used in the test must match what cat_sgt_free_puzzle_hash
     # internally bakes into the CAT mod hash math.  We use the same fixed value
     # the Phase 3 LOCK builder tests use, so the underlying helper's puzzle
     # reveal hashes to the expected coin puzzle hash.
-    _PGT_TAIL_HASH = bytes32(b"\xea" * 32)
+    _SGT_TAIL_HASH = bytes32(b"\xea" * 32)
     _PROPOSAL_HASH = bytes32(b"\xcd" * 32)
     _DEADLINE = 2_000_000_000
     _AMOUNT = 10_000
 
     def _common_args(self) -> dict:
-        from solslot_puzzles.pgt_driver import (
-            cat_pgt_free_puzzle_hash,
-            pgt_free_inner_mod,
-            pgt_locked_inner_hash,
-            pgt_locked_inner_mod,
+        from solslot_puzzles.sgt_driver import (
+            cat_sgt_free_puzzle_hash,
+            sgt_free_inner_mod,
+            sgt_locked_inner_hash,
+            sgt_locked_inner_mod,
         )
 
         tracker_struct = Program.to(
@@ -1276,9 +1275,9 @@ class TestBuildPgtFirstVoteCoinSpend:
                 (bytes32(b"\xb0" * 32), SINGLETON_LAUNCHER_HASH),
             )
         )
-        pgt_free_mod_h = bytes32(pgt_free_inner_mod().get_tree_hash())
-        pgt_locked_mod_h = bytes32(pgt_locked_inner_mod().get_tree_hash())
-        # CAT_MOD_HASH used by ``cat_pgt_free_puzzle_hash`` is the chia
+        sgt_free_mod_h = bytes32(sgt_free_inner_mod().get_tree_hash())
+        sgt_locked_mod_h = bytes32(sgt_locked_inner_mod().get_tree_hash())
+        # CAT_MOD_HASH used by ``cat_sgt_free_puzzle_hash`` is the chia
         # bundled CAT mod hash, not an arbitrary one.  Import it directly.
         from chia.wallet.cat_wallet.cat_utils import CAT_MOD
 
@@ -1288,62 +1287,62 @@ class TestBuildPgtFirstVoteCoinSpend:
         voter_inner_puzzle = Program.to(1)
         voter_inner_ph = bytes32(voter_inner_puzzle.get_tree_hash())
 
-        cat_ph = cat_pgt_free_puzzle_hash(
+        cat_ph = cat_sgt_free_puzzle_hash(
             tracker_struct,
-            pgt_free_mod_h,
-            pgt_locked_mod_h,
+            sgt_free_mod_h,
+            sgt_locked_mod_h,
             cat_mod_hash,
-            self._PGT_TAIL_HASH,
+            self._SGT_TAIL_HASH,
             voter_inner_ph,
         )
-        pgt_coin = Coin(
+        sgt_coin = Coin(
             parent_coin_info=bytes32(b"\xa1" * 32),
             puzzle_hash=cat_ph,
             amount=self._AMOUNT,
         )
 
         # Compute the canonical locked-inner puzhash the LOCK spend MUST
-        # create.  ``pgt_locked_inner_hash`` takes the v2 signature
-        # ``(pgt_free_mod_h, tracker_struct, voter_ph, proposal_hash,
+        # create.  ``sgt_locked_inner_hash`` takes the v2 signature
+        # ``(sgt_free_mod_h, tracker_struct, voter_ph, proposal_hash,
         # deadline)``.
-        locked_ph = pgt_locked_inner_hash(
-            pgt_free_mod_h,
+        locked_ph = sgt_locked_inner_hash(
+            sgt_free_mod_h,
             tracker_struct,
             voter_inner_ph,
             self._PROPOSAL_HASH,
             self._DEADLINE,
         )
         # voter_inner_solution: emit one CREATE_COIN to the canonical
-        # locked puzhash with amount == pgt_coin.amount.
+        # locked puzhash with amount == sgt_coin.amount.
         voter_inner_solution = Program.to([[51, locked_ph, self._AMOUNT]])
 
         return {
-            "pgt_coin": pgt_coin,
+            "sgt_coin": sgt_coin,
             "voter_inner_puzzle": voter_inner_puzzle,
             "voter_inner_solution": voter_inner_solution,
             "proposal_tracker_struct": tracker_struct,
-            "pgt_tail_hash": self._PGT_TAIL_HASH,
+            "sgt_tail_hash": self._SGT_TAIL_HASH,
             "lineage_proof": LineageProof(),
             "proposal_hash": self._PROPOSAL_HASH,
         }
 
-    def test_equals_underlying_pgt_lock_spend(self):
-        from solslot_puzzles.pgt_driver import build_pgt_lock_coin_spend
+    def test_equals_underlying_sgt_lock_spend(self):
+        from solslot_puzzles.sgt_driver import build_sgt_lock_coin_spend
 
         common = self._common_args()
         deadline = 2_000_000_000
-        from_wrapper = build_pgt_first_vote_coin_spend(
+        from_wrapper = build_sgt_first_vote_coin_spend(
             **common, voting_deadline=deadline
         )
-        from_underlying = build_pgt_lock_coin_spend(**common, deadline=deadline)
+        from_underlying = build_sgt_lock_coin_spend(**common, deadline=deadline)
         assert from_wrapper == from_underlying
 
     def test_returns_a_single_coin_spend(self):
         from chia.types.coin_spend import CoinSpend
 
-        spend = build_pgt_first_vote_coin_spend(
+        spend = build_sgt_first_vote_coin_spend(
             **self._common_args(),
             voting_deadline=2_000_000_000,
         )
         assert isinstance(spend, CoinSpend)
-        assert spend.coin == self._common_args()["pgt_coin"]
+        assert spend.coin == self._common_args()["sgt_coin"]

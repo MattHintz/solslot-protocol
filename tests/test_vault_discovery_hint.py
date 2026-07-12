@@ -4,7 +4,7 @@ vaults chain-discoverable from a user's pubkey alone.
 Locking the format here is critical because portal clients re-implement the
 hash off-chain (TypeScript) and any drift breaks login.  The hint is:
 
-    sha256(b"populis-vault-discovery-v1" || auth_type_byte || owner_pubkey)
+    sha256(b"solslot-vault-discovery-v1" || auth_type_byte || owner_pubkey)
 
 These tests pin:
 - The literal domain string.

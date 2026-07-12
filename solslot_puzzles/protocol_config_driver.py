@@ -1,6 +1,6 @@
 """Python driver for protocol_config_inner.clsp (A.3).
 
-The protocol-config singleton publishes Populis runtime configuration
+The protocol-config singleton publishes Solslot runtime configuration
 on-chain.  Off-chain consumers (the API at ``/protocol``, the EIP-712
 registration envelope, the frontend) bind to its deterministic
 ``content_hash`` instead of trusting environment variables.
@@ -60,7 +60,7 @@ def protocol_config_inner_mod_hash() -> bytes32:
 # because it's the same constant the rest of the protocol already binds
 # signatures against.  Hardcoded values pulled from
 # ``chia.consensus.default_constants`` (also documented in
-# ``populis_api/populis_api/faucet.py:AGG_SIG_ME_DATA``).
+# ``solslot_api/solslot_api/faucet.py:AGG_SIG_ME_DATA``).
 
 NETWORK_ID_MAINNET: Final[bytes32] = bytes32.fromhex(
     "ccd5bb71183532bff220ba46c268991a00000000000000000000000000000000"

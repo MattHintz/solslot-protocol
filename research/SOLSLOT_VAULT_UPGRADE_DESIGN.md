@@ -1,11 +1,11 @@
-# Populis Vault Upgrade Design
+# Solslot Vault Upgrade Design
 
 Status: draft contract for implementation
 Date: 2026-06-15
 
 ## Purpose
 
-Populis vaults are permanent singletons. Their protocol parameters — the pool
+Solslot vaults are permanent singletons. Their protocol parameters — the pool
 reference, the zkPassport bridge policy hash, and the `vault_singleton_inner`
 module itself — are curried at mint and are **immutable**. When the protocol
 ships a new vault version (a new inner-puzzle module, or new canonical
@@ -26,7 +26,7 @@ An upgrade is offered **only when a new known vault version exists on chain.**
 Goals:
 
 - **Decentralized.** Detection and upgrade read the chain directly
-  (coinset.org). There is **no Populis backend dependency** in the detection or
+  (coinset.org). There is **no Solslot backend dependency** in the detection or
   upgrade path.
 - **On-chain version source of truth.** An upgrade is offered only when a new
   known vault version is advertised on chain.
@@ -44,7 +44,7 @@ Non-goals:
 
 ## Motivating example
 
-The zkPassport bridge-policy-hash bug (fixed in `populis_api` commit `a59bd02`)
+The zkPassport bridge-policy-hash bug (fixed in `solslot_api` commit `a59bd02`)
 minted vaults with a zero `ZKPASSPORT_BRIDGE_POLICY_HASH`, making them
 permanently un-enrollable. Such vaults must be replaced by a new vault at the
 correct parameters — exactly the upgrade flow this design enables.
@@ -109,9 +109,9 @@ The exact announcement binding (coin vs puzzle announcement, and how the
 registry identifies the authority's current coin from its launcher id) is a
 Brick 2 detail pinned with consensus tests. The invariant is that
 authorization is the authority's **live quorum** — never a key curried into
-the registry. Whether a **PGT staker ratification vote is *also* required**
+the registry. Whether a **SGT staker ratification vote is *also* required**
 depends on the tier — see **Governance model** below: vault **code** changes
-always need PGT ratification; **parameter-only** repair is an admin fast-track.
+always need SGT ratification; **parameter-only** repair is an admin fast-track.
 
 Discovery: the registry singleton's launcher id is published in
 `deployment_manifest.json` and the portal `environment.ts` as a public,
@@ -127,9 +127,9 @@ enforced, not assumed.
 
 ### Current protocol reality (2026-06)
 
-- **PGT staked governance exists but is mint-scoped.**
+- **SGT staked governance exists but is mint-scoped.**
   `governance_singleton_inner.clsp` (the proposal tracker) enforces a real
-  PGT-stake quorum (`VOTE_TALLY * 10000 >= QUORUM_BPS * PGT_TOTAL_SUPPLY`) but
+  SGT-stake quorum (`VOTE_TALLY * 10000 >= QUORUM_BPS * SGT_TOTAL_SUPPLY`) but
   its `dispatch_bill` handles only **three fixed bills**: `MINT` (→ DID),
   `FREEZE` (→ pool), `SETTLE` (→ pool); any other tag fails `(x)`. Per
   `docs/GOVERNANCE_V2_DESIGN.md` §1–3, this is intentional, and
@@ -137,12 +137,12 @@ enforced, not assumed.
   scope"** in that design's contract inventory. There is **no vault/protocol
   bill type today.**
 - **The admin authority is separate and self-governed** by its own MofN
-  (`admin_authority_v2`). Its curried `PGT_GOVERNANCE_PUZZLE_HASH` is a
+  (`admin_authority_v2`). Its curried `SGT_GOVERNANCE_PUZZLE_HASH` is a
   **reserved, unwired hook** ("for ADMIN_SLOT_* spends, out of scope")
-  defaulting to zeros — PGT does not gate admin-authority actions today.
-- **The committee on-chain PGT-VOTE submission path is not wired yet.**
+  defaulting to zeros — SGT does not gate admin-authority actions today.
+- **The committee on-chain SGT-VOTE submission path is not wired yet.**
   `/admin/committee/vote` returns `501` and the portal `/committee` page is
-  "not wired yet." The admin → propose → PGT → ratify → execute lifecycle is
+  "not wired yet." The admin → propose → SGT → ratify → execute lifecycle is
   documented for **mints** (`ADMIN_DESK_DESIGN.md` §5) but not finished
   end-to-end.
 
@@ -154,18 +154,18 @@ admin's discretionary "emergency" label. The registry state is
 determinant is simply *which of those changes*:
 
 - **Routine — the vault CODE changes (`VAULT_INNER_MOD_HASH` differs).** New
-  vault logic, spend cases, or features. **Always requires affirmative PGT
+  vault logic, spend cases, or features. **Always requires affirmative SGT
   quorum ratification** (the governance tracker's EXECUTE for a `vault-version`
   bill). For a security fix a **shortened emergency-vote window** (faster
-  deadline / emergency threshold) may be used, but PGT still ratifies. **The
+  deadline / emergency threshold) may be used, but SGT still ratifies. **The
   admin can NEVER unilaterally change the code a user's vault executes.**
 - **Emergency — PARAMETERS only (`CANONICAL_PARAMS_HASH` differs, code
   byte-identical).** Repairing a misconfigured/compromised curried constant
   (e.g. the bridge-policy-hash bug, a rotated pool reference). The
   `admin_authority_v2` MofN may **fast-track** it, because the code is provably
-  unchanged. It stays **PGT-vetoable within a mandatory cooldown**: the new
+  unchanged. It stays **SGT-vetoable within a mandatory cooldown**: the new
   version is not enforced-canonical until the cooldown elapses, during which a
-  PGT veto-quorum can revoke it.
+  SGT veto-quorum can revoke it.
 
 Enforcement (so "emergency" is structural, not a claim):
 
@@ -173,11 +173,11 @@ Enforcement (so "emergency" is structural, not a claim):
   `new VAULT_INNER_MOD_HASH == VAULT_INNER_MOD_HASH`** — a code change through
   the fast path is rejected by consensus.
 - The fast-track path is **strictly weaker** than the routine path (delayed +
-  PGT-vetoable), so there is no incentive to misuse it. Only the routine PGT
-  vote yields an immediately-final, non-vetoable version. **PGT is supreme in
+  SGT-vetoable), so there is no incentive to misuse it. Only the routine SGT
+  vote yields an immediately-final, non-vetoable version. **SGT is supreme in
   every path.**
 
-This depends on the same PGT wiring the mint flow needs: a `vault-version` bill
+This depends on the same SGT wiring the mint flow needs: a `vault-version` bill
 type in `governance_singleton_inner.clsp` for the routine path (a consensus
 change — the tracker was deliberately 3-bill-scoped), plus a veto mechanism and
 the committee-vote path. Until that lands, only the params-only admin
@@ -229,7 +229,7 @@ that all subsequent upgrades are seamless.
 
 ## Decentralization invariants
 
-- **No Populis backend** participates in version detection or upgrade. The
+- **No Solslot backend** participates in version detection or upgrade. The
   portal reads coinset.org directly and the wallet signs locally.
 - The single trust root is the on-chain `vault_version_registry` singleton,
   whose publishes are authorized by the live `admin_authority_v2` quorum — a
@@ -237,8 +237,8 @@ that all subsequent upgrades are seamless.
   roster grows. The registry holds **no key of its own** and is never singly
   centralized by construction.
 - **The admin can never unilaterally change vault code.** Any change to
-  `VAULT_INNER_MOD_HASH` requires PGT ratification; the admin fast-track is
-  limited to parameter repair (code byte-identical) and is PGT-vetoable within
+  `VAULT_INNER_MOD_HASH` requires SGT ratification; the admin fast-track is
+  limited to parameter repair (code byte-identical) and is SGT-vetoable within
   a cooldown.
 - An upgrade is offered **only** when the on-chain registry advertises a higher
   `VAULT_VERSION` (or a differing canonical identity) than the user's vault. No
@@ -251,12 +251,12 @@ that all subsequent upgrades are seamless.
 - **Brick 1.5 (governance — RESOLVED, tiered by code-vs-params):** the registry
   has two publish paths. (a) **Params-only fast-track**: `admin_authority_v2`
   MofN, with the spend case asserting `new VAULT_INNER_MOD_HASH ==
-  VAULT_INNER_MOD_HASH`; PGT-vetoable within a cooldown. (b) **Code-change
-  routine**: requires the PGT proposal tracker's EXECUTE for a NEW
+  VAULT_INNER_MOD_HASH`; SGT-vetoable within a cooldown. (b) **Code-change
+  routine**: requires the SGT proposal tracker's EXECUTE for a NEW
   `vault-version` bill in `governance_singleton_inner.clsp` (consensus change),
-  plus the committee PGT-VOTE wiring (`/admin/committee/vote`, portal
+  plus the committee SGT-VOTE wiring (`/admin/committee/vote`, portal
   `/committee`) and a veto path. Build (a) first (operable today via the admin
-  1-of-1); (b) gates code upgrades and lands with the PGT wiring.
+  1-of-1); (b) gates code upgrades and lands with the SGT wiring.
 - **Brick 2 (protocol):** `vault_version_registry_inner.clsp` + driver + tests,
   mirroring `protocol_config_inner` (authority-quorum-authorized via
   `admin_authority_v2`, monotonic version, content-hash, announcement).
@@ -284,8 +284,8 @@ that all subsequent upgrades are seamless.
 ## Open decisions
 
 - RESOLVED: governance model is **tiered by code-vs-parameter change** (see
-  **Governance model**). Vault code changes always require PGT ratification;
-  parameter-only repair is an admin fast-track that is PGT-vetoable.
+  **Governance model**). Vault code changes always require SGT ratification;
+  parameter-only repair is an admin fast-track that is SGT-vetoable.
 - RESOLVED: the registry binds to the `admin_authority_v2` quorum by launcher
   id (no standalone key). It resolves to your 1-of-1 today and to the committee
   MofN as the roster grows, with no redeploy.

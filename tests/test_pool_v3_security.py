@@ -1,4 +1,4 @@
-"""Consensus regressions for POP-CANON-041 and POP-CANON-042."""
+"""Consensus regressions for V1-CANON-041 and V1-CANON-042."""
 from __future__ import annotations
 
 import hashlib
@@ -18,11 +18,6 @@ from solslot_puzzles.collection_nav_registry_driver import (
 from solslot_puzzles.protocol_deployment import singleton_full_puzzle_hash
 
 
-POOL_VULNERABLE = load_clvm(
-    "pool_singleton_inner.clsp",
-    package_or_requirement="solslot_puzzles",
-    recompile=True,
-)
 POOL_V3 = load_clvm(
     "pool_singleton_inner_v3.clsp",
     package_or_requirement="solslot_puzzles",
@@ -149,12 +144,9 @@ def _solution(curried: Program, spend_case: int, params: list[object]) -> Progra
         ),
     ],
 )
-def test_pop_canon_041_poc_succeeds_only_on_quarantined_pool(
+def test_v1_canon_041_poc_is_rejected_by_hardened_pool(
     spend_case: int, params: list[object]
 ) -> None:
-    vulnerable = _curry_pool(POOL_VULNERABLE)
-    assert vulnerable.run(_solution(vulnerable, spend_case, params)).as_python()
-
     hardened = _curry_pool(POOL_V3, governance_struct=GOVERNANCE_STRUCT)
     with pytest.raises(ValueError):
         hardened.run(_solution(hardened, spend_case, params))
@@ -212,7 +204,7 @@ def test_settlement_uses_curried_governance_and_binds_each_deed() -> None:
     assert any(_atom_int(c[0]) == CREATE_PUZZLE_ANNOUNCEMENT for c in conditions)
     expected_deed_announcement = hashlib.sha256(
         bytes(deed_coin_id)
-        + b"\x50"
+        + b"\x53"
         + bytes(Program.to([0x72, commitment, destination]).get_tree_hash())
     ).digest()
     assert [bytes([61]), expected_deed_announcement] in conditions

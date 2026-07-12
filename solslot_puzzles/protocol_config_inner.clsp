@@ -1,18 +1,18 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;; Protocol Configuration Singleton (A.3) — Populis on-chain config holder.
+;;; Protocol Configuration Singleton (A.3) — Solslot on-chain config holder.
 ;;;
-;;; Replaces three off-chain trust roots that the Populis API previously
+;;; Replaces three off-chain trust roots that the Solslot API previously
 ;;; carried as environment variables:
 ;;;
-;;;   POPULIS_POOL_LAUNCHER_ID            -> POOL_LAUNCHER_ID (curried)
-;;;   POPULIS_GOVERNANCE_LAUNCHER_ID      -> GOV_TRACKER_LAUNCHER_ID (curried)
-;;;   POPULIS_NETWORK                     -> NETWORK_ID (curried)
+;;;   SOLSLOT_POOL_LAUNCHER_ID            -> POOL_LAUNCHER_ID (curried)
+;;;   SOLSLOT_GOVERNANCE_LAUNCHER_ID      -> GOV_TRACKER_LAUNCHER_ID (curried)
+;;;   SOLSLOT_NETWORK                     -> NETWORK_ID (curried)
 ;;;
 ;;; Off-chain consumers (the API at /protocol, the EIP-712 registration
 ;;; envelope, the frontend) all bind to the puzzle's curried state via the
 ;;; deterministic ``content_hash`` defined below.  This closes the
-;;; "stale .env on operator deployment" trust gap (POP-CANON-002 /
-;;; POP-CANON-005) and the "config drift between /auth/challenge and
+;;; "stale .env on operator deployment" trust gap (V1-CANON-002 /
+;;; V1-CANON-005) and the "config drift between /auth/challenge and
 ;;; /vault/register" race window.
 ;;;
 ;;; Curried parameters:
@@ -137,7 +137,7 @@
     (is-uint64 new_config_version)
     ;; Curried sanity (defence-in-depth — these are operator-set, but a
     ;; misconfigured launch would be caught by the very first spend).
-    ;; BLS G1 pubkey size guard (POP-CANON-018) — previously this
+    ;; BLS G1 pubkey size guard (V1-CANON-018) — previously this
     ;; comment claimed AGG_SIG_ME would catch malformed pubkeys at
     ;; consensus.  That's true but the failure mode is "permanent
     ;; brick on first spend"; hard-failing here surfaces the

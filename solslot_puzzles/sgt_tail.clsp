@@ -1,13 +1,13 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;; PGT — Populis Governance Token CAT2 TAIL.
+;;; SGT — Solslot Governance Token CAT2 TAIL.
 ;;;
-;;; Fixed-supply genesis-by-coin-id.  PGT may only enter circulation through
+;;; Fixed-supply genesis-by-coin-id.  SGT may only enter circulation through
 ;;; one specific XCH coin (GENESIS_COIN_ID) being spent into the CAT2 wrapper
 ;;; at protocol launch.  After that single issuance, the genesis coin can
 ;;; never be respent (Chia consensus rule: each coin spends at most once),
 ;;; so total supply is permanently fixed at the amount minted in that bundle.
 ;;;
-;;; Holds for every PGT spend that triggers TAIL evaluation:
+;;; Holds for every SGT spend that triggers TAIL evaluation:
 ;;;   - delta == 0  (no melt or extra issuance after genesis)
 ;;;   - my parent == GENESIS_COIN_ID  (only the genesis spend can mint)
 ;;;
@@ -16,7 +16,7 @@
 ;;; than depending on the chia-blockchain installed location.
 ;;;
 ;;; Curried parameters:
-;;;   GENESIS_COIN_ID — bytes32 — the unique XCH coin id that bootstraps PGT.
+;;;   GENESIS_COIN_ID — bytes32 — the unique XCH coin id that bootstraps SGT.
 ;;;
 ;;; CAT2 TAIL solution (passed by the CAT2 outer at evaluation time):
 ;;;   Truths           — see cat_truths.clib

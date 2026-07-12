@@ -979,7 +979,7 @@ def build_create_vault_bundle(
         auth_type:            AUTH_TYPE_BLS, AUTH_TYPE_SECP256R1, or AUTH_TYPE_SECP256K1.
         members_merkle_root:  32-byte Merkle root of authorised keys.
                               For single-key vaults use one_leaf_merkle_root(owner_pubkey_bytes).
-        pool_launcher_id:     The Populis pool's launcher ID.
+        pool_launcher_id:     The Solslot pool's launcher ID.
         fee:                  Network fee in mojos.
     """
     owner_pubkey_bytes = validate_owner_pubkey_for_auth_type(owner_pubkey_bytes, auth_type)
@@ -1070,7 +1070,7 @@ class VaultDriver:
             owner_pubkey_bytes:   48-byte BLS G1, 65-byte r1, or 33-byte k1 pubkey.
             auth_type:            AUTH_TYPE_BLS / AUTH_TYPE_SECP256R1 / AUTH_TYPE_SECP256K1.
             members_merkle_root:  32-byte Merkle root. Use one_leaf_merkle_root() for single-key.
-            pool_launcher_id:     Populis pool launcher ID.
+            pool_launcher_id:     Solslot pool launcher ID.
             fee:                  Network fee in mojos.
             parent_puzzle:        Required for secp auth types; ignored for BLS
                                   (derived automatically from owner_pubkey_bytes).

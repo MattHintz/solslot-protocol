@@ -26,15 +26,15 @@ BASE_DEPLOYMENT_FIELDS = (
     "network",
     "params",
     "faucet_inner_puzhash",
-    "pgt_genesis_coin_id",
+    "sgt_genesis_coin_id",
     "pool_genesis_coin_id",
     "did_genesis_coin_id",
     "gov_genesis_coin_id",
     "pool_launcher_id",
     "did_launcher_id",
     "tracker_launcher_id",
-    "pgt_tail_hash",
-    "pgt_full_puzhash",
+    "sgt_tail_hash",
+    "sgt_full_puzhash",
     "pool_token_tail_hash",
     "pool_inner_puzhash",
     "pool_full_puzhash",
@@ -78,17 +78,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--deployment-manifest",
         type=Path,
-        default=WORKSPACE_ROOT / "populis_api" / "deployment_manifest.json",
+        default=WORKSPACE_ROOT / "solslot-api" / "deployment_manifest.json",
     )
     parser.add_argument(
         "--bootstrap-manifest",
         type=Path,
-        default=WORKSPACE_ROOT / "populis_api" / "bootstrap_manifest.json",
+        default=WORKSPACE_ROOT / "solslot-api" / "bootstrap_manifest.json",
     )
     parser.add_argument(
         "--portal-runtime-config",
         type=Path,
-        default=WORKSPACE_ROOT / "populis_api" / "portal_runtime_config.json",
+        default=WORKSPACE_ROOT / "solslot-api" / "portal_runtime_config.json",
     )
     parser.add_argument(
         "--slui-env",
@@ -103,11 +103,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--solslot-portal-env",
-        "--populis-portal-env",
+        "--solslot-portal-env",
         dest="solslot_portal_env",
         type=Path,
         default=WORKSPACE_ROOT
-        / "populis_portal"
+        / "solslot-portal"
         / "src"
         / "environments"
         / "environment.shared.ts",
@@ -183,7 +183,7 @@ def env_solslot_protocol(path: Path, findings: list[Finding], label: str) -> dic
     object_name = "solslotProtocol"
     start = text.find(object_name)
     if start < 0:
-        object_name = "populisProtocol"
+        object_name = "solslotProtocol"
         start = text.find(object_name)
         if start < 0:
             findings.append(Finding("warn", f"{label} has no solslotProtocol object: {path}"))
@@ -191,7 +191,7 @@ def env_solslot_protocol(path: Path, findings: list[Finding], label: str) -> dic
         findings.append(
             Finding(
                 "warn",
-                f"{label} uses legacy populisProtocol object; rename to solslotProtocol: {path}",
+                f"{label} uses legacy solslotProtocol object; rename to solslotProtocol: {path}",
             )
         )
     brace_start = text.find("{", start)
@@ -353,7 +353,7 @@ def check_bootstrap_artifacts(
             "pool_launcher_id",
             "did_launcher_id",
             "tracker_launcher_id",
-            "pgt_tail_hash",
+            "sgt_tail_hash",
             "pool_token_tail_hash",
             "pool_full_puzhash",
             "tracker_full_puzhash",

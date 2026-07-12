@@ -1,7 +1,7 @@
 """Unit tests for protocol_config_inner.clsp + protocol_config_driver.py.
 
 The protocol-config singleton (A.3) is the on-chain replacement for
-three off-chain trust roots that the Populis API previously carried as
+three off-chain trust roots that the Solslot API previously carried as
 environment variables (POOL/GOV/NETWORK launcher ids).  These tests
 verify both the puzzle's CLVM behaviour and the Python driver, and —
 critically — that the off-chain ``compute_content_hash`` exactly
@@ -142,7 +142,7 @@ class TestContentHash:
         in isolation (it's a defun-inline inside the puzzle body), so
         we exercise it via a successful update spend and inspect the
         ``CREATE_PUZZLE_ANNOUNCEMENT`` message (which embeds the same
-        ``content-hash`` output, prefixed by ``PROTOCOL_PREFIX = 0x50``).
+        ``content-hash`` output, prefixed by ``PROTOCOL_PREFIX = 0x53``).
         """
         from solslot_puzzles.protocol_config_driver import (
             build_update_spend,
@@ -174,8 +174,8 @@ class TestContentHash:
         assert len(announcements) == 1, "exactly one CREATE_PUZZLE_ANNOUNCEMENT"
         msg = announcements[0][1]
 
-        # Message is PROTOCOL_PREFIX (0x50) || content-hash(new_state).
-        assert msg[:1] == b"\x50", "message must start with PROTOCOL_PREFIX"
+        # Message is PROTOCOL_PREFIX (0x53) || content-hash(new_state).
+        assert msg[:1] == b"\x53", "message must start with PROTOCOL_PREFIX"
         on_chain_content_hash = msg[1:]
         assert len(on_chain_content_hash) == 32
 
@@ -300,7 +300,7 @@ class TestUpdateSpend:
         announcements = [c for c in conditions if c[0] == bytes([62])]
         assert len(announcements) == 1
         msg = announcements[0][1]
-        assert msg[:1] == b"\x50", "PROTOCOL_PREFIX"
+        assert msg[:1] == b"\x53", "PROTOCOL_PREFIX"
         assert msg[1:] == bytes(artifacts.new_content_hash)
 
     def test_assert_my_amount(self):

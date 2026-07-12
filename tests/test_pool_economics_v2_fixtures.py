@@ -62,7 +62,7 @@ def test_expected_action_spec_surface() -> None:
     assert expected_keys == set(fixture["reserve_acquisition"]["expected"].keys())
 
 
-def test_prefixed_messages_are_0x50_plus_hash() -> None:
+def test_prefixed_messages_are_0x53_plus_hash() -> None:
     fixture = build_fixture()
     for section in ("specific_deed_swap", "true_redemption", "reserve_acquisition"):
         expected = fixture[section]["expected"]
@@ -72,5 +72,5 @@ def test_prefixed_messages_are_0x50_plus_hash() -> None:
             "deed_message",
         ):
             value = expected[key]
-            assert value.startswith("0x50")
+            assert value.startswith("0x53")
             assert len(value) == 2 + 1 * 2 + 32 * 2

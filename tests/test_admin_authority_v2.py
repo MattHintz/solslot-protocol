@@ -6,7 +6,7 @@ constructing solutions via the driver and running the curried puzzle in
 the CLVM interpreter.
 
 Design reference:
-    research/POPULIS_ADMIN_AUTHORITY_V2_DESIGN.md
+    research/SOLSLOT_ADMIN_AUTHORITY_V2_DESIGN.md
 
 Note on MIPS reveals: real-world OPERATIONAL spends feed in the actual
 MIPS m_of_n puzzle reveal (composed via chia-wallet-sdk's MIPS primitives).
@@ -29,7 +29,7 @@ from solslot_puzzles.admin_authority_v2_driver import (
     DEFAULT_COOLDOWN_BLOCKS,
     DEFAULT_MAX_ADMINS,
     DEFAULT_MAX_KEYS_PER_ADMIN,
-    DEFAULT_PGT_GOVERNANCE_PUZZLE_HASH,
+    DEFAULT_SGT_GOVERNANCE_PUZZLE_HASH,
     DEFAULT_RECOVERY_TIMEOUT_BLOCKS,
     EMPTY_LIST_HASH,
     OP_KIND_ADD,
@@ -43,7 +43,7 @@ from solslot_puzzles.admin_authority_v2_driver import (
     SPEND_KEY_REMOVE_QUORUM,
     admin_authority_v2_inner_mod_hash,
     admin_supermajority_threshold,
-    admin_record_for_single_leaf,
+    single_member_admin_record,
     build_admin_roster_update_solution,
     build_admin_slot_add_preview,
     build_admin_slot_add_spend,
@@ -57,7 +57,6 @@ from solslot_puzzles.admin_authority_v2_driver import (
     compute_pending_ops_hash,
     compute_roster_update_binding_hash,
     compute_state_hash,
-    launch_state_from_v1_allowlist,
     make_inner_puzzle,
     parse_inner_puzzle,
 )
@@ -66,7 +65,7 @@ from solslot_puzzles.admin_authority_v2_driver import (
 DESIGN_DOC = (
     Path(__file__).resolve().parents[1]
     / "research"
-    / "POPULIS_ADMIN_AUTHORITY_V2_DESIGN.md"
+    / "SOLSLOT_ADMIN_AUTHORITY_V2_DESIGN.md"
 )
 
 
@@ -2081,7 +2080,7 @@ class TestRealMemberPuzzleIntegration:
 # This is the flagship test for Phase 9-Hermes: an end-to-end happy path
 # that:
 #   1. Loads the actual Eip712Member.clsp authored in chia-wallet-sdk PR
-#      #395 (copied verbatim into populis_protocol as a test fixture).
+#      #395 (copied verbatim into solslot-protocol as a test fixture).
 #   2. Constructs a real EIP-712 envelope per CHIP-0037 (mainnet domain).
 #   3. Signs it with a known secp256k1 keypair (eth_keys + pycryptodome).
 #   4. Runs the curried Eip712Member with the right CLVM flags (SECP +
@@ -2204,7 +2203,7 @@ EIP712_RUN_FLAGS = (
 class TestEip712MemberIntegration:
     def test_eip712_member_compiles_and_matches_upstream(self):
         """The verbatim copy of chia-wallet-sdk's eip712_member.clsp
-        compiles in populis env and produces a stable tree hash.
+        compiles in solslot env and produces a stable tree hash.
         """
         mod = _eip712_member_fixture()
         h = mod.get_tree_hash()
@@ -2366,67 +2365,28 @@ class TestEip712MemberIntegration:
 
 
 # ─────────────────────────────────────────────────────────────────────────
-# Migration helpers (v1 → v2): launch state synthesis + state parsing.
-#
-# These tests verify the off-chain tooling that operators use to:
-#   1. Construct a v2 launch state where each v1 BLS pubkey becomes a
-#      single-leaf admin record (preserving signer-index ordering).
-#   2. Decode a curried v2 puzzle back into typed state (for off-chain
-#      monitoring / consumer-side singleton verification).
+# Fresh-genesis helpers and state parsing.
 # ─────────────────────────────────────────────────────────────────────────
 
 
-class TestMigrationHelpers:
-    def test_admin_record_for_single_leaf(self):
+class TestStateHelpers:
+    def test_single_member_admin_record(self):
         """Single-leaf admin record has the leaf, m_within=1, and
         correct admin_idx.
         """
         leaf = bytes32(b"\xAA" * 32)
-        rec = admin_record_for_single_leaf(admin_idx=3, member_tree_hash=leaf)
+        rec = single_member_admin_record(admin_idx=3, member_tree_hash=leaf)
         assert rec.admin_idx == 3
         assert rec.leaves == (leaf,)
         assert rec.m_within == 1
-
-    def test_launch_state_from_v1_preserves_index_ordering(self):
-        """Each v1 BLS member tree hash maps to admin_idx=position.
-        This is critical for migration: signer indices in the v1
-        ALLOWLIST must align with admin_idx values in v2.
-        """
-        v1_admins = [
-            bytes32(b"\xA1" * 32),
-            bytes32(b"\xA2" * 32),
-            bytes32(b"\xA3" * 32),
-        ]
-        admins, quorum_m = launch_state_from_v1_allowlist(
-            bls_member_hashes=v1_admins,
-            quorum_m=2,
-        )
-        assert quorum_m == 2
-        assert len(admins) == 3
-        for idx, expected_leaf in enumerate(v1_admins):
-            assert admins[idx].admin_idx == idx
-            assert admins[idx].leaves == (expected_leaf,)
-            assert admins[idx].m_within == 1
-
-    def test_launch_state_rejects_invalid_quorum(self):
-        """quorum_m must be >= 1 and <= len(admins)."""
-        v1_admins = [bytes32(b"\xA1" * 32), bytes32(b"\xA2" * 32)]
-        with pytest.raises(ValueError, match="quorum_m must be >= 1"):
-            launch_state_from_v1_allowlist(
-                bls_member_hashes=v1_admins, quorum_m=0
-            )
-        with pytest.raises(ValueError, match="exceeds number of admins"):
-            launch_state_from_v1_allowlist(
-                bls_member_hashes=v1_admins, quorum_m=3
-            )
 
     def test_parse_inner_puzzle_round_trip(self):
         """parse_inner_puzzle reverses make_inner_puzzle. All curried
         slots round-trip through serialization unchanged.
         """
-        v1_admins = [bytes32(bytes([i]) * 32) for i in range(0xA0, 0xA3)]
-        admins, _ = launch_state_from_v1_allowlist(
-            bls_member_hashes=v1_admins, quorum_m=2
+        admins = tuple(
+            single_member_admin_record(idx, bytes32(bytes([value]) * 32))
+            for idx, value in enumerate(range(0xA0, 0xA3))
         )
         admins_hash = compute_admins_hash(admins)
         mips_root = bytes32(b"\xBE\xEF" * 16)
@@ -2445,7 +2405,7 @@ class TestMigrationHelpers:
         assert state.max_keys_per_admin == DEFAULT_MAX_KEYS_PER_ADMIN
         assert state.cooldown_blocks == DEFAULT_COOLDOWN_BLOCKS
         assert state.recovery_timeout_blocks == DEFAULT_RECOVERY_TIMEOUT_BLOCKS
-        assert state.pgt_governance_puzzle_hash == DEFAULT_PGT_GOVERNANCE_PUZZLE_HASH
+        assert state.sgt_governance_puzzle_hash == DEFAULT_SGT_GOVERNANCE_PUZZLE_HASH
 
         # Curried state slots match exactly what we passed in.
         assert state.mips_root_hash == mips_root
@@ -2469,9 +2429,11 @@ class TestMigrationHelpers:
         compute_state_hash returns directly. This is the announcement
         payload's body that off-chain monitors verify.
         """
-        v1_admins = [bytes32(b"\xA1" * 32), bytes32(b"\xA2" * 32)]
-        admins, _ = launch_state_from_v1_allowlist(
-            bls_member_hashes=v1_admins, quorum_m=2
+        admins = tuple(
+            single_member_admin_record(idx, leaf)
+            for idx, leaf in enumerate(
+                (bytes32(b"\xA1" * 32), bytes32(b"\xA2" * 32))
+            )
         )
         admins_hash = compute_admins_hash(admins)
         mips_root = bytes32(b"\xCA\xFE" * 16)
@@ -2492,51 +2454,3 @@ class TestMigrationHelpers:
         )
         assert state.state_hash == expected
         assert isinstance(state, AdminAuthorityV2State)
-
-    def test_migration_round_trip_v1_to_v2_to_announcement(self):
-        """End-to-end migration round-trip:
-          v1 BLS member hashes
-            -> launch_state_from_v1_allowlist
-            -> compute_admins_hash
-            -> make_inner_puzzle
-            -> parse_inner_puzzle
-            -> .state_hash
-          equals what an OPERATIONAL spend's CREATE_PUZZLE_ANNOUNCEMENT
-          would carry after the PROTOCOL_PREFIX + spend_tag bytes.
-        """
-        # Simulate v1 allowlist: 3 admins, 2-of-3 quorum.
-        v1_member_hashes = [
-            bytes32(bytes([i]) * 32) for i in (0xB1, 0xB2, 0xB3)
-        ]
-
-        # Migration step 1: synthesise v2 launch state.
-        admins, quorum_m = launch_state_from_v1_allowlist(
-            bls_member_hashes=v1_member_hashes,
-            quorum_m=2,
-            initial_authority_version=2,  # bump past the v1 version
-        )
-        assert quorum_m == 2
-
-        # Step 2: build the v2 inner puzzle for this launch state.
-        admins_hash = compute_admins_hash(admins)
-        mips_root = bytes32(b"\xDE\xAD" * 16)
-        inner = make_inner_puzzle(
-            mips_root_hash=mips_root,
-            admins_hash=admins_hash,
-            pending_ops_hash=EMPTY_LIST_HASH,
-            authority_version=2,
-        )
-
-        # Step 3: an off-chain monitor parses the on-chain puzzle back
-        # into typed state, then computes the announcement state-hash.
-        state = parse_inner_puzzle(inner)
-        announced_hash = state.state_hash
-        assert len(announced_hash) == 32
-
-        # Sanity: changing any state slot changes the announced hash.
-        from solslot_puzzles.admin_authority_v2_driver import compute_state_hash
-
-        bumped_version = compute_state_hash(
-            mips_root, admins_hash, EMPTY_LIST_HASH, 3
-        )
-        assert announced_hash != bumped_version

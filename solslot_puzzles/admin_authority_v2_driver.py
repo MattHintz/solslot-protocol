@@ -6,7 +6,7 @@ personal authentication methods (BLS, EIP-712, passkey, ...); the
 protocol-level admin set is an ``MofN`` quorum over those slots.
 
 Design reference:
-    research/POPULIS_ADMIN_AUTHORITY_V2_DESIGN.md
+    research/SOLSLOT_ADMIN_AUTHORITY_V2_DESIGN.md
 
 This module exposes the off-chain construction of state and spends that
 mirrors what the on-chain ``admin_authority_v2_inner.clsp`` puzzle expects.
@@ -76,7 +76,7 @@ DEFAULT_MAX_ADMINS = 25
 DEFAULT_MAX_KEYS_PER_ADMIN = 10
 DEFAULT_COOLDOWN_BLOCKS = 1024  # ≈ 2 days at 24s blocks
 DEFAULT_RECOVERY_TIMEOUT_BLOCKS = 5040  # ≈ 7 days
-DEFAULT_PGT_GOVERNANCE_PUZZLE_HASH: bytes32 = bytes32(b"\x00" * 32)
+DEFAULT_SGT_GOVERNANCE_PUZZLE_HASH: bytes32 = bytes32(b"\x00" * 32)
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -337,14 +337,14 @@ def make_inner_puzzle(
     max_keys_per_admin: int = DEFAULT_MAX_KEYS_PER_ADMIN,
     cooldown_blocks: int = DEFAULT_COOLDOWN_BLOCKS,
     recovery_timeout_blocks: int = DEFAULT_RECOVERY_TIMEOUT_BLOCKS,
-    pgt_governance_puzzle_hash: bytes32 = DEFAULT_PGT_GOVERNANCE_PUZZLE_HASH,
+    sgt_governance_puzzle_hash: bytes32 = DEFAULT_SGT_GOVERNANCE_PUZZLE_HASH,
 ) -> Program:
     """Curry the v2 inner puzzle for a specific protocol-policy + state.
 
     Currying order MUST match admin_authority_v2_inner.clsp:
 
         SELF_MOD_HASH, MAX_ADMINS, MAX_KEYS_PER_ADMIN, COOLDOWN_BLOCKS,
-        RECOVERY_TIMEOUT_BLOCKS, PGT_GOVERNANCE_PUZZLE_HASH,
+        RECOVERY_TIMEOUT_BLOCKS, SGT_GOVERNANCE_PUZZLE_HASH,
         MIPS_ROOT_HASH, ADMINS_HASH, PENDING_KEY_OPS_HASH,
         AUTHORITY_VERSION
     """
@@ -354,7 +354,7 @@ def make_inner_puzzle(
         max_keys_per_admin,
         cooldown_blocks,
         recovery_timeout_blocks,
-        pgt_governance_puzzle_hash,
+        sgt_governance_puzzle_hash,
         mips_root_hash,
         admins_hash,
         pending_ops_hash,
@@ -749,95 +749,21 @@ def build_key_add_activate_solution(
 
 
 ## ─────────────────────────────────────────────────────────────────────────
-## Migration helpers (v1 → v2)
-##
-## v1 admin_authority_inner.clsp is a flat BLS allowlist with a single
-## quorum_m. v2 supports per-admin OneOfN of arbitrary auth methods
-## (BLS, EIP-712, passkey, ...) under a protocol-level MofN quorum.
-##
-## The v1 → v2 migration story (per design doc §7):
-##   1. Operator provisions a v2 singleton with launch state where each
-##      v1 admin pubkey maps to a single-leaf OneOfN (admin_idx=N, leaves=
-##      [hash(BlsMember(pk_N))], m_within=1).
-##   2. v1 admins co-sign a "transfer of authority" v1 rotation spend
-##      that includes a CREATE_PUZZLE_ANNOUNCEMENT carrying the v2
-##      launcher_id; off-chain monitors and downstream contracts can
-##      verify the migration by following both announcements.
-##   3. Each v1 admin then independently uses KEY_ADD_PROPOSE / ACTIVATE
-##      to add their EIP-712 / passkey / BLS-backup keys over time.
-##
-## These helpers cover step 1 (synthesising a v2 launch state from v1
-## allowlist data) and provide a deterministic mapping that the
-## migration tooling can audit against on-chain history.
+## Fresh-genesis construction helpers.
 ## ─────────────────────────────────────────────────────────────────────────
 
 
-def admin_record_for_single_leaf(
+def single_member_admin_record(
     admin_idx: int,
     member_tree_hash: bytes32,
     m_within: int = 1,
 ) -> AdminRecord:
-    """Build an AdminRecord whose OneOfN has exactly one leaf.
-
-    Use this for migration: each v1 BLS pubkey becomes a single-leaf
-    admin record where the leaf is the curried BlsMember tree hash.
-    Admins can later extend their leaves list via KEY_ADD_PROPOSE +
-    KEY_ADD_ACTIVATE without going through PGT governance.
-    """
+    """Build a fresh-genesis AdminRecord with one authentication member."""
     return AdminRecord(
         admin_idx=admin_idx,
         leaves=(member_tree_hash,),
         m_within=m_within,
     )
-
-
-def launch_state_from_v1_allowlist(
-    *,
-    bls_member_hashes: Sequence[bytes32],
-    quorum_m: int,
-    initial_authority_version: int = 1,
-) -> tuple[Sequence[AdminRecord], int]:
-    """Synthesise a v2 launch state from a v1 BLS allowlist.
-
-    Each v1 BLS admin pubkey becomes a single-leaf admin record. The
-    caller is responsible for computing each ``BlsMember(pk).tree_hash``
-    off-chain (typically via chia-wallet-sdk's BlsMember struct).
-
-    The resulting admins list preserves v1's signer-index ordering so
-    off-chain monitoring tooling can correlate v1 ALLOWLIST positions
-    with v2 admin_idx values without ambiguity.
-
-    Args:
-        bls_member_hashes: ordered tuple of curried-BlsMember tree
-            hashes, one per v1 admin. Position i becomes admin_idx=i in
-            the v2 admins list.
-        quorum_m: the v1 QUORUM_M, preserved as the protocol-level
-            MIPS m-of-n threshold (returned for the caller to use when
-            constructing MIPS_ROOT_HASH).
-        initial_authority_version: starting AUTHORITY_VERSION for the
-            v2 singleton. Defaults to 1; operators may want to set this
-            to ``v1_authority_version + 1`` so the v2 singleton has a
-            higher version than the v1 it supersedes.
-
-    Returns:
-        ``(admins, quorum_m)`` — pass ``admins`` to
-        :func:`compute_admins_hash` to derive ADMINS_HASH, then use
-        ``quorum_m`` when curry'ing the MIPS m_of_n tree.
-    """
-    if quorum_m < 1:
-        raise ValueError(f"quorum_m must be >= 1, got {quorum_m}")
-    if quorum_m > len(bls_member_hashes):
-        raise ValueError(
-            f"quorum_m ({quorum_m}) exceeds number of admins "
-            f"({len(bls_member_hashes)})"
-        )
-    admins = tuple(
-        admin_record_for_single_leaf(idx, h)
-        for idx, h in enumerate(bls_member_hashes)
-    )
-    return admins, quorum_m
-
-
 @dataclass(frozen=True)
 class AdminAuthorityV2State:
     """Decoded state of an admin_authority_v2 singleton at a point in time.
@@ -856,7 +782,7 @@ class AdminAuthorityV2State:
     max_keys_per_admin: int
     cooldown_blocks: int
     recovery_timeout_blocks: int
-    pgt_governance_puzzle_hash: bytes32
+    sgt_governance_puzzle_hash: bytes32
     mips_root_hash: bytes32
     admins_hash: bytes32
     pending_ops_hash: bytes32
@@ -916,7 +842,7 @@ def parse_inner_puzzle(curried_inner_puzzle: Program) -> AdminAuthorityV2State:
         max_keys_per_admin=int(args_list[2].as_int()),
         cooldown_blocks=int(args_list[3].as_int()),
         recovery_timeout_blocks=int(args_list[4].as_int()),
-        pgt_governance_puzzle_hash=bytes32(args_list[5].atom),
+        sgt_governance_puzzle_hash=bytes32(args_list[5].atom),
         mips_root_hash=bytes32(args_list[6].atom),
         admins_hash=bytes32(args_list[7].atom),
         pending_ops_hash=bytes32(args_list[8].atom),

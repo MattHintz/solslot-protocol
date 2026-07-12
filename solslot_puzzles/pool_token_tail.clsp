@@ -1,5 +1,5 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;; CAT tail program for Populis pool share tokens.
+;;; CAT tail program for Solslot pool share tokens.
 ;;;
 ;;; Pool tokens are UNGATED — free CATs that trade on any wallet/DEX.
 ;;; Minting and melting are authorized exclusively by the pool singleton
@@ -21,7 +21,7 @@
 ;;; CAT2 invocation solution:
 ;;;   Truths parent_is_cat lineage_proof delta inner_conditions tail_solution
 ;;;
-;;; where tail_solution is the direct V2 Populis payload above.
+;;; where tail_solution is the direct V2 Solslot payload above.
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (mod
@@ -91,7 +91,7 @@
     )
 
     ;; In live CAT2 spends, arg0 is Truths (a pair) and arg5 carries the
-    ;; Populis-specific tail_solution.
+    ;; Solslot-specific tail_solution.
     (if (l arg0)
         (run-pool-token-tail
             POOL_SINGLETON_MOD_HASH

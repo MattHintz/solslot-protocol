@@ -1,6 +1,6 @@
 """Tests for property_registry_inner.clsp and property_registry_driver.py.
 
-Append-only on-chain log of registered Populis property identifiers.
+Append-only on-chain log of registered Solslot property identifiers.
 This file exhaustively exercises:
 
   * Module compilation + tree-hash stability (regression guard).
@@ -272,8 +272,8 @@ class TestRegistrationSpend:
         ann = next((c for c in conditions if int(c.first().as_int()) == 62), None)
         assert ann is not None
         ann_msg = bytes(ann.rest().first().as_atom())
-        # Body = PROTOCOL_PREFIX (0x50) || property_id_canon.
-        assert ann_msg == b"\x50" + bytes(pid)
+        # Body = PROTOCOL_PREFIX (0x53) || property_id_canon.
+        assert ann_msg == b"\x53" + bytes(pid)
         # Driver should publish the same bytes.
         assert artifacts.announcement_message == ann_msg
 
@@ -283,9 +283,9 @@ class TestRegistrationSpend:
         launcher_id = bytes32(b"\x9a" * 32)
         full_ph = bytes32(puzzle_for_singleton(launcher_id, inner).get_tree_hash())
 
-        assert registration_announcement_message(pid) == b"\x50" + bytes(pid)
+        assert registration_announcement_message(pid) == b"\x53" + bytes(pid)
         assert registration_announcement_id(full_ph, pid) == bytes32(
-            hashlib.sha256(full_ph + b"\x50" + bytes(pid)).digest()
+            hashlib.sha256(full_ph + b"\x53" + bytes(pid)).digest()
         )
 
     def test_full_registration_coin_spend_exposes_assertable_announcement_id(self, state):

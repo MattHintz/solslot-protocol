@@ -1,4 +1,4 @@
-"""Unit tests for smart_deed_inner.clsp — the gated RWA NFT contract.
+"""Unit tests for smart_deed_inner_v2.clsp — the gated RWA NFT contract.
 
 Tests run the curried puzzle directly via Program.run() to verify:
   1. Pool deposit case ('d') produces correct conditions
@@ -19,7 +19,7 @@ from chia_rs.sized_bytes import bytes32
 
 # Load the compiled smart deed inner puzzle
 SMART_DEED_INNER_MOD: Program = load_clvm(
-    "smart_deed_inner.clsp",
+    "smart_deed_inner_v2.clsp",
     package_or_requirement="solslot_puzzles",
     recompile=True,
 )
@@ -27,7 +27,7 @@ SMART_DEED_INNER_MOD: Program = load_clvm(
 # p2_pool must be loaded so the test can compute the *exact* bare p2_pool inner
 # puzhash the deposit path should target.
 P2_POOL_MOD: Program = load_clvm(
-    "p2_pool.clsp",
+    "p2_pool_v2.clsp",
     package_or_requirement="solslot_puzzles",
     recompile=True,
 )
@@ -35,7 +35,8 @@ P2_POOL_MOD: Program = load_clvm(
 # ── Test constants ──
 SINGLETON_MOD_HASH = bytes32(b"\x01" * 32)
 LAUNCHER_PUZZLE_HASH = bytes32(b"\x02" * 32)
-TEST_SINGLETON_STRUCT = Program.to((SINGLETON_MOD_HASH, (bytes32(b"\xaa" * 32), LAUNCHER_PUZZLE_HASH)))
+DEED_LAUNCHER_ID = bytes32(b"\xaa" * 32)
+TEST_SINGLETON_STRUCT = Program.to((SINGLETON_MOD_HASH, (DEED_LAUNCHER_ID, LAUNCHER_PUZZLE_HASH)))
 PROTOCOL_DID_PUZHASH = bytes32(b"\x03" * 32)
 PAR_VALUE = 100000
 ASSET_CLASS = 1
@@ -49,13 +50,13 @@ POOL_SINGLETON_MOD_HASH = SINGLETON_MOD_HASH  # same mod hash, different launche
 P2_POOL_MOD_HASH = P2_POOL_MOD.get_tree_hash()
 P2_VAULT_MOD_HASH = bytes32(b"\x07" * 32)
 
-# Spend case constants (must match smart_deed_inner.clsp)
+# Spend case constants (must match smart_deed_inner_v2.clsp)
 # Settlement exits deeds via p2_pool (pool batch release), not via this puzzle.
 DEED_SPEND_POOL_DEPOSIT = 0x64
 DEED_SPEND_POOL_REDEEM = 0x72
 
-# Protocol prefix (must match utility_macros.clib PROTOCOL_PREFIX = 0x50 = "P")
-PROTOCOL_PREFIX = b"\x50"
+# Protocol prefix (must match utility_macros.clib PROTOCOL_PREFIX = 0x53 = "S")
+PROTOCOL_PREFIX = b"\x53"
 
 
 def curry_deed() -> Program:
@@ -84,12 +85,24 @@ def _computed_bare_p2_pool_ph(pool_launcher_id: bytes32) -> bytes32:
     singleton.curry(deed_struct, p2_pool_inner) when the deed coin is spent.
     """
     quoted_mod = calculate_hash_of_quoted_mod_hash(P2_POOL_MOD_HASH)
+    deed_commitment = Program.to(
+        [
+            DEED_LAUNCHER_ID,
+            PAR_VALUE,
+            ASSET_CLASS,
+            PROPERTY_ID,
+            COLLECTION_ID_CANON,
+            SHARE_PPM,
+        ]
+    ).get_tree_hash()
     return bytes32(
         curry_and_treehash(
             quoted_mod,
+            hashlib.sha256(b"\x01" + bytes(P2_POOL_MOD_HASH)).digest(),
             hashlib.sha256(b"\x01" + bytes(POOL_SINGLETON_MOD_HASH)).digest(),
             hashlib.sha256(b"\x01" + bytes(pool_launcher_id)).digest(),
             hashlib.sha256(b"\x01" + bytes(LAUNCHER_PUZZLE_HASH)).digest(),
+            hashlib.sha256(b"\x01" + bytes(deed_commitment)).digest(),
         )
     )
 

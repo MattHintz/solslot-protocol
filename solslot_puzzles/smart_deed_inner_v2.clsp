@@ -101,7 +101,7 @@
                     SINGLETON_STRUCT PAR_VALUE ASSET_CLASS PROPERTY_ID COLLECTION_ID_CANON SHARE_PPM)
                   PAR_VALUE ASSET_CLASS PROPERTY_ID COLLECTION_ID_CANON SHARE_PPM))))
           (c
-            ;; Pool V1 compatibility: the pool ack remains
+            ;; Base pool acknowledgement: the pool ack remains
             ;; (POOL_SPEND_DEPOSIT deed_id par_value).  The V2 pool spend will
             ;; additionally assert the richer deed announcement above.
             (list RECEIVE_MESSAGE 0x10
@@ -151,7 +151,7 @@
                     (sha256 1 vault_launcher_id)
                     (sha256 1 launcher_puzzle_hash))))))
           (c
-            ;; Pool V1 compatibility: the pool release message remains keyed
+            ;; Base pool acknowledgement: the pool release message remains keyed
             ;; by the deed id and destination p2_vault hash.  V2 pool spends
             ;; will assert the richer announcement above when pricing exits.
             (list RECEIVE_MESSAGE 0x10

@@ -253,7 +253,7 @@ def test_specific_deed_swap_spec_binds_nav_deed_reserve_and_fee_outputs():
     assert [(o.role, o.amount) for o in spec.token_outputs] == [
         ("treasury_reserve_principal", 150_000_000),
         ("protocol_treasury_fee", 450_000),
-        ("pgt_rewards_fee", 1_050_000),
+        ("sgt_rewards_fee", 1_050_000),
     ]
     assert spec.token_outputs[2].memos == (b32(0xF3), b32(0xF4))
     assert token_settlement_payment_message(b32(0x11), spec.token_outputs) == bytes32(

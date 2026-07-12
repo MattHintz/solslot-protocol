@@ -1,4 +1,4 @@
-"""Unit tests for vault_singleton_inner.clsp, p2_vault.clsp, p2_pool.clsp, and vault_driver.py.
+"""Unit tests for vault_singleton_inner.clsp, p2_vault.clsp, p2_pool_v2.clsp, and vault_driver.py.
 
 Tests run curried puzzles directly via Program.run() to verify:
   1. Vault BLS (AUTH_TYPE=1) path: all three spend cases produce correct conditions
@@ -33,7 +33,7 @@ P2_VAULT_MOD: Program = load_clvm(
     recompile=True,
 )
 P2_POOL_MOD: Program = load_clvm(
-    "p2_pool.clsp",
+    "p2_pool_v2.clsp",
     package_or_requirement="solslot_puzzles",
     recompile=True,
 )
@@ -43,6 +43,8 @@ LAUNCHER_PUZZLE_HASH = SINGLETON_LAUNCHER_HASH
 VAULT_LAUNCHER_ID = bytes32(b"\xaa" * 32)
 POOL_LAUNCHER_ID = bytes32(b"\xbb" * 32)
 DEED_LAUNCHER_ID = bytes32(b"\xdd" * 32)
+DEED_COIN_ID = bytes32(b"\xde" * 32)
+DEED_COMMITMENT = bytes32(b"\xdf" * 32)
 POOL_INNER_PUZHASH = bytes32(b"\xcc" * 32)
 
 # BLS owner pubkey — 48-byte G1Element placeholder
@@ -73,8 +75,8 @@ SPEND_ACCEPT_OFFER = 0x61       # b'a'
 SPEND_UPDATE_IDENTITY = 0x7a
 SPEND_MIGRATE = 0x6d            # b'm'
 
-# Protocol prefix (must match PROTOCOL_PREFIX in utility_macros.clib = 0x50)
-PROTOCOL_PREFIX = b"\x50"
+# Protocol prefix (must match PROTOCOL_PREFIX in utility_macros.clib = 0x53)
+PROTOCOL_PREFIX = b"\x53"
 
 # p2_vault coin ID used in spend case 'i' tests
 P2_VAULT_COIN_ID = bytes32(b"\xb2" * 32)
@@ -375,7 +377,7 @@ class TestVaultBLSAcceptOffer:
         # Pinned solution tree hash. Embeds the vault inner puzzle hash, so it
         # updates whenever vault_singleton_inner.clsp's mod hash changes — here,
         # the 'm' (migrate) spend case (vault upgrade flow) was added.
-        assert sol.get_tree_hash().hex() == "4892098fce995a73f42b6d80963bfd1e0a52d5649028810a2a4cad0258ee2e5f"
+        assert sol.get_tree_hash().hex() == "8ab99e40a3787a000e6973027f9fead2d96b2e7e3b00e45c46aa4eee961f0657"
         fields = list(sol.as_iter())
         params = list(fields[4].as_iter())
         assert bytes32(fields[0].as_atom()) == my_id
@@ -413,7 +415,7 @@ class TestVaultBLSAcceptOffer:
             "2d33d2424799d4a31f7225871d9a56239729293e44e574c47905587fa84d81db"
         )
         assert extract_cond(conds, OP_ASSERT_PUZZLE_ANN)[1] == bytes.fromhex(
-            "56b6a1ffd1538a3e346f0475ca7818a6ef7d79b27d5e3aedb200aca897383446"
+            "edcf4c2a4cf369fc74cc94bda7effb4747c383acacd1f11aa0885a00c261ef89"
         )
 
     def test_accept_offer_agg_sig_present(self):
@@ -1246,64 +1248,45 @@ class TestVaultBLSMigrate:
 
 
 class TestP2Pool:
-    """Test p2_pool escrow puzzle."""
+    """Test commitment-bound p2_pool_v2 escrow puzzle."""
 
     def setup_method(self):
         self.curried = P2_POOL_MOD.curry(
+            P2_POOL_MOD.get_tree_hash(),
             SINGLETON_MOD_HASH,
             POOL_LAUNCHER_ID,
             LAUNCHER_PUZZLE_HASH,
+            DEED_COMMITMENT,
         )
 
-    def test_p2_pool_condition_count(self):
-        sol = Program.to([
-            bytes32(b"\xcc" * 32),   # pool_inner_puzhash
-            bytes32(b"\x22" * 32),   # pool_coin_id
-            DEED_LAUNCHER_ID,
-            bytes32(b"\xff" * 32),   # deed_inner_puzhash
-            1,                       # deed_amount
-            bytes32(b"\x99" * 32),   # next_puzzlehash
-        ])
-        conds = self.curried.run(sol).as_python()
-        assert len(conds) == 5
-
-    def test_p2_pool_moves_deed_to_next_puzzlehash(self):
-        next_puzhash = bytes32(b"\x99" * 32)
-        sol = Program.to([
-            bytes32(b"\xcc" * 32),
+    @staticmethod
+    def _solution(next_puzhash: bytes32 = bytes32(b"\x99" * 32)) -> Program:
+        return Program.to([
+            POOL_INNER_PUZHASH,
             bytes32(b"\x22" * 32),
+            DEED_COIN_ID,
             DEED_LAUNCHER_ID,
-            bytes32(b"\xff" * 32),
             1,
             next_puzhash,
         ])
-        conds = self.curried.run(sol).as_python()
+
+    def test_p2_pool_condition_count(self):
+        conds = self.curried.run(self._solution()).as_python()
+        assert len(conds) == 6
+
+    def test_p2_pool_moves_deed_to_next_puzzlehash(self):
+        next_puzhash = bytes32(b"\x99" * 32)
+        conds = self.curried.run(self._solution(next_puzhash)).as_python()
         create = extract_cond(conds, OP_CREATE_COIN)
         assert create[1] == next_puzhash
 
     def test_p2_pool_coin_announcement_has_protocol_prefix(self):
-        sol = Program.to([
-            bytes32(b"\xcc" * 32),
-            bytes32(b"\x22" * 32),
-            DEED_LAUNCHER_ID,
-            bytes32(b"\xff" * 32),
-            1,
-            bytes32(b"\x99" * 32),
-        ])
-        conds = self.curried.run(sol).as_python()
+        conds = self.curried.run(self._solution()).as_python()
         coin_ann = extract_cond(conds, OP_CREATE_COIN_ANN)
         assert coin_ann[1][:1] == PROTOCOL_PREFIX
 
     def test_p2_pool_asserts_pool_puzzle_announcement(self):
-        sol = Program.to([
-            bytes32(b"\xcc" * 32),
-            bytes32(b"\x22" * 32),
-            DEED_LAUNCHER_ID,
-            bytes32(b"\xff" * 32),
-            1,
-            bytes32(b"\x99" * 32),
-        ])
-        conds = self.curried.run(sol).as_python()
+        conds = self.curried.run(self._solution()).as_python()
         assert extract_cond(conds, OP_ASSERT_PUZZLE_ANN) is not None
 
 

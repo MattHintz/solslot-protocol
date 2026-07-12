@@ -3,13 +3,13 @@
 The vault-version registry singleton publishes the canonical current vault
 descriptor on-chain so any client can detect outdated vaults and offer a
 decentralized, backend-free upgrade.  See
-``research/POPULIS_VAULT_UPGRADE_DESIGN.md``.
+``research/SOLSLOT_VAULT_UPGRADE_DESIGN.md``.
 
 Authorization is delegated to live singletons (the registry holds no key of its
 own).  Per the resolved tiered governance model:
 
   * params-only FAST-TRACK  -> admin_authority_v2 quorum (code must be unchanged)
-  * code-change ROUTINE     -> PGT proposal tracker EXECUTE (staked ratification)
+  * code-change ROUTINE     -> SGT proposal tracker EXECUTE (staked ratification)
 
 The tier is an objective, CLVM-enforced property of the diff: the fast-track
 spend case asserts the vault CODE hash (VAULT_INNER_MOD_HASH) is unchanged, so
@@ -54,8 +54,8 @@ SPEND_CODE_ROUTINE = 2
 TAG_FASTTRACK = bytes.fromhex("4654")  # "FT"
 TAG_ROUTINE = bytes.fromhex("5254")  # "RT"
 
-# ── Populis announcement namespace prefix (utility_macros.clib) ─────────────
-PROTOCOL_PREFIX = bytes.fromhex("50")  # "P"
+# ── Solslot announcement namespace prefix (utility_macros.clib) ─────────────
+PROTOCOL_PREFIX = bytes.fromhex("53")  # "P"
 
 # Singletons use odd amounts to distinguish from regular coin lineage.
 SINGLETON_AMOUNT = 1
@@ -112,7 +112,7 @@ def compute_canonical_params_hash(
 ) -> bytes32:
     """Canonical hash of the protocol-level (shared) vault params.
 
-    Per ``research/POPULIS_VAULT_UPGRADE_DESIGN.md``::
+    Per ``research/SOLSLOT_VAULT_UPGRADE_DESIGN.md``::
 
         CANONICAL_PARAMS_HASH = sha256tree(list
             POOL_SINGLETON_MOD_HASH
@@ -281,7 +281,7 @@ def compute_approval_message(
     """The message the authorizing singleton must CREATE_PUZZLE_ANNOUNCEMENT.
 
     ``PROTOCOL_PREFIX || path_tag || content_hash(new_state)``.  The admin
-    authority (fast-track) or PGT proposal tracker (routine) emits exactly this
+    authority (fast-track) or SGT proposal tracker (routine) emits exactly this
     from its quorum-authorized spend; the registry asserts a puzzle
     announcement keyed by it.
     """
@@ -452,7 +452,7 @@ def build_routine_spend(
     new_vault_version: int,
     my_amount: int = SINGLETON_AMOUNT,
 ) -> PublishSpendArtifacts:
-    """Code-change routine publish (PGT proposal-tracker EXECUTE authorized)."""
+    """Code-change routine publish (SGT proposal-tracker EXECUTE authorized)."""
     return _build_publish(
         spend_case=SPEND_CODE_ROUTINE,
         current=current,

@@ -1,6 +1,6 @@
 # Pool Economic V2
 
-Pool Economic V2 treats the Populis pool token as a global ETF-like share of
+Pool Economic V2 treats the Solslot pool token as a global ETF-like share of
 the whole smart-deed pool. Fixed-par V1 math remains a development artifact;
 alpha redemption must price deed exits from governed collection NAV evidence.
 
@@ -26,7 +26,7 @@ Specific deed swap:
 - Buyer pays principal plus a 1% surcharge.
 - Principal moves into treasury reserve. Total supply is unchanged.
 - 0.3% goes to protocol treasury.
-- 0.7% goes into a PGT-holder claimable rewards root.
+- 0.7% goes into a SGT-holder claimable rewards root.
 
 True redemption:
 
@@ -42,7 +42,7 @@ Reserve acquisition:
 
 ## CircuitDAO-Inspired Methodology
 
-The V2 migration follows the same style used elsewhere in the audit notes:
+The V2 deployment follows the same state-transition style used elsewhere:
 
 - bind full payloads into hashes/announcements, not individual loose fields;
 - keep registries as on-chain sources of truth;
@@ -61,17 +61,17 @@ Implemented in this slice:
 - `pool_economics_v2.py`;
 - protocol action specs for specific deed swaps, true redemptions, and
   reserve-funded acquisitions, including token output/authorization messages;
-- `pool_singleton_inner.clsp` case `6` (`POOL_SPEND_V2_SPECIFIC_DEED_SWAP`),
+- `pool_singleton_inner_v3.clsp` case `6` (`POOL_SPEND_V2_SPECIFIC_DEED_SWAP`),
   which consensus-enforces:
   - governed collection NAV read evidence;
   - exact smart-deed `collection_id_canon` / `share_ppm` release evidence;
   - NAV-pro-rata principal calculation;
   - CAT settlement payment fanout to treasury reserve, protocol treasury, and
-    PGT rewards;
-  - 0.3% protocol fee and 0.7% PGT rewards-root fee commitments;
+    SGT rewards;
+  - 0.3% protocol fee and 0.7% SGT rewards-root fee commitments;
   - next pool `total_nav_locked` / `deed_count` /
     `treasury_reserve_tokens` recreation in curried state;
-- `pool_singleton_inner.clsp` case `7` (`POOL_SPEND_V2_TRUE_REDEMPTION`),
+- `pool_singleton_inner_v3.clsp` case `7` (`POOL_SPEND_V2_TRUE_REDEMPTION`),
   which consensus-enforces:
   - governed collection NAV read evidence;
   - exact smart-deed `collection_id_canon` / `share_ppm` release evidence;
@@ -80,7 +80,7 @@ Implemented in this slice:
   - V2 action announcement field order matching `build_true_redemption_spec`;
   - next pool `total_nav_locked` / `deed_count` /
     `total_pool_token_supply` recreation in curried state;
-- `pool_singleton_inner.clsp` case `8`
+- `pool_singleton_inner_v3.clsp` case `8`
   (`POOL_SPEND_V2_RESERVE_ACQUISITION`), which consensus-enforces:
   - governed collection NAV read evidence;
   - exact smart-deed `property_id_canon` / `collection_id_canon` /
@@ -94,7 +94,7 @@ Implemented in this slice:
   - next pool `total_nav_locked` / `deed_count` /
     `total_pool_token_supply` / `treasury_reserve_tokens` recreation in
     curried state;
-- V1 compatibility deposit/redeem state recreation now also updates/preserves
+- Deposit and V2 exit state recreation now also updates or preserves
   the curried V2 supply/reserve fields;
 - portal `PoolEconomicsV2Service`;
 - portal Pool V2 singleton spend and bounded unsigned bundle builders;

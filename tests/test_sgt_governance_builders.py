@@ -1,12 +1,12 @@
-"""Unit tests for ``build_pgt_lock_coin_spend`` and ``build_tracker_vote_coin_spend``.
+"""Unit tests for ``build_sgt_lock_coin_spend`` and ``build_tracker_vote_coin_spend``.
 
 Both builders are the canonical Python source-of-truth for the portal's TS
 spend-builder port (Phase 3b).  These tests verify:
 
-  * The two CoinSpends pair cryptographically — the PGT lock's
+  * The two CoinSpends pair cryptographically — the SGT lock's
     ``CREATE_PUZZLE_ANNOUNCEMENT`` id equals the tracker VOTE's
     ``ASSERT_PUZZLE_ANNOUNCEMENT`` id.
-  * The PGT lock's puzzle_reveal hashes to ``cat_pgt_free_puzzle_hash(...)``
+  * The SGT lock's puzzle_reveal hashes to ``cat_sgt_free_puzzle_hash(...)``
     for the same ``(struct, free_mod_h, locked_mod_h, cat_mod_h, tail_h,
     voter_ph)`` tuple.
   * The tracker VOTE's puzzle_reveal hashes to
@@ -33,16 +33,16 @@ from chia_rs import CoinSpend
 from chia_rs.sized_bytes import bytes32
 from chia_rs.sized_ints import uint64
 
-from solslot_puzzles.pgt_driver import (
-    PGT_LOCK,
+from solslot_puzzles.sgt_driver import (
+    SGT_LOCK,
     TRK_VOTE,
     bill_mint,
-    build_pgt_lock_coin_spend,
+    build_sgt_lock_coin_spend,
     build_tracker_vote_coin_spend,
-    cat_pgt_free_puzzle_hash,
-    pgt_free_inner_mod,
-    pgt_locked_inner_mod,
-    pgt_tail_hash,
+    cat_sgt_free_puzzle_hash,
+    sgt_free_inner_mod,
+    sgt_locked_inner_mod,
+    sgt_tail_hash,
     proposal_hash_from_bill,
     proposal_tracker_inner_puzzle,
 )
@@ -53,7 +53,7 @@ CREATE_COIN = 51
 CREATE_PUZZLE_ANNOUNCEMENT = 62
 ASSERT_PUZZLE_ANNOUNCEMENT = 63
 ASSERT_BEFORE_SECONDS_ABSOLUTE = 85
-PROTOCOL_PREFIX = bytes.fromhex("50")  # "P"
+PROTOCOL_PREFIX = bytes.fromhex("53")  # "P"
 LOCK_TAG = 0x4C4F434B
 
 
@@ -68,22 +68,22 @@ POOL_STRUCT = Program.to(
 )
 DID_PUZHASH = bytes32(b"\xd0" * 32)
 
-# Use the real CAT_MOD_HASH because the on-chain PGT free coin is CAT2-wrapped
+# Use the real CAT_MOD_HASH because the on-chain SGT free coin is CAT2-wrapped
 # and the builder constructs the puzzle reveal via the real CAT2 mod.  The
-# tracker's curried CAT_MOD_HASH must match what the PGT spend actually uses.
+# tracker's curried CAT_MOD_HASH must match what the SGT spend actually uses.
 CAT_MOD_HASH_B32 = bytes32(CAT_MOD_HASH)
 
-# Real PGT TAIL with a fake genesis coin id (so cat_pgt_free_puzhash math
+# Real SGT TAIL with a fake genesis coin id (so cat_sgt_free_puzhash math
 # uses a stable, deterministic tail hash).
-PGT_TAIL_GENESIS_COIN_ID = bytes32(b"\xa0" * 32)
-PGT_TAIL_HASH = pgt_tail_hash(PGT_TAIL_GENESIS_COIN_ID)
+SGT_TAIL_GENESIS_COIN_ID = bytes32(b"\xa0" * 32)
+SGT_TAIL_HASH = sgt_tail_hash(SGT_TAIL_GENESIS_COIN_ID)
 
-PGT_FREE_MOD_HASH = bytes32(pgt_free_inner_mod().get_tree_hash())
-PGT_LOCKED_MOD_HASH = bytes32(pgt_locked_inner_mod().get_tree_hash())
+SGT_FREE_MOD_HASH = bytes32(sgt_free_inner_mod().get_tree_hash())
+SGT_LOCKED_MOD_HASH = bytes32(sgt_locked_inner_mod().get_tree_hash())
 
 QUORUM_BPS = 5000
 VOTING_WINDOW = 300
-PGT_TOTAL_SUPPLY = 1_000_000
+SGT_TOTAL_SUPPLY = 1_000_000
 MIN_PROPOSAL_STAKE = 10_000
 
 # Identity puzzle: Program.to(1) returns its solution as conditions
@@ -107,15 +107,15 @@ def _curry_open_tracker(
     """
     return proposal_tracker_inner_puzzle(
         TRACKER_STRUCT,
-        PGT_FREE_MOD_HASH,
-        PGT_LOCKED_MOD_HASH,
+        SGT_FREE_MOD_HASH,
+        SGT_LOCKED_MOD_HASH,
         CAT_MOD_HASH_B32,
-        PGT_TAIL_HASH,
+        SGT_TAIL_HASH,
         DID_PUZHASH,
         POOL_STRUCT,
         QUORUM_BPS,
         VOTING_WINDOW,
-        PGT_TOTAL_SUPPLY,
+        SGT_TOTAL_SUPPLY,
         MIN_PROPOSAL_STAKE,
         proposal_hash=proposal_hash,
         bill_operation=bill,
@@ -132,13 +132,13 @@ def _make_fake_coin(
 
 
 def _run_inner(inner_puzzle: Program, inner_solution: Program) -> list[list[Program]]:
-    """Run the inner puzzle (pgt_free_inner or proposal_tracker_inner) against
+    """Run the inner puzzle (sgt_free_inner or proposal_tracker_inner) against
     its inner solution and return the conditions list.
 
     The CoinSpend stores the FULL CAT2/singleton-wrapped puzzle reveal, but
     those outer wrappers require real lineage proofs (and CAT2 ring closure)
     that our synthetic-coin unit tests can't satisfy.  The outer wrappers are
-    already exhaustively tested by chia; what matters for pgt_driver builder
+    already exhaustively tested by chia; what matters for sgt_driver builder
     correctness is that the inner emits/asserts the right protocol-level
     conditions (announcement pairing, recurry, deadline), which we verify by
     running the inner directly.
@@ -193,10 +193,10 @@ def _find_all_conds(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#                       build_pgt_lock_coin_spend
+#                       build_sgt_lock_coin_spend
 # ─────────────────────────────────────────────────────────────────────────────
-class TestBuildPgtLockCoinSpend:
-    """The PGT lock builder produces a CAT2-wrapped pgt_free_inner LOCK
+class TestBuildSgtLockCoinSpend:
+    """The SGT lock builder produces a CAT2-wrapped sgt_free_inner LOCK
     CoinSpend that emits the canonical LOCK announcement and conserves
     CAT2 supply (single-coin full-amount lock)."""
 
@@ -206,69 +206,69 @@ class TestBuildPgtLockCoinSpend:
     deadline = 2_000_000_000
 
     def _build(self, *, amount: int = vote_amount) -> tuple[CoinSpend, bytes32, Program]:
-        """Helper: build a PGT lock CoinSpend using IDENTITY_INNER as voter,
+        """Helper: build a SGT lock CoinSpend using IDENTITY_INNER as voter,
         returning (coin_spend, expected_puzzle_hash, free_inner_puzzle).
 
-        ``free_inner_puzzle`` is the curried ``pgt_free_inner.clsp`` — used
+        ``free_inner_puzzle`` is the curried ``sgt_free_inner.clsp`` — used
         by tests to run the inner directly (bypassing the CAT2 outer's
         lineage-proof requirement which our synthetic coins cannot satisfy).
         """
         voter_ph = IDENTITY_HASH
-        expected_puzzle_hash = cat_pgt_free_puzzle_hash(
+        expected_puzzle_hash = cat_sgt_free_puzzle_hash(
             TRACKER_STRUCT,
-            PGT_FREE_MOD_HASH,
-            PGT_LOCKED_MOD_HASH,
+            SGT_FREE_MOD_HASH,
+            SGT_LOCKED_MOD_HASH,
             CAT_MOD_HASH_B32,
-            PGT_TAIL_HASH,
+            SGT_TAIL_HASH,
             voter_ph,
         )
-        pgt_coin = _make_fake_coin(puzzle_hash=expected_puzzle_hash, amount=amount)
+        sgt_coin = _make_fake_coin(puzzle_hash=expected_puzzle_hash, amount=amount)
         # Identity inner: solution IS the conditions list.  Emit one
         # CREATE_COIN to the canonical locked puzhash with amount = coin.amount.
-        from solslot_puzzles.pgt_driver import (
-            pgt_free_inner_puzzle,
-            pgt_locked_inner_hash,
+        from solslot_puzzles.sgt_driver import (
+            sgt_free_inner_puzzle,
+            sgt_locked_inner_hash,
         )
 
-        locked_ph = pgt_locked_inner_hash(
-            PGT_FREE_MOD_HASH,
+        locked_ph = sgt_locked_inner_hash(
+            SGT_FREE_MOD_HASH,
             TRACKER_STRUCT,
             voter_ph,
             self.proposal_hash,
             self.deadline,
         )
         voter_solution = Program.to([[CREATE_COIN, locked_ph, amount]])
-        coin_spend = build_pgt_lock_coin_spend(
-            pgt_coin=pgt_coin,
+        coin_spend = build_sgt_lock_coin_spend(
+            sgt_coin=sgt_coin,
             voter_inner_puzzle=IDENTITY_INNER,
             voter_inner_solution=voter_solution,
             proposal_tracker_struct=TRACKER_STRUCT,
-            pgt_tail_hash=PGT_TAIL_HASH,
+            sgt_tail_hash=SGT_TAIL_HASH,
             lineage_proof=LineageProof(),
             proposal_hash=self.proposal_hash,
             deadline=self.deadline,
         )
-        free_inner = pgt_free_inner_puzzle(
-            PGT_LOCKED_MOD_HASH, TRACKER_STRUCT, voter_ph
+        free_inner = sgt_free_inner_puzzle(
+            SGT_LOCKED_MOD_HASH, TRACKER_STRUCT, voter_ph
         )
         return coin_spend, expected_puzzle_hash, free_inner
 
-    def test_puzzle_reveal_hashes_to_cat_pgt_free_puzhash(self):
-        """The full puzzle reveal of the CAT-wrapped PGT free coin must
-        hash to the same value as ``cat_pgt_free_puzzle_hash(...)`` —
+    def test_puzzle_reveal_hashes_to_cat_sgt_free_puzhash(self):
+        """The full puzzle reveal of the CAT-wrapped SGT free coin must
+        hash to the same value as ``cat_sgt_free_puzzle_hash(...)`` —
         otherwise the spend would land on the wrong coin id."""
         coin_spend, expected_ph, _ = self._build()
         actual_ph = bytes32(coin_spend.puzzle_reveal.get_tree_hash())
         assert actual_ph == expected_ph
 
     def test_spend_targets_supplied_coin(self):
-        """The CoinSpend's `coin` field must equal the input PGT coin."""
+        """The CoinSpend's `coin` field must equal the input SGT coin."""
         coin_spend, expected_ph, _ = self._build()
         assert coin_spend.coin.puzzle_hash == expected_ph
         assert coin_spend.coin.amount == self.vote_amount
 
     def test_running_spend_emits_lock_announcement(self):
-        """Running the PGT lock spend yields exactly one
+        """Running the SGT lock spend yields exactly one
         ``CREATE_PUZZLE_ANNOUNCEMENT`` with the canonical LOCK message."""
         coin_spend, _, free_inner = self._build()
         inner_sol = _extract_cat_inner_solution(coin_spend)
@@ -289,7 +289,7 @@ class TestBuildPgtLockCoinSpend:
         assert body == bytes(expected_body)
 
     def test_running_spend_asserts_lock_deadline(self):
-        """The PGT lock spend must assert
+        """The SGT lock spend must assert
         ``ASSERT_BEFORE_SECONDS_ABSOLUTE deadline``."""
         coin_spend, _, free_inner = self._build()
         inner_sol = _extract_cat_inner_solution(coin_spend)
@@ -308,12 +308,12 @@ class TestBuildPgtLockCoinSpend:
 
     def test_rejects_non_bytes32_proposal_hash(self):
         with pytest.raises(ValueError, match="proposal_hash must be 32 bytes"):
-            build_pgt_lock_coin_spend(
-                pgt_coin=_make_fake_coin(puzzle_hash=bytes32(b"\x00" * 32), amount=1),
+            build_sgt_lock_coin_spend(
+                sgt_coin=_make_fake_coin(puzzle_hash=bytes32(b"\x00" * 32), amount=1),
                 voter_inner_puzzle=IDENTITY_INNER,
                 voter_inner_solution=Program.to([]),
                 proposal_tracker_struct=TRACKER_STRUCT,
-                pgt_tail_hash=PGT_TAIL_HASH,
+                sgt_tail_hash=SGT_TAIL_HASH,
                 lineage_proof=LineageProof(),
                 proposal_hash=b"short",  # type: ignore[arg-type]
                 deadline=1_000,
@@ -321,12 +321,12 @@ class TestBuildPgtLockCoinSpend:
 
     def test_rejects_out_of_range_deadline(self):
         with pytest.raises(ValueError, match="deadline must be a uint64"):
-            build_pgt_lock_coin_spend(
-                pgt_coin=_make_fake_coin(puzzle_hash=bytes32(b"\x00" * 32), amount=1),
+            build_sgt_lock_coin_spend(
+                sgt_coin=_make_fake_coin(puzzle_hash=bytes32(b"\x00" * 32), amount=1),
                 voter_inner_puzzle=IDENTITY_INNER,
                 voter_inner_solution=Program.to([]),
                 proposal_tracker_struct=TRACKER_STRUCT,
-                pgt_tail_hash=PGT_TAIL_HASH,
+                sgt_tail_hash=SGT_TAIL_HASH,
                 lineage_proof=LineageProof(),
                 proposal_hash=bytes32(b"\x11" * 32),
                 deadline=-1,
@@ -411,18 +411,18 @@ class TestBuildTrackerVoteCoinSpend:
 
     def test_running_spend_asserts_voter_lock_announcement(self):
         """VOTE asserts ``ASSERT_PUZZLE_ANNOUNCEMENT(lock_announcement_id(...))``
-        for the voter's PGT coin sender and the canonical message body."""
+        for the voter's SGT coin sender and the canonical message body."""
         coin_spend, tracker_inner, _ = self._build()
         inner_sol = _extract_singleton_inner_solution(coin_spend)
         conds = _run_inner(tracker_inner, inner_sol)
         asserts = _find_all_conds(conds, ASSERT_PUZZLE_ANNOUNCEMENT)
         # Compute the expected lock announcement id directly:
-        sender_ph = cat_pgt_free_puzzle_hash(
+        sender_ph = cat_sgt_free_puzzle_hash(
             TRACKER_STRUCT,
-            PGT_FREE_MOD_HASH,
-            PGT_LOCKED_MOD_HASH,
+            SGT_FREE_MOD_HASH,
+            SGT_LOCKED_MOD_HASH,
             CAT_MOD_HASH_B32,
-            PGT_TAIL_HASH,
+            SGT_TAIL_HASH,
             IDENTITY_HASH,
         )
         msg_body = Program.to(
@@ -489,7 +489,7 @@ class TestBuildTrackerVoteCoinSpend:
 # ─────────────────────────────────────────────────────────────────────────────
 class TestLockVotePairing:
     """The whole point of the two builders is that their on-chain conditions
-    pair up: the PGT lock spend emits a ``CREATE_PUZZLE_ANNOUNCEMENT`` whose
+    pair up: the SGT lock spend emits a ``CREATE_PUZZLE_ANNOUNCEMENT`` whose
     id is exactly what the tracker VOTE spend asserts.  Without this
     pairing the bundle would be rejected by the mempool."""
 
@@ -499,43 +499,43 @@ class TestLockVotePairing:
         vote_amount = 250_000
         deadline = 1_900_000_000
 
-        # ── PGT lock spend ──
+        # ── SGT lock spend ──
         voter_ph = IDENTITY_HASH
-        from solslot_puzzles.pgt_driver import pgt_locked_inner_hash
+        from solslot_puzzles.sgt_driver import sgt_locked_inner_hash
 
-        locked_ph = pgt_locked_inner_hash(
-            PGT_FREE_MOD_HASH, TRACKER_STRUCT, voter_ph, proposal_hash, deadline
+        locked_ph = sgt_locked_inner_hash(
+            SGT_FREE_MOD_HASH, TRACKER_STRUCT, voter_ph, proposal_hash, deadline
         )
         voter_solution = Program.to([[CREATE_COIN, locked_ph, vote_amount]])
-        pgt_ph = cat_pgt_free_puzzle_hash(
+        sgt_ph = cat_sgt_free_puzzle_hash(
             TRACKER_STRUCT,
-            PGT_FREE_MOD_HASH,
-            PGT_LOCKED_MOD_HASH,
+            SGT_FREE_MOD_HASH,
+            SGT_LOCKED_MOD_HASH,
             CAT_MOD_HASH_B32,
-            PGT_TAIL_HASH,
+            SGT_TAIL_HASH,
             voter_ph,
         )
-        pgt_coin = _make_fake_coin(puzzle_hash=pgt_ph, amount=vote_amount)
-        from solslot_puzzles.pgt_driver import pgt_free_inner_puzzle as _pfp
+        sgt_coin = _make_fake_coin(puzzle_hash=sgt_ph, amount=vote_amount)
+        from solslot_puzzles.sgt_driver import sgt_free_inner_puzzle as _pfp
 
-        lock_spend = build_pgt_lock_coin_spend(
-            pgt_coin=pgt_coin,
+        lock_spend = build_sgt_lock_coin_spend(
+            sgt_coin=sgt_coin,
             voter_inner_puzzle=IDENTITY_INNER,
             voter_inner_solution=voter_solution,
             proposal_tracker_struct=TRACKER_STRUCT,
-            pgt_tail_hash=PGT_TAIL_HASH,
+            sgt_tail_hash=SGT_TAIL_HASH,
             lineage_proof=LineageProof(),
             proposal_hash=proposal_hash,
             deadline=deadline,
         )
-        free_inner = _pfp(PGT_LOCKED_MOD_HASH, TRACKER_STRUCT, voter_ph)
+        free_inner = _pfp(SGT_LOCKED_MOD_HASH, TRACKER_STRUCT, voter_ph)
         lock_inner_sol = _extract_cat_inner_solution(lock_spend)
         lock_conds = _run_inner(free_inner, lock_inner_sol)
         emitted = _find_cond(lock_conds, CREATE_PUZZLE_ANNOUNCEMENT)
         assert emitted is not None
         emitted_msg = bytes(emitted[1].atom)
         # The id asserted on the tracker side is sha256(sender_ph || msg).
-        emitted_id = bytes32(hashlib.sha256(bytes(pgt_ph) + emitted_msg).digest())
+        emitted_id = bytes32(hashlib.sha256(bytes(sgt_ph) + emitted_msg).digest())
 
         # ── Tracker VOTE spend ──
         tracker_inner = _curry_open_tracker(
@@ -564,7 +564,7 @@ class TestLockVotePairing:
         vote_conds = _run_inner(tracker_inner, vote_inner_sol)
         asserts = _find_all_conds(vote_conds, ASSERT_PUZZLE_ANNOUNCEMENT)
         assert any(bytes(a[1].atom) == bytes(emitted_id) for a in asserts), (
-            f"Tracker VOTE did not assert PGT-emitted announcement id "
+            f"Tracker VOTE did not assert SGT-emitted announcement id "
             f"{emitted_id.hex()}; asserted: "
             f"{[bytes(a[1].atom).hex() for a in asserts]}"
         )

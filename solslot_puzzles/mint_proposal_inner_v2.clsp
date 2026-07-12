@@ -1,10 +1,7 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Mint Proposal Singleton v2 (A.1 v2) — MIPS-pluggable per-proposal state machine.
 ;;;
-;;; Phase 9-Hermes-D refactor of mint_proposal_inner.clsp.  V1 hard-coded
-;;; ``OWNER_PUBKEY`` and ``GOV_PUBKEY`` as 48-byte BLS G1 atoms with
-;;; ``AGG_SIG_ME`` conditions, forcing every admin to hold a Chia-native
-;;; BLS key.  V2 replaces those with **MIPS member tree hashes** so the
+;;; Owner and governance authentication use MIPS member tree hashes so the
 ;;; owner / gov can be ANY CHIP-0043 member type — BLS, Eip712Member
 ;;; (secp256k1 / EVM), passkey / WebAuthn, etc. — and a single
 ;;; deployment can mix curves freely (e.g. BLS gov, EVM owner).
@@ -27,8 +24,8 @@
 ;;;
 ;;; V2 work (deferred):
 ;;;   * APPROVED → EXECUTED ('x' / 0x78), gated by ASSERT_COIN_ANNOUNCEMENT
-;;;     from the actual PGT-driven mint.  Requires cross-coin
-;;;     coordination with populis_protocol/governance_singleton_inner.
+;;;     from the actual SGT-driven mint.  Requires cross-coin
+;;;     coordination with solslot_protocol/governance_singleton_inner.
 ;;;   * APPROVED → CANCELLED via governance (with cooldown / quorum).
 ;;;
 ;;; ─── MIPS member dispatch ────────────────────────────────────────────────
@@ -122,9 +119,7 @@
 ;;;     Off-chain consumers track this announcement to update cached
 ;;;     proposal state.  ``transition_msg`` =
 ;;;     sha256tree(list transition_case new_state new_state_version).
-;;;     Wire-compatible with v1's announcement format so existing
-;;;     monitors (the legacy API indexer) can decode it without a
-;;;     schema change.
+;;;     Canonical transition announcement consumed by Solslot V2 indexers.
 ;;;
 ;;;   ASSERT_MY_AMOUNT my_amount
 ;;;     Defensive identity check.
@@ -201,8 +196,7 @@
   )
 
   ;; Off-chain consumers (the API indexer) read this announcement
-  ;; payload to update cached proposal state.  Wire-compatible with v1's
-  ;; transition-message: includes new_state so consumers don't need to
+  ;; payload to update cached proposal state. It includes new_state so consumers don't need to
   ;; know the transition_case → new_state map.
   (defun-inline transition-message
       (transition_case new_state new_state_version)

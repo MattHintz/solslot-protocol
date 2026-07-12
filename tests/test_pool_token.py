@@ -146,7 +146,7 @@ class TestPoolTokenTailMint:
         result = curried.run(sol)
         conditions = result.as_python()
 
-        expected_message = b"P" + Program.to([1, my_coin_id, amount]).get_tree_hash()
+        expected_message = b"S" + Program.to([1, my_coin_id, amount]).get_tree_hash()
         expected_announcement_id = hashlib.sha256(pool_full_puzhash + expected_message).digest()
         expected_coin_announcement_id = hashlib.sha256(pool_coin_id + expected_message).digest()
         assert conditions[1][0] == bytes([63])  # ASSERT_PUZZLE_ANNOUNCEMENT

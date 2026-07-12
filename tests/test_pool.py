@@ -26,7 +26,7 @@ from chia.wallet.util.curry_and_treehash import (
 )
 from chia_rs.sized_bytes import bytes32
 
-from solslot_puzzles.pgt_driver import deed_releases_hash
+from solslot_puzzles.sgt_driver import deed_releases_hash
 from solslot_puzzles.collection_nav_registry_driver import (
     collection_nav_registry_inner_mod_hash,
     make_inner_puzzle_hash,
@@ -92,7 +92,7 @@ POOL_ACTIVE = 1
 POOL_FROZEN = 0
 
 # Protocol prefix
-PROTOCOL_PREFIX = b"\x50"
+PROTOCOL_PREFIX = b"\x53"
 
 # Condition codes used in settlement assertions.
 REMARK = 1

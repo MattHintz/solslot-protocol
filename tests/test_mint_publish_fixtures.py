@@ -42,7 +42,7 @@ def test_fixture_top_level_schema_keys() -> None:
         # Sub-brick 4d.1 spend-bundle sections (each {inputs, expected}).
         "proposal_eve_launch",
         "tracker_propose",
-        "pgt_first_vote",
+        "sgt_first_vote",
         "property_registry_registration",
     }
 
@@ -53,7 +53,7 @@ def test_spend_sections_have_inputs_and_expected() -> None:
     for section in (
         "proposal_eve_launch",
         "tracker_propose",
-        "pgt_first_vote",
+        "sgt_first_vote",
         "property_registry_registration",
     ):
         assert set(fix[section].keys()) == {"inputs", "expected"}, (
@@ -92,9 +92,9 @@ def test_tracker_propose_expected_keys() -> None:
     assert exp["coin_spend_hex"].startswith("0x")
 
 
-def test_pgt_first_vote_expected_keys() -> None:
+def test_sgt_first_vote_expected_keys() -> None:
     fix = build_fixture()
-    exp = fix["pgt_first_vote"]["expected"]
+    exp = fix["sgt_first_vote"]["expected"]
     assert set(exp.keys()) == {
         "coin",
         "puzzle_reveal_hex",
@@ -236,16 +236,16 @@ def test_fixture_matches_pinned_golden_vector() -> None:
     expected = fix["expected"]
     # Pinned in tests/test_mint_publish_driver.py::TestBuildMintPublishArtifacts.
     assert expected["smart_deed_inner_puzhash"] == (
-        "0x7c136b467c78029bad205002a0c2f57bdd92a5f87dcaedc2bac233d378e3e0dd"
+        "0xd775fb9d532798e7bb6b34dc063bc6654ef424311dafbf9b134d90897c86802d"
     )
     assert expected["eve_inner_puzhash"] == (
-        "0xa88e74279e1f8b22d052d469f8e6505bbacba24aea48d5f18aa43d20d232383f"
+        "0x0c2931b61be08612a562a5165e786de126cadbb8c99d7c5ec73ed8824e99fb23"
     )
     assert expected["deed_full_puzhash"] == (
-        "0xfbabfd153e14099e9b4f6241c12a3a955ba734ba6ab63213ad3095c587a24a83"
+        "0x31b8d068651f77b3d9fbb06633c0680609d2801df952247d33f15e57cc552eac"
     )
     assert expected["proposal_hash"] == (
-        "0x2687dd7f1541480a5b0167bca6d938b353ad4f93e21d6a0adaf9fda742afacda"
+        "0xedf064e987a400b9b8f399702aa7ccb786b4f7721df58102f3d3e8e24e5f0019"
     )
     assert expected["deed_launcher_id"] == (
         "0x1310b78bf387ea58bb9365e261ff099a6971fd2ca5cc98e750b1d07e92e29b1d"

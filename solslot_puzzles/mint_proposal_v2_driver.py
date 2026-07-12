@@ -26,7 +26,7 @@ What this module exposes:
     another transition, version, or proposal.  This is the value off-
     chain drivers feed into the member's signing call (e.g.
     ``Delegated_Puzzle_Hash`` for Eip712Member).
-  * ``compute_transition_message`` \u2014 wire-compatible with V1; what
+  * ``compute_transition_message`` \u2014 canonical V2 payload that
     off-chain monitors decode from the puzzle's announcement.
   * ``make_inner_puzzle`` / ``make_inner_puzzle_hash`` \u2014 curry the
     inner with member tree hashes instead of pubkeys.
@@ -186,9 +186,8 @@ def compute_transition_message(
 ) -> bytes32:
     """The body of the CREATE_PUZZLE_ANNOUNCEMENT message (without prefix).
 
-    Wire-compatible with V1's ``compute_transition_message`` \u2014 off-
-    chain consumers (the API indexer) read this exact value (prefixed
-    with the PROTOCOL_PREFIX byte 0x50) to update cached state.
+    Solslot V2 consumers read this exact value (prefixed
+    with the PROTOCOL_PREFIX byte 0x53) to update cached state.
     """
     return bytes32(
         Program.to(
@@ -387,7 +386,7 @@ class TransitionSpendArtifacts:
     """
 
     transition_announcement_message: bytes
-    """Full announcement body \u2014 ``PROTOCOL_PREFIX (0x50) || transition_msg``.
+    """Full announcement body \u2014 ``PROTOCOL_PREFIX (0x53) || transition_msg``.
 
     Off-chain indexers ASSERT or scan for this exact bytes value to
     update cached state.
@@ -436,7 +435,7 @@ def _build_transition(
         new_state=new_state,
         new_state_version=new_state_version,
     )
-    transition_announcement_message = b"\x50" + bytes(transition_msg)
+    transition_announcement_message = b"\x53" + bytes(transition_msg)
     return TransitionSpendArtifacts(
         inner_solution_template=inner_solution_template,
         new_inner_puzzle_hash=new_inner_puzzle_hash,

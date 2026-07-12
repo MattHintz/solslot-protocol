@@ -76,7 +76,7 @@
   ;; and only fails when the FIRST AGG_SIG_ME executes at consensus.  A
   ;; misconfigured launch therefore bricks the singleton lineage permanently
   ;; (no valid signature exists for a malformed BLS pubkey).  See
-  ;; CANON_POPULIS_TRANSPARENCY_SINGLETONS_2026_05_03.md POP-CANON-018.
+  ;; CANON_SOLSLOT_TRANSPARENCY_SINGLETONS_2026_05_03.md V1-CANON-018.
   (defun-inline is-size-bls-g1 (v)
     (= (strlen v) 48)
   )
@@ -96,12 +96,12 @@
 
   ;; Validate that no two elements of `lst` are byte-equal.
   ;;
-  ;; Used by admin_authority_inner.clsp to reject a `new_allowlist` that
+  ;; Used by trust-root puzzles to reject a signer list that
   ;; contains the same pubkey twice — duplicates would dilute the
   ;; effective quorum (a 2-of-3 [X, X, Y] is structurally 1-of-2 since
   ;; AGG_SIG_ME on (pk_X, msg) ∧ (pk_X, msg) is satisfied by a single
-  ;; X-signature).  See CANON_POPULIS_TRANSPARENCY_SINGLETONS_2026_05_03.md
-  ;; POP-CANON-017.
+  ;; X-signature).  See CANON_SOLSLOT_TRANSPARENCY_SINGLETONS_2026_05_03.md
+  ;; V1-CANON-017.
   ;;
   ;; Internal helper: linear "is `item` in `seen`?" scan.
   ;; defun (not defun-inline) because the implementation is recursive.
@@ -129,13 +129,13 @@
   )
 
   ;; Variant of `has-no-duplicates` for a list of pairs: compares only
-  ;; the FIRST element of each pair.  Used by pool_singleton_inner.clsp
+  ;; the FIRST element of each pair.  Used by pool_singleton_inner_v3.clsp
   ;; in `spend_settlement` to reject duplicate ``(deed_id . next_ph)``
   ;; entries — an attacker who provides duplicate deed_ids would
   ;; cause CREATE_PUZZLE_ANNOUNCEMENT byte-collisions, which Chia
   ;; consensus deduplicates by announcement_id, silently stranding
   ;; one deed per duplicate pair.  See
-  ;; CANON_POPULIS_TRANSPARENCY_SINGLETONS_2026_05_03.md POP-CANON-019.
+  ;; CANON_SOLSLOT_TRANSPARENCY_SINGLETONS_2026_05_03.md V1-CANON-019.
   ;;
   ;; `seen` is the recursion accumulator; callers pass `()` initially.
   (defun has-no-duplicate-firsts (lst seen)
@@ -150,6 +150,6 @@
 
   ;; --- Protocol prefix for announcement namespacing ---
 
-  (defconstant PROTOCOL_PREFIX 0x50)  ;; "P" for Populis
+  (defconstant PROTOCOL_PREFIX 0x53)  ;; "S" for Solslot
 
 )

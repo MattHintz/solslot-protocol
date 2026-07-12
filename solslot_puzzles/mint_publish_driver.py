@@ -14,7 +14,7 @@ on-chain artifacts:
     (:file:`governance_singleton_inner.clsp`) spent in ``PROPOSE``
     mode with ``bill_op = (BILL_MINT, deed_full_puzhash,
     property_id_canon, property_registry_puzzle_hash)`` and the proposer's
-    first PGT lock.
+    first SGT lock.
 
 In the same bundle, the publisher pre-spawns the **deed
 launcher coin** at the *DID-curried* launcher puzzle hash
@@ -30,7 +30,7 @@ This module exposes **only** the deterministic
 ``build_mint_publish_artifacts`` computation that pins the four
 ``computed.*_puzhash`` fields surfaced by the admin desk API.
 Spend-bundle assembly (parent → launcher → eve, tracker.PROPOSE,
-PGT lock) lives in callers — the portal's
+SGT lock) lives in callers — the portal's
 ``MintPublishSpendBuilderService`` mirrors the artifacts produced
 here byte-for-byte and threads them into ``CoinSpend`` objects
 the wallet can sign.
@@ -79,9 +79,9 @@ from solslot_puzzles.mint_proposal_v2_driver import (
     compute_proposal_data_hash,
     make_inner_puzzle_hash,
 )
-from solslot_puzzles.pgt_driver import (
+from solslot_puzzles.sgt_driver import (
     TRK_PROPOSE,
-    build_pgt_lock_coin_spend,
+    build_sgt_lock_coin_spend,
 )
 
 # ─── Constants pinned to puzzle source ─────────────────────────────────────
@@ -193,7 +193,7 @@ def deed_singleton_struct(
     launcher.  The struct's second slot is the launcher's puzzle
     hash, so it differs from a vanilla singleton.
 
-    The struct is curried into :file:`smart_deed_inner.clsp` as
+    The struct is curried into :file:`smart_deed_inner_v2.clsp` as
     ``SINGLETON_STRUCT`` and into the eve mint-offer delegate via
     the singleton top layer.
     """
@@ -237,7 +237,7 @@ def make_smart_deed_inner(
 
     The puzzle parameter named ``POOL_SINGLETON_MOD_HASH`` is the
     chia singleton top-layer mod hash (used in the deed's
-    p2_pool-destination compute), **not** any populis pool mod.
+    p2_pool-destination compute), **not** any solslot pool mod.
     """
     if len(protocol_did_puzhash) != 32:
         raise ValueError(
@@ -383,7 +383,7 @@ def compute_proposal_hash_for_mint(
     registration context.  A later registry co-spend brick will have the tracker
     assert the corresponding registry announcement.
 
-    The result is what PGT holders' tracker.VOTE spends bind to —
+    The result is what SGT holders' tracker.VOTE spends bind to —
     Phase 3's vote runner already consumes this exact value as
     ``proposal_hash`` in its ``CurrentTrackerState``.
     """
@@ -486,7 +486,7 @@ class MintPublishArtifacts:
 
     # ── computed.*_puzhash row (admin desk data model) ──
     smart_deed_inner_puzhash: bytes32
-    """Tree hash of ``smart_deed_inner.clsp`` curried with this deed's
+    """Tree hash of ``smart_deed_inner_v2.clsp`` curried with this deed's
     immutable metadata.  The deed's *post-purchase* inner — used by
     the mint-offer eve when it transitions the deed."""
 
@@ -698,15 +698,15 @@ def build_mint_publish_artifacts(
 #
 #   * **Artifact B's tracker.PROPOSE spend** opens the governance tracker
 #     singleton with a MINT bill.  Mirrors
-#     :func:`pgt_driver.build_tracker_vote_coin_spend` (Phase 3) for shape
+#     :func:`sgt_driver.build_tracker_vote_coin_spend` (Phase 3) for shape
 #     consistency.  The PROPOSE handler in
-#     :file:`governance_singleton_inner.clsp` asserts the PGT lock
+#     :file:`governance_singleton_inner.clsp` asserts the SGT lock
 #     announcement for ``(voter_inner_puzhash, proposal_hash, first_vote,
-#     deadline)`` so the bundled PGT lock spend MUST emit that exact
+#     deadline)`` so the bundled SGT lock spend MUST emit that exact
 #     announcement.
 #
-#   * **The proposer's PGT first-vote lock** is provided by a thin wrapper
-#     around :func:`pgt_driver.build_pgt_lock_coin_spend` so the publish-
+#   * **The proposer's SGT first-vote lock** is provided by a thin wrapper
+#     around :func:`sgt_driver.build_sgt_lock_coin_spend` so the publish-
 #     flow caller has a single import surface and clearer naming.  Phase 3
 #     already verified the LOCK spend coin-sims green; we just rename for
 #     the publish-flow caller.
@@ -828,13 +828,13 @@ def build_tracker_propose_coin_spend(
     singleton.  After this spend, the tracker is recreated in OPEN
     state with the supplied ``proposal_hash``, ``bill_operation``,
     initial ``vote_tally = first_vote_amount`` (from the proposer's
-    bundled PGT lock), and ``voting_deadline``.
+    bundled SGT lock), and ``voting_deadline``.
 
     The PROPOSE handler in :file:`governance_singleton_inner.clsp`
-    asserts the PGT lock announcement for
+    asserts the SGT lock announcement for
     ``(voter_inner_puzzle_hash, proposal_hash, first_vote_amount,
-    voting_deadline)``, so the bundled PGT lock spend (see
-    :func:`build_pgt_first_vote_coin_spend`) MUST emit that exact
+    voting_deadline)``, so the bundled SGT lock spend (see
+    :func:`build_sgt_first_vote_coin_spend`) MUST emit that exact
     announcement.
 
     The inner solution layout matches
@@ -858,13 +858,13 @@ def build_tracker_propose_coin_spend(
             property_id_canon, property_registry_puzzle_hash])`` (the same
             value :func:`build_mint_publish_artifacts` exposes as
             ``bill_op_program``).
-        voter_inner_puzzle_hash: The proposer's PGT free coin's inner
-            puzzle hash — MUST match the curry of the bundled PGT lock
+        voter_inner_puzzle_hash: The proposer's SGT free coin's inner
+            puzzle hash — MUST match the curry of the bundled SGT lock
             spend so the LOCK announcement is produced by the
             proposer's coin (and not a different user's).
-        first_vote_amount: The PGT mojos the proposer locks as their
+        first_vote_amount: The SGT mojos the proposer locks as their
             first vote.  MUST be ≥ ``MIN_PROPOSAL_STAKE`` (curried into
-            the tracker) AND equal the co-spent PGT lock coin's
+            the tracker) AND equal the co-spent SGT lock coin's
             amount (LOCK is a full-coin operation in Phase 3).
         voting_deadline: Absolute seconds (uint64) of the voting
             window's upper bound.  The tracker asserts both
@@ -875,7 +875,7 @@ def build_tracker_propose_coin_spend(
             ``[deadline - window, deadline)``.
 
     Returns:
-        A single ``CoinSpend`` ready to bundle with the matching PGT
+        A single ``CoinSpend`` ready to bundle with the matching SGT
         lock spend, Artifact A launch spend, and parent XCH spend(s),
         then signed and pushed.
 
@@ -919,20 +919,20 @@ def build_tracker_propose_coin_spend(
     return make_spend(tracker_coin, full_puzzle, full_solution)
 
 
-def build_pgt_first_vote_coin_spend(
+def build_sgt_first_vote_coin_spend(
     *,
-    pgt_coin: Coin,
+    sgt_coin: Coin,
     voter_inner_puzzle: Program,
     voter_inner_solution: Program,
     proposal_tracker_struct: Program,
-    pgt_tail_hash: bytes32,
+    sgt_tail_hash: bytes32,
     lineage_proof: LineageProof,
     proposal_hash: bytes32,
     voting_deadline: int,
 ) -> CoinSpend:
-    """The proposer's PGT free coin LOCK spend for the first vote.
+    """The proposer's SGT free coin LOCK spend for the first vote.
 
-    Phase 3's :func:`pgt_driver.build_pgt_lock_coin_spend` is generic
+    Phase 3's :func:`sgt_driver.build_sgt_lock_coin_spend` is generic
     across PROPOSE/VOTE/EXECUTE callers — this thin wrapper is the
     publish-flow-named entry point that delegates without changing
     semantics.  The publish bundle MUST include this spend co-spent
@@ -940,40 +940,40 @@ def build_pgt_first_vote_coin_spend(
     :func:`build_tracker_propose_coin_spend`; the tracker handler
     asserts the LOCK announcement this spend emits.
 
-    Per Phase 3's LOCK semantics, the locked PGT amount equals
-    ``pgt_coin.amount`` (LOCK is a full-coin op; ``extra_delta = 0``).
+    Per Phase 3's LOCK semantics, the locked SGT amount equals
+    ``sgt_coin.amount`` (LOCK is a full-coin op; ``extra_delta = 0``).
     The wallet must therefore have *already split* the proposer's
-    PGT bag into a coin of exactly
-    ``first_vote_amount = pgt_coin.amount``.  The tracker's
+    SGT bag into a coin of exactly
+    ``first_vote_amount = sgt_coin.amount``.  The tracker's
     ``first_vote_amount`` argument MUST equal this same value, or the
     on-chain ``lock_announcement_id`` won't match.
 
     Args:
-        pgt_coin: The proposer's PGT free coin to lock.  Its puzzle
-            hash MUST equal the canonical CAT2-wrapped pgt_free_inner
-            puzhash for ``(proposal_tracker_struct, pgt_tail_hash,
+        sgt_coin: The proposer's SGT free coin to lock.  Its puzzle
+            hash MUST equal the canonical CAT2-wrapped sgt_free_inner
+            puzhash for ``(proposal_tracker_struct, sgt_tail_hash,
             voter_inner_puzzle.tree_hash())``.
-        voter_inner_puzzle: The reveal of the PGT owner's inner puzzle.
+        voter_inner_puzzle: The reveal of the SGT owner's inner puzzle.
         voter_inner_solution: The signed inner solution; must yield
             exactly one CREATE_COIN to the canonical locked puzhash
-            with ``amount == pgt_coin.amount``.
+            with ``amount == sgt_coin.amount``.
         proposal_tracker_struct: Singleton struct of the governance
             tracker.
-        pgt_tail_hash: Tree hash of the curried PGT TAIL.
-        lineage_proof: Lineage proof of the PGT coin's parent.
+        sgt_tail_hash: Tree hash of the curried SGT TAIL.
+        lineage_proof: Lineage proof of the SGT coin's parent.
         proposal_hash: The proposal hash (same value the tracker
             PROPOSE solution asserts).
         voting_deadline: Absolute seconds of the voting deadline.
 
     Returns:
-        The single ``CoinSpend`` for the CAT2-wrapped PGT lock.
+        The single ``CoinSpend`` for the CAT2-wrapped SGT lock.
     """
-    return build_pgt_lock_coin_spend(
-        pgt_coin=pgt_coin,
+    return build_sgt_lock_coin_spend(
+        sgt_coin=sgt_coin,
         voter_inner_puzzle=voter_inner_puzzle,
         voter_inner_solution=voter_inner_solution,
         proposal_tracker_struct=proposal_tracker_struct,
-        pgt_tail_hash=pgt_tail_hash,
+        sgt_tail_hash=sgt_tail_hash,
         lineage_proof=lineage_proof,
         proposal_hash=proposal_hash,
         deadline=voting_deadline,
@@ -986,7 +986,7 @@ __all__ = [
     "MintPublishArtifacts",
     "ProposalEveLaunchSpend",
     "build_mint_publish_artifacts",
-    "build_pgt_first_vote_coin_spend",
+    "build_sgt_first_vote_coin_spend",
     "build_proposal_eve_launch_spend",
     "build_tracker_propose_coin_spend",
     "compute_deed_full_puzzle_hash",

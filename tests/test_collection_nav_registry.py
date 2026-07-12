@@ -110,7 +110,7 @@ def test_build_nav_update_spend_matches_clvm_conditions():
         1,
     )
     assert artifacts.signing_message == expected_message
-    assert artifacts.announcement_message == b"\x50" + expected_message
+    assert artifacts.announcement_message == b"\x53" + expected_message
 
 
 def test_build_nav_read_evidence_spend_matches_clvm_conditions():
@@ -147,7 +147,7 @@ def test_build_nav_read_evidence_spend_matches_clvm_conditions():
         12,
     )
     assert artifacts.evidence_message == expected_message
-    assert artifacts.announcement_message == b"\x50" + expected_message
+    assert artifacts.announcement_message == b"\x53" + expected_message
     assert artifacts.evidence_message == bytes32(
         Program.to([NAV_EVIDENCE_TAG, cid, 1_500_000_000, root, 12]).get_tree_hash()
     )

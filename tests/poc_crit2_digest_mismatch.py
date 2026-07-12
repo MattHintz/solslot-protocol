@@ -26,7 +26,7 @@ def keccak256(data: bytes) -> bytes:
 PREFIX_AND_DOMAIN_SEPARATOR = bytes.fromhex(
     "190167505ccc4add964dd963c6aaf178a28fa8d7d835a358261d9e03e40ca7b3f2b9"
 )
-TYPE_STRING = b"PopulisVaultSpend(bytes32 spend_case,bytes32 deed_launcher_id,bytes32 vault_coin_id)"
+TYPE_STRING = b"SolslotVaultSpend(bytes32 spend_case,bytes32 deed_launcher_id,bytes32 vault_coin_id)"
 TYPEHASH = keccak256(TYPE_STRING)
 
 

@@ -31,7 +31,7 @@ from chia.wallet.puzzles.singleton_top_layer_v1_1 import (
 from chia_rs.sized_bytes import bytes32
 
 from solslot_puzzles import vault_version_registry_driver as vvr
-from solslot_puzzles.pgt_driver import (
+from solslot_puzzles.sgt_driver import (
     TRK_EXECUTE,
     bill_vault_version,
     proposal_hash_from_bill,
@@ -65,17 +65,17 @@ NEW_VERSION = 2
 
 # Tracker immutable params — values are irrelevant to the announcement binding
 # (they affect the gov inner puzzle hash, which both sides use consistently).
-PGT_FREE_MOD_HASH = bytes32(b"\x31" * 32)
-PGT_LOCKED_MOD_HASH = bytes32(b"\x32" * 32)
+SGT_FREE_MOD_HASH = bytes32(b"\x31" * 32)
+SGT_LOCKED_MOD_HASH = bytes32(b"\x32" * 32)
 CAT_MOD_HASH = bytes32(b"\x33" * 32)
-PGT_TAIL_HASH = bytes32(b"\x34" * 32)
+SGT_TAIL_HASH = bytes32(b"\x34" * 32)
 DID_PUZHASH = bytes32(b"\x35" * 32)
 POOL_STRUCT = Program.to(
     (SINGLETON_MOD_HASH, (bytes32(b"\xc0" * 32), SINGLETON_LAUNCHER_HASH))
 )
 QUORUM_BPS = 5000
 VOTING_WINDOW = 300
-PGT_TOTAL_SUPPLY = 1_000_000
+SGT_TOTAL_SUPPLY = 1_000_000
 MIN_PROPOSAL_STAKE = 10_000
 
 
@@ -88,19 +88,19 @@ def _gov_execute_ready_inner(
     bill = bill_vault_version(code, params, version)
     return proposal_tracker_inner_puzzle(
         GOV_STRUCT,
-        PGT_FREE_MOD_HASH,
-        PGT_LOCKED_MOD_HASH,
+        SGT_FREE_MOD_HASH,
+        SGT_LOCKED_MOD_HASH,
         CAT_MOD_HASH,
-        PGT_TAIL_HASH,
+        SGT_TAIL_HASH,
         DID_PUZHASH,
         POOL_STRUCT,
         QUORUM_BPS,
         VOTING_WINDOW,
-        PGT_TOTAL_SUPPLY,
+        SGT_TOTAL_SUPPLY,
         MIN_PROPOSAL_STAKE,
         proposal_hash=proposal_hash_from_bill(bill),
         bill_operation=bill,
-        vote_tally=PGT_TOTAL_SUPPLY,  # 100% > quorum
+        vote_tally=SGT_TOTAL_SUPPLY,  # 100% > quorum
         voting_deadline=2_000_000_000,
     )
 

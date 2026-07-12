@@ -1,29 +1,29 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;; PGT free-state inner puzzle.
+;;; SGT free-state inner puzzle.
 ;;;
-;;; This is the CAT2 inner puzzle attached to every PGT coin while it is
+;;; This is the CAT2 inner puzzle attached to every SGT coin while it is
 ;;; freely transferable / available for governance participation.  Every
-;;; non-locked PGT coin in existence has this exact mod with appropriate
+;;; non-locked SGT coin in existence has this exact mod with appropriate
 ;;; INNER_PUZZLE_HASH curried in.
 ;;;
 ;;; Two spend cases:
 ;;;   1 — TRANSFER : run the user's inner puzzle, replace its single
 ;;;                  CREATE_COIN with one whose puzhash is a re-curry of
-;;;                  pgt_free_inner around the requested new owner hash.
+;;;                  sgt_free_inner around the requested new owner hash.
 ;;;                  All other inner conditions pass through unchanged
 ;;;                  except that REMARK / SEND_MESSAGE / RECEIVE_MESSAGE
-;;;                  using the populis PROTOCOL_PREFIX are rejected so a
+;;;                  using the solslot PROTOCOL_PREFIX are rejected so a
 ;;;                  malicious inner puzzle cannot spoof governance traffic.
 ;;;
-;;;   2 — LOCK     : commit this PGT coin to a specific proposal hash for
+;;;   2 — LOCK     : commit this SGT coin to a specific proposal hash for
 ;;;                  a fixed deadline.  The user's inner puzzle authorises
 ;;;                  the action by signing a delegated puzzle that emits
 ;;;                  exactly one CREATE_COIN whose target equals the
-;;;                  pgt_locked_inner full puzzle hash for those params.
+;;;                  sgt_locked_inner full puzzle hash for those params.
 ;;;
-;;; Curried parameters (immutable per PGT lineage):
+;;; Curried parameters (immutable per SGT lineage):
 ;;;   MOD_HASH                — self-reference (this mod's tree hash)
-;;;   LOCKED_MOD_HASH         — pgt_locked_inner mod hash (re-curry target)
+;;;   LOCKED_MOD_HASH         — sgt_locked_inner mod hash (re-curry target)
 ;;;   PROPOSAL_TRACKER_STRUCT — singleton struct of the tracker.
 ;;;   INNER_PUZZLE_HASH       — current owner's user puzzle hash.
 ;;;
@@ -51,8 +51,8 @@
     (include utility_macros.clib)
 
     ;; Spend case constants
-    (defconstant PGT_TRANSFER 1)
-    (defconstant PGT_LOCK 2)
+    (defconstant SGT_TRANSFER 1)
+    (defconstant SGT_LOCK 2)
 
     ;; LOCK announcement tag (4 ASCII bytes "LOCK")
     (defconstant LOCK_TAG 0x4c4f434b)
@@ -64,20 +64,20 @@
 
     ;; Reject any condition that could spoof governance traffic.  Inner
     ;; puzzles authorize ownership transitions only — all protocol-level
-    ;; messaging and announcements are emitted by the PGT wrapper itself.
+    ;; messaging and announcements are emitted by the SGT wrapper itself.
     ;;
     ;;   - REMARK whose first arg is PROTOCOL_PREFIX  (governance REMARKs)
     ;;   - any SEND_MESSAGE or RECEIVE_MESSAGE        (wrapper-only)
-    ;;   - any CREATE_PUZZLE_ANNOUNCEMENT             (wrapper-only)  *POP-CANON-001*
-    ;;   - any CREATE_COIN_ANNOUNCEMENT               (wrapper-only)  *POP-CANON-001*
+    ;;   - any CREATE_PUZZLE_ANNOUNCEMENT             (wrapper-only)  *V1-CANON-001*
+    ;;   - any CREATE_COIN_ANNOUNCEMENT               (wrapper-only)  *V1-CANON-001*
     ;;
-    ;; POP-CANON-001 background: prior versions filtered only REMARK +
-    ;; SEND/RECEIVE_MESSAGE.  An attacker could spend a PGT in TRANSFER
-    ;; mode, emit one valid CREATE_COIN (so PGT remained free), AND
+    ;; V1-CANON-001 background: prior versions filtered only REMARK +
+    ;; SEND/RECEIVE_MESSAGE.  An attacker could spend a SGT in TRANSFER
+    ;; mode, emit one valid CREATE_COIN (so SGT remained free), AND
     ;; emit a forged CREATE_PUZZLE_ANNOUNCEMENT carrying the protocol
     ;; LOCK announcement — the proposal tracker would accept the
-    ;; spoofed announcement as PGT vote weight, defeating CRITICAL-3's
-    ;; PGT-CAT conservation invariant.  The fix bans inner-emitted
+    ;; spoofed announcement as SGT vote weight, defeating CRITICAL-3's
+    ;; SGT-CAT conservation invariant.  The fix bans inner-emitted
     ;; CREATE_*_ANNOUNCEMENT entirely; the wrapper retains exclusive
     ;; authority to emit the LOCK announcement (only in LOCK mode).
     ;;
@@ -93,7 +93,7 @@
                     1)))
     )
 
-    ;; Compute the puzzle hash of pgt_free_inner curried with a given owner.
+    ;; Compute the puzzle hash of sgt_free_inner curried with a given owner.
     (defun-inline compute_self_free_puzhash
             (mod_hash locked_mod_hash tracker_struct new_inner_hash)
         (curry_hashes mod_hash
@@ -103,7 +103,7 @@
             (sha256 1 new_inner_hash))
     )
 
-    ;; Compute the puzzle hash of pgt_locked_inner for given lock params.
+    ;; Compute the puzzle hash of sgt_locked_inner for given lock params.
     (defun-inline compute_locked_puzhash
             (mod_hash locked_mod_hash tracker_struct owner_inner_hash
              proposal_hash deadline)
@@ -148,7 +148,7 @@
     )
 
     ;; Walk the conditions list for LOCK mode: verify the single CREATE_COIN
-    ;; goes to the expected pgt_locked_inner puzhash, and pass through other
+    ;; goes to the expected sgt_locked_inner puzhash, and pass through other
     ;; conditions (with the same anti-spoof check).
     (defun filter_lock
             (conditions expected_locked_puzhash my_amount
@@ -172,13 +172,13 @@
     ;; ----- Top-level dispatcher (mod-level args available here) -----
     (assert
         (is-size-b32 INNER_PUZZLE_HASH)
-        (if (= spend_case PGT_TRANSFER)
+        (if (= spend_case SGT_TRANSFER)
             (assert
                 (= (sha256tree inner_puzzle) INNER_PUZZLE_HASH)
                 (filter_transfer
                     MOD_HASH LOCKED_MOD_HASH PROPOSAL_TRACKER_STRUCT
                     (a inner_puzzle inner_solution) 0 ()))
-            (if (= spend_case PGT_LOCK)
+            (if (= spend_case SGT_LOCK)
                 (assert
                     (is-size-b32 (f case_args))           ; proposal_hash
                     (is-uint64 (f (r case_args)))         ; deadline

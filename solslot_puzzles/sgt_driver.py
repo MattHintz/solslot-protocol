@@ -1,17 +1,17 @@
-"""Python driver helpers for the Populis Governance Token (PGT).
+"""Python driver helpers for the Solslot Governance Token (SGT).
 
-PGT is a CAT2 token with a fixed-supply genesis-by-coin-id TAIL.  Every PGT
-coin carries the populis governance machinery as its CAT inner puzzle:
+SGT is a CAT2 token with a fixed-supply genesis-by-coin-id TAIL.  Every SGT
+coin carries the solslot governance machinery as its CAT inner puzzle:
 
-  - pgt_free_inner.clsp wraps PGT in TRANSFER / LOCK modes (free state).
-  - pgt_locked_inner.clsp wraps PGT in RELEASE_DEADLINE / RELEASE_EXEC modes
+  - sgt_free_inner.clsp wraps SGT in TRANSFER / LOCK modes (free state).
+  - sgt_locked_inner.clsp wraps SGT in RELEASE_DEADLINE / RELEASE_EXEC modes
     (locked state, committed to a specific proposal).
 
 This module exposes:
 
-  - pgt_tail_puzzle / pgt_tail_hash         — TAIL construction
-  - pgt_free_inner_puzzle / pgt_free_inner_hash
-  - pgt_locked_inner_puzzle / pgt_locked_inner_hash
+  - sgt_tail_puzzle / sgt_tail_hash         — TAIL construction
+  - sgt_free_inner_puzzle / sgt_free_inner_hash
+  - sgt_locked_inner_puzzle / sgt_locked_inner_hash
   - make_cat_truths                         — synthetic Truths for unit tests
   - PROPOSAL_TRACKER_STRUCT helper          — singleton struct factory
 """
@@ -38,16 +38,16 @@ from solslot_puzzles import load_puzzle
 
 
 # ── Module-level caches of the compiled programs ─────────────────────────────
-_PGT_TAIL_MOD: Program | None = None
-_PGT_FREE_INNER_MOD: Program | None = None
-_PGT_LOCKED_INNER_MOD: Program | None = None
+_SGT_TAIL_MOD: Program | None = None
+_SGT_FREE_INNER_MOD: Program | None = None
+_SGT_LOCKED_INNER_MOD: Program | None = None
 _TRACKER_MOD: Program | None = None
 
 
 def proposal_tracker_mod() -> Program:
     """Return the compiled (uncurried) governance_singleton_inner.clsp Program.
 
-    This is the v2 governance puzzle ("proposal tracker") with PGT-backed
+    This is the v2 governance puzzle ("proposal tracker") with SGT-backed
     voting.  It replaces the legacy raw-vote_weight puzzle (CRITICAL-3 audit fix).
     """
     global _TRACKER_MOD
@@ -56,36 +56,36 @@ def proposal_tracker_mod() -> Program:
     return _TRACKER_MOD
 
 
-def pgt_tail_mod() -> Program:
-    """Return the compiled (uncurried) pgt_tail.clsp Program."""
-    global _PGT_TAIL_MOD
-    if _PGT_TAIL_MOD is None:
-        _PGT_TAIL_MOD = load_puzzle("pgt_tail.clsp")
-    return _PGT_TAIL_MOD
+def sgt_tail_mod() -> Program:
+    """Return the compiled (uncurried) sgt_tail.clsp Program."""
+    global _SGT_TAIL_MOD
+    if _SGT_TAIL_MOD is None:
+        _SGT_TAIL_MOD = load_puzzle("sgt_tail.clsp")
+    return _SGT_TAIL_MOD
 
 
-def pgt_free_inner_mod() -> Program:
-    """Return the compiled (uncurried) pgt_free_inner.clsp Program."""
-    global _PGT_FREE_INNER_MOD
-    if _PGT_FREE_INNER_MOD is None:
-        _PGT_FREE_INNER_MOD = load_puzzle("pgt_free_inner.clsp")
-    return _PGT_FREE_INNER_MOD
+def sgt_free_inner_mod() -> Program:
+    """Return the compiled (uncurried) sgt_free_inner.clsp Program."""
+    global _SGT_FREE_INNER_MOD
+    if _SGT_FREE_INNER_MOD is None:
+        _SGT_FREE_INNER_MOD = load_puzzle("sgt_free_inner.clsp")
+    return _SGT_FREE_INNER_MOD
 
 
-def pgt_locked_inner_mod() -> Program:
-    """Return the compiled (uncurried) pgt_locked_inner.clsp Program."""
-    global _PGT_LOCKED_INNER_MOD
-    if _PGT_LOCKED_INNER_MOD is None:
-        _PGT_LOCKED_INNER_MOD = load_puzzle("pgt_locked_inner.clsp")
-    return _PGT_LOCKED_INNER_MOD
+def sgt_locked_inner_mod() -> Program:
+    """Return the compiled (uncurried) sgt_locked_inner.clsp Program."""
+    global _SGT_LOCKED_INNER_MOD
+    if _SGT_LOCKED_INNER_MOD is None:
+        _SGT_LOCKED_INNER_MOD = load_puzzle("sgt_locked_inner.clsp")
+    return _SGT_LOCKED_INNER_MOD
 
 
-# ── PGT spend-case constants (must match the .clsp `defconstant`s) ───────────
-PGT_TRANSFER = 1
-PGT_LOCK = 2
+# ── SGT spend-case constants (must match the .clsp `defconstant`s) ───────────
+SGT_TRANSFER = 1
+SGT_LOCK = 2
 
-PGT_RELEASE_DEADLINE = 1
-PGT_RELEASE_EXEC = 2
+SGT_RELEASE_DEADLINE = 1
+SGT_RELEASE_EXEC = 2
 
 # Proposal tracker spend cases
 TRK_PROPOSE = 1
@@ -99,8 +99,8 @@ BILL_FREEZE = b"F"         # 0x46
 BILL_SETTLE = b"S"         # 0x53
 BILL_VAULT_VERSION = b"V"  # 0x56 — ratify a vault_version_registry code change
 
-# Populis announcement namespace prefix (utility_macros.clib PROTOCOL_PREFIX).
-PROTOCOL_PREFIX = bytes.fromhex("50")  # "P"
+# Solslot announcement namespace prefix (utility_macros.clib PROTOCOL_PREFIX).
+PROTOCOL_PREFIX = bytes.fromhex("53")  # "S"
 
 # vault_version_registry_inner.clsp routine-path approval tag ("RT").  The
 # governance tracker's EXECUTE of a VAULT_VERSION bill emits a puzzle
@@ -122,7 +122,7 @@ def make_proposal_tracker_struct(
     tracker_launcher_id: bytes32,
     launcher_puzzle_hash: bytes32 = SINGLETON_LAUNCHER_HASH,
 ) -> Program:
-    """Build the PROPOSAL_TRACKER_STRUCT used by the PGT inner puzzles.
+    """Build the PROPOSAL_TRACKER_STRUCT used by the SGT inner puzzles.
 
     Layout: (SINGLETON_MOD_HASH (TRACKER_LAUNCHER_ID . LAUNCHER_PUZZLE_HASH)).
     Same shape as Chia's standard SINGLETON_STRUCT.
@@ -130,46 +130,46 @@ def make_proposal_tracker_struct(
     return Program.to((singleton_mod_hash, (tracker_launcher_id, launcher_puzzle_hash)))
 
 
-def pgt_tail_puzzle(genesis_coin_id: bytes32) -> Program:
-    """Return the PGT TAIL curried with the given genesis coin id.
+def sgt_tail_puzzle(genesis_coin_id: bytes32) -> Program:
+    """Return the SGT TAIL curried with the given genesis coin id.
 
     Args:
         genesis_coin_id: bytes32 coin id of the unique XCH coin that bootstraps
-            PGT into circulation at protocol launch.
+            SGT into circulation at protocol launch.
 
     Returns:
         Curried TAIL Program.  Its tree hash is the value used as TOKEN_TAIL_HASH
-        in any contract that curries the PGT tail (e.g. governance, vote escrow).
+        in any contract that curries the SGT tail (e.g. governance, vote escrow).
     """
     if not isinstance(genesis_coin_id, bytes) or len(genesis_coin_id) != 32:
         raise ValueError("genesis_coin_id must be 32 bytes")
-    return pgt_tail_mod().curry(genesis_coin_id)
+    return sgt_tail_mod().curry(genesis_coin_id)
 
 
-def pgt_tail_hash(genesis_coin_id: bytes32) -> bytes32:
-    """Return the puzzle tree hash of the curried PGT TAIL."""
-    return pgt_tail_puzzle(genesis_coin_id).get_tree_hash()
+def sgt_tail_hash(genesis_coin_id: bytes32) -> bytes32:
+    """Return the puzzle tree hash of the curried SGT TAIL."""
+    return sgt_tail_puzzle(genesis_coin_id).get_tree_hash()
 
 
-# ── PGT free-state inner puzzle ──────────────────────────────────────────────
-def pgt_free_inner_puzzle(
+# ── SGT free-state inner puzzle ──────────────────────────────────────────────
+def sgt_free_inner_puzzle(
     locked_mod_hash: bytes32,
     proposal_tracker_struct: Program,
     inner_puzzle_hash: bytes32,
 ) -> Program:
-    """Curry pgt_free_inner.clsp for a specific PGT owner.
+    """Curry sgt_free_inner.clsp for a specific SGT owner.
 
     Args:
-        locked_mod_hash: tree hash of the (uncurried) pgt_locked_inner module
+        locked_mod_hash: tree hash of the (uncurried) sgt_locked_inner module
             — needed for re-curry computations on LOCK transitions.
         proposal_tracker_struct: singleton struct of the proposal tracker.
         inner_puzzle_hash: the owner's user puzzle hash (e.g. p2_delegated).
 
     Returns:
-        A curried pgt_free_inner Program.  Wrap it in CAT2(PGT_TAIL_HASH, ...)
+        A curried sgt_free_inner Program.  Wrap it in CAT2(SGT_TAIL_HASH, ...)
         to get the on-chain puzzle.
     """
-    mod = pgt_free_inner_mod()
+    mod = sgt_free_inner_mod()
     mod_hash = mod.get_tree_hash()
     return mod.curry(
         mod_hash,
@@ -179,27 +179,27 @@ def pgt_free_inner_puzzle(
     )
 
 
-def pgt_free_inner_hash(
+def sgt_free_inner_hash(
     locked_mod_hash: bytes32,
     proposal_tracker_struct: Program,
     inner_puzzle_hash: bytes32,
 ) -> bytes32:
-    """Tree hash of the curried pgt_free_inner.  Used to derive CAT puzzle hash."""
-    return pgt_free_inner_puzzle(
+    """Tree hash of the curried sgt_free_inner.  Used to derive CAT puzzle hash."""
+    return sgt_free_inner_puzzle(
         locked_mod_hash, proposal_tracker_struct, inner_puzzle_hash
     ).get_tree_hash()
 
 
-# ── PGT locked-state inner puzzle ────────────────────────────────────────────
-def pgt_locked_inner_puzzle(
+# ── SGT locked-state inner puzzle ────────────────────────────────────────────
+def sgt_locked_inner_puzzle(
     free_mod_hash: bytes32,
     proposal_tracker_struct: Program,
     inner_puzzle_hash: bytes32,
     lock_proposal_hash: bytes32,
     lock_deadline: int,
 ) -> Program:
-    """Curry pgt_locked_inner.clsp for a specific locked PGT coin."""
-    mod = pgt_locked_inner_mod()
+    """Curry sgt_locked_inner.clsp for a specific locked SGT coin."""
+    mod = sgt_locked_inner_mod()
     mod_hash = mod.get_tree_hash()
     return mod.curry(
         mod_hash,
@@ -211,14 +211,14 @@ def pgt_locked_inner_puzzle(
     )
 
 
-def pgt_locked_inner_hash(
+def sgt_locked_inner_hash(
     free_mod_hash: bytes32,
     proposal_tracker_struct: Program,
     inner_puzzle_hash: bytes32,
     lock_proposal_hash: bytes32,
     lock_deadline: int,
 ) -> bytes32:
-    return pgt_locked_inner_puzzle(
+    return sgt_locked_inner_puzzle(
         free_mod_hash,
         proposal_tracker_struct,
         inner_puzzle_hash,
@@ -230,15 +230,15 @@ def pgt_locked_inner_hash(
 # ── Proposal tracker singleton inner puzzle ──────────────────────────────────
 def proposal_tracker_inner_puzzle(
     singleton_struct: Program,
-    pgt_free_mod_hash: bytes32,
-    pgt_locked_mod_hash: bytes32,
+    sgt_free_mod_hash: bytes32,
+    sgt_locked_mod_hash: bytes32,
     cat_mod_hash: bytes32,
-    pgt_tail_hash: bytes32,
+    sgt_tail_hash: bytes32,
     protocol_did_puzhash: bytes32,
     pool_singleton_struct: Program,
     quorum_bps: int,
     voting_window_seconds: int,
-    pgt_total_supply: int,
+    sgt_total_supply: int,
     min_proposal_stake: int,
     proposal_hash: int = 0,
     bill_operation: int = 0,
@@ -250,28 +250,28 @@ def proposal_tracker_inner_puzzle(
     All immutable params come first, followed by the four state fields
     (proposal_hash, bill_operation, vote_tally, voting_deadline).  When idle,
     the four state fields are 0; when an active proposal exists, they hold
-    the proposal hash, the bill tuple, the accumulated PGT mojos, and the
+    the proposal hash, the bill tuple, the accumulated SGT mojos, and the
     voting deadline (absolute seconds).
 
-    `min_proposal_stake` is the minimum first-vote PGT mojos required to
-    open a new proposal (anti-spam; the locked PGT is returned on EXEC or
+    `min_proposal_stake` is the minimum first-vote SGT mojos required to
+    open a new proposal (anti-spam; the locked SGT is returned on EXEC or
     EXPIRE so this is a stake-deposit, not a fee).  Suggested testnet
-    default: 10_000 (= 1% of 1M PGT total supply).
+    default: 10_000 (= 1% of 1M SGT total supply).
     """
     mod = proposal_tracker_mod()
     mod_hash = mod.get_tree_hash()
     return mod.curry(
         mod_hash,
         singleton_struct,
-        pgt_free_mod_hash,
-        pgt_locked_mod_hash,
+        sgt_free_mod_hash,
+        sgt_locked_mod_hash,
         cat_mod_hash,
-        pgt_tail_hash,
+        sgt_tail_hash,
         protocol_did_puzhash,
         pool_singleton_struct,
         quorum_bps,
         voting_window_seconds,
-        pgt_total_supply,
+        sgt_total_supply,
         min_proposal_stake,
         proposal_hash,
         bill_operation,
@@ -367,7 +367,7 @@ def bill_vault_version(
     new_canonical_params_hash: bytes32,
     new_vault_version: int,
 ) -> Program:
-    """VAULT_VERSION bill: PGT quorum ratifies a vault-version registry CODE change.
+    """VAULT_VERSION bill: SGT quorum ratifies a vault-version registry CODE change.
 
     The bill carries the next registry state ``(code, params, version)`` so the
     proposal hash (``sha256tree(bill)``) binds it at PROPOSE time and the
@@ -497,16 +497,16 @@ def build_tracker_vote_coin_spend(
     active proposal whose ``PROPOSAL_HASH``, ``BILL_OPERATION``, ``VOTE_TALLY``,
     and ``VOTING_DEADLINE`` are non-zero.  VOTE increases ``VOTE_TALLY`` by
     ``additional_vote_amount`` and recreates the tracker singleton in its new
-    OPEN state.  The spend asserts the PGT lock announcement for
+    OPEN state.  The spend asserts the SGT lock announcement for
     ``(voter_inner_puzzle_hash, PROPOSAL_HASH, additional_vote_amount,
-    VOTING_DEADLINE)``, so the co-spent PGT free coin MUST emit that exact
-    announcement (see :func:`build_pgt_lock_coin_spend`).
+    VOTING_DEADLINE)``, so the co-spent SGT free coin MUST emit that exact
+    announcement (see :func:`build_sgt_lock_coin_spend`).
 
     The inner solution shape mirrors ``governance_singleton_inner.clsp``'s
     dispatcher: ``(my_id my_inner_puzzlehash my_amount TRK_VOTE
     (voter_inner_puzhash additional_vote_amount))``.
 
-    The two amount values (``additional_vote_amount`` here and the PGT lock
+    The two amount values (``additional_vote_amount`` here and the SGT lock
     ``my_amount``) MUST match — the on-chain announcement-id pairing enforces
     this.
 
@@ -516,14 +516,14 @@ def build_tracker_vote_coin_spend(
         tracker_launcher_id: The tracker singleton's launcher id.
         lineage_proof: The lineage proof of ``tracker_coin``'s parent.
         voter_inner_puzzle_hash: The voter's inner puzzle hash — MUST match
-            the PGT free coin's owner curry (so the LOCK announcement is
-            produced by that user's PGT coin and not somebody else's).
-        additional_vote_amount: The PGT mojos being locked to add weight to
-            the proposal.  MUST be > 0 and MUST equal the co-spent PGT free
+            the SGT free coin's owner curry (so the LOCK announcement is
+            produced by that user's SGT coin and not somebody else's).
+        additional_vote_amount: The SGT mojos being locked to add weight to
+            the proposal.  MUST be > 0 and MUST equal the co-spent SGT free
             coin's amount (LOCK is a full-coin operation).
 
     Returns:
-        A ``CoinSpend`` ready to bundle with the matching PGT lock spend and
+        A ``CoinSpend`` ready to bundle with the matching SGT lock spend and
         push through the mempool.
     """
     if len(voter_inner_puzzle_hash) != 32:
@@ -546,56 +546,56 @@ def build_tracker_vote_coin_spend(
     return make_spend(tracker_coin, full_puzzle, full_solution)
 
 
-# ── PGT LOCK coin spend (CAT2-wrapped pgt_free_inner) ────────────────────────
-def build_pgt_lock_coin_spend(
+# ── SGT LOCK coin spend (CAT2-wrapped sgt_free_inner) ────────────────────────
+def build_sgt_lock_coin_spend(
     *,
-    pgt_coin: Coin,
+    sgt_coin: Coin,
     voter_inner_puzzle: Program,
     voter_inner_solution: Program,
     proposal_tracker_struct: Program,
-    pgt_tail_hash: bytes32,
+    sgt_tail_hash: bytes32,
     lineage_proof: LineageProof,
     proposal_hash: bytes32,
     deadline: int,
 ) -> CoinSpend:
-    """CAT2-wrapped pgt_free_inner LOCK CoinSpend.
+    """CAT2-wrapped sgt_free_inner LOCK CoinSpend.
 
-    Builds the on-chain spend of a free PGT coin owned by ``voter_inner_puzzle``
-    that locks ``pgt_coin.amount`` PGT mojos to ``proposal_hash`` until
+    Builds the on-chain spend of a free SGT coin owned by ``voter_inner_puzzle``
+    that locks ``sgt_coin.amount`` SGT mojos to ``proposal_hash`` until
     ``deadline`` (absolute seconds).  The spend emits the LOCK announcement
     the governance tracker's PROPOSE/VOTE handler asserts.
 
     The voter's ``voter_inner_puzzle`` retains full authority over what the
     LOCK destination looks like — the only constraint is that running it on
     ``voter_inner_solution`` must yield a single ``CREATE_COIN`` whose
-    puzzle hash equals the canonical ``pgt_locked_inner`` puzhash for
+    puzzle hash equals the canonical ``sgt_locked_inner`` puzhash for
     ``(proposal_tracker_struct, voter_inner_puzzle_hash, proposal_hash,
-    deadline)`` and whose amount equals ``pgt_coin.amount``.  Any other
+    deadline)`` and whose amount equals ``sgt_coin.amount``.  Any other
     inner conditions (e.g. ``AGG_SIG_ME`` for the wallet's signature) pass
     through unchanged.
 
     LOCK is a full-coin operation: ``extra_delta = 0`` so the CAT2
     conservation invariant holds without melting supply.  Callers that want
-    to lock less than their full PGT coin must split it first via a
+    to lock less than their full SGT coin must split it first via a
     TRANSFER spend.
 
     Args:
-        pgt_coin: The free PGT coin to lock.  Its puzzle hash MUST equal
-            ``cat_pgt_free_puzzle_hash(...)`` with the same
-            ``proposal_tracker_struct``, ``pgt_tail_hash``, and
+        sgt_coin: The free SGT coin to lock.  Its puzzle hash MUST equal
+            ``cat_sgt_free_puzzle_hash(...)`` with the same
+            ``proposal_tracker_struct``, ``sgt_tail_hash``, and
             ``voter_inner_puzzle.get_tree_hash()``.
-        voter_inner_puzzle: The reveal of the PGT owner's inner puzzle
+        voter_inner_puzzle: The reveal of the SGT owner's inner puzzle
             (e.g. ``p2_delegated_puzzle_or_hidden_puzzle``).  Its tree hash
-            MUST equal the ``INNER_PUZZLE_HASH`` curried into the PGT free
-            inner that produced ``pgt_coin``.
+            MUST equal the ``INNER_PUZZLE_HASH`` curried into the SGT free
+            inner that produced ``sgt_coin``.
         voter_inner_solution: The owner's signed inner solution.  It must
             yield exactly one ``CREATE_COIN`` to the canonical locked
-            puzhash with ``amount == pgt_coin.amount``.
+            puzhash with ``amount == sgt_coin.amount``.
         proposal_tracker_struct: Singleton struct of the governance tracker
-            (same one curried into the PGT inner mods).
-        pgt_tail_hash: Tree hash of the curried PGT TAIL (CAT2's
+            (same one curried into the SGT inner mods).
+        sgt_tail_hash: Tree hash of the curried SGT TAIL (CAT2's
             ``limitations_program_hash``).
-        lineage_proof: Lineage proof of the PGT coin's parent (so the CAT2
+        lineage_proof: Lineage proof of the SGT coin's parent (so the CAT2
             outer can verify the lineage chain back to the issuance).
         proposal_hash: 32-byte ``sha256tree(bill_operation)`` of the open
             proposal we're voting on.
@@ -605,7 +605,7 @@ def build_pgt_lock_coin_spend(
             block's timestamp must be strictly less than ``deadline``.
 
     Returns:
-        A single ``CoinSpend`` (the CAT2-wrapped PGT free coin spend).  The
+        A single ``CoinSpend`` (the CAT2-wrapped SGT free coin spend).  The
         caller bundles this with the matching tracker PROPOSE/VOTE spend
         and any lineage-providing parent spends, then asks the wallet to
         sign for the inner ``AGG_SIG_ME`` conditions and pushes the bundle.
@@ -615,27 +615,27 @@ def build_pgt_lock_coin_spend(
     if not isinstance(deadline, int) or deadline < 0 or deadline > 0xFFFFFFFFFFFFFFFF:
         raise ValueError("deadline must be a uint64")
 
-    pgt_locked_mod_h = bytes32(pgt_locked_inner_mod().get_tree_hash())
+    sgt_locked_mod_h = bytes32(sgt_locked_inner_mod().get_tree_hash())
     voter_inner_ph = bytes32(voter_inner_puzzle.get_tree_hash())
-    free_inner = pgt_free_inner_puzzle(
-        pgt_locked_mod_h, proposal_tracker_struct, voter_inner_ph
+    free_inner = sgt_free_inner_puzzle(
+        sgt_locked_mod_h, proposal_tracker_struct, voter_inner_ph
     )
 
-    # pgt_free_inner solution shape:
+    # sgt_free_inner solution shape:
     #   (spend_case inner_puzzle inner_solution case_args)
     # case_args for LOCK: (proposal_hash deadline my_amount)
     free_inner_solution = Program.to(
         [
-            PGT_LOCK,
+            SGT_LOCK,
             voter_inner_puzzle,
             voter_inner_solution,
-            [proposal_hash, deadline, pgt_coin.amount],
+            [proposal_hash, deadline, sgt_coin.amount],
         ]
     )
 
     spendable = SpendableCAT(
-        coin=pgt_coin,
-        limitations_program_hash=pgt_tail_hash,
+        coin=sgt_coin,
+        limitations_program_hash=sgt_tail_hash,
         inner_puzzle=free_inner,
         inner_solution=free_inner_solution,
         lineage_proof=lineage_proof,
@@ -650,28 +650,28 @@ def build_pgt_lock_coin_spend(
     return bundle.coin_spends[0]
 
 
-# ── CAT-wrapped PGT helpers (for tests / drivers building announcements) ─────
-def cat_pgt_free_puzzle_hash(
+# ── CAT-wrapped SGT helpers (for tests / drivers building announcements) ─────
+def cat_sgt_free_puzzle_hash(
     singleton_struct: Program,
-    pgt_free_mod_hash: bytes32,
-    pgt_locked_mod_hash: bytes32,
+    sgt_free_mod_hash: bytes32,
+    sgt_locked_mod_hash: bytes32,
     cat_mod_hash: bytes32,
-    pgt_tail_hash: bytes32,
+    sgt_tail_hash: bytes32,
     voter_inner_puzzle_hash: bytes32,
 ) -> bytes32:
-    """Compute the on-chain puzzle hash of a CAT-wrapped PGT free coin owned
+    """Compute the on-chain puzzle hash of a CAT-wrapped SGT free coin owned
     by the given voter.  This is the announcement sender id used by the
     proposal tracker when asserting LOCK announcements.
 
     Mirrors the CLVM `curry_hashes` chain in governance_singleton_inner's
-    `cat_pgt_free_puzhash` helper:
+    `cat_sgt_free_puzhash` helper:
 
         curry_hashes(CAT_MOD_HASH,
             sha256(1, CAT_MOD_HASH),
-            sha256(1, PGT_TAIL_HASH),
-            curry_hashes(PGT_FREE_MOD_HASH,
-                sha256(1, PGT_FREE_MOD_HASH),
-                sha256(1, PGT_LOCKED_MOD_HASH),
+            sha256(1, SGT_TAIL_HASH),
+            curry_hashes(SGT_FREE_MOD_HASH,
+                sha256(1, SGT_FREE_MOD_HASH),
+                sha256(1, SGT_LOCKED_MOD_HASH),
                 sha256tree(SINGLETON_STRUCT),
                 sha256(1, voter_inner_puzhash)))
 
@@ -732,12 +732,12 @@ def cat_pgt_free_puzzle_hash(
             hashlib.sha256(two_sha256_one_a_kw + hash_expression_F(mod_hash, env_hash)).digest()
         )
 
-    # Inner: curry(PGT_FREE_MOD, PGT_FREE_MOD_HASH, PGT_LOCKED_MOD_HASH,
+    # Inner: curry(SGT_FREE_MOD, SGT_FREE_MOD_HASH, SGT_LOCKED_MOD_HASH,
     #              SINGLETON_STRUCT, voter_inner_puzhash)
-    pgt_free_h = curry_hashes(
-        pgt_free_mod_hash,
-        sha256_pre(pgt_free_mod_hash),
-        sha256_pre(pgt_locked_mod_hash),
+    sgt_free_h = curry_hashes(
+        sgt_free_mod_hash,
+        sha256_pre(sgt_free_mod_hash),
+        sha256_pre(sgt_locked_mod_hash),
         sha256tree(singleton_struct),
         sha256_pre(voter_inner_puzzle_hash),
     )
@@ -746,8 +746,8 @@ def cat_pgt_free_puzzle_hash(
     return curry_hashes(
         cat_mod_hash,
         sha256_pre(cat_mod_hash),
-        sha256_pre(pgt_tail_hash),
-        pgt_free_h,
+        sha256_pre(sgt_tail_hash),
+        sgt_free_h,
     )
 
 

@@ -2,7 +2,7 @@
 
 These reproduce the constants + hash construction logic from
 ``chia-wallet-sdk``'s ``P2Eip712MessageLayer`` (Rust) so off-chain
-clients (the Populis API, the launch wizard) can:
+clients (the Solslot API, the launch wizard) can:
 
   * Compute the 34-byte ``PREFIX_AND_DOMAIN_SEPARATOR`` curried into
     ``Eip712Member`` (depends on the chain's genesis challenge).
@@ -27,7 +27,7 @@ The matching Rust source is:
 ``prefix_and_domain_separator``, ``type_hash``).
 
 Tests pinning this module to the Rust implementation live in
-``populis_protocol/tests/test_admin_authority_v2.py::TestEip712MemberIntegration``.
+``solslot-protocol/tests/test_admin_authority_v2.py::TestEip712MemberIntegration``.
 """
 from __future__ import annotations
 
@@ -43,7 +43,7 @@ from chia_rs.sized_bytes import bytes32
 #
 # The EIP-712 domain separator binds to the Chia genesis challenge so
 # signatures cannot be replayed across networks.  Operators select the
-# right value based on POPULIS_NETWORK env.
+# right value based on SOLSLOT_NETWORK env.
 # ──────────────────────────────────────────────────────────────────────
 
 MAINNET_GENESIS_CHALLENGE: bytes32 = bytes32.fromhex(
@@ -56,7 +56,7 @@ TESTNET11_GENESIS_CHALLENGE: bytes32 = bytes32.fromhex(
 
 
 def genesis_challenge_for_network(network: str) -> bytes32:
-    """Map a Populis network name to the corresponding genesis challenge.
+    """Map a Solslot network name to the corresponding genesis challenge.
 
     Raises ValueError for unsupported networks so misconfigured
     deployments fail loud rather than silently using the wrong
@@ -156,7 +156,7 @@ def _eip712_member_puzzle() -> Program:
 
     Sourced from ``solslot_puzzles.test_fixture_eip712_member.clsp``
     which is a verbatim copy of the upstream chia-wallet-sdk PR #395
-    puzzle (see populis_protocol's test suite for the cross-check that
+    puzzle (see solslot-protocol's test suite for the cross-check that
     asserts byte-for-byte equality with the upstream).
 
     A future refactor will move this fixture out of "test_fixture_*"
@@ -243,7 +243,7 @@ def compute_eip712_member_leaf_hash(
 
     This is the value that lives in an admin record's ``leaves`` tuple
     and gets folded into the on-chain ``ADMINS_HASH``.  Callers (the
-    Populis API at boot time, the launch wizard at admin-records-
+    Solslot API at boot time, the launch wizard at admin-records-
     generation time) use this to verify their off-chain admin records
     JSON binds correctly to the on-chain singleton state.
 

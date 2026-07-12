@@ -22,7 +22,7 @@ GOV_LAUNCHER_ID = bytes32(b"\xab" * 32)
 GOV_SINGLETON_STRUCT = Program.to((SINGLETON_MOD_HASH, (GOV_LAUNCHER_ID, LAUNCHER_PUZZLE_HASH)))
 
 # Protocol prefix
-PROTOCOL_PREFIX = b"\x50"
+PROTOCOL_PREFIX = b"\x53"
 
 
 def curry_quorum_did() -> Program:

@@ -19,7 +19,7 @@ from solslot_puzzles.settlement_splitxch import (
 )
 
 
-PROTOCOL_PREFIX = b"\x50"
+PROTOCOL_PREFIX = b"\x53"
 
 ASSERT_COIN_ANNOUNCEMENT = 61
 CREATE_COIN = 51

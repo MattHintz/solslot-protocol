@@ -1,5 +1,5 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;; Quorum-gated DID inner puzzle for Populis Protocol.
+;;; Quorum-gated DID inner puzzle for Solslot Protocol.
 ;;; This puzzle replaces the standard DID inner puzzle so that the protocol
 ;;; DID can only produce announcements when governance has reached quorum.
 ;;;

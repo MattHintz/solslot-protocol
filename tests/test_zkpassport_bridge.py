@@ -37,7 +37,7 @@ from solslot_puzzles.zkpassport_bridge_driver import (
 OP_AGG_SIG_ME = bytes([50])
 OP_CREATE_COIN_ANN = bytes([60])
 OP_ASSERT_COIN_ANN = bytes([61])
-PROTOCOL_PREFIX = b"\x50"
+PROTOCOL_PREFIX = b"\x53"
 
 VALIDATOR_A = b"\x11" * 48
 VALIDATOR_B = b"\x22" * 48

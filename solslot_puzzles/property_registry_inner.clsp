@@ -1,6 +1,6 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Property Registry Singleton (A.4) — uniqueness-enforced on-chain log of
-;;; registered Populis property identifiers.
+;;; registered Solslot property identifiers.
 ;;;
 ;;; Replaces the off-chain ``MintProposalStore`` SQLite table's uniqueness
 ;;; role for the registry itself.  Each registration spend emits a permanent
@@ -136,7 +136,7 @@
     (= REGISTERED_IDS_ROOT (sha256tree registered_ids))
     (= REGISTRY_VERSION (count-list registered_ids))
     (not (atom-in-list property_id_canon registered_ids))
-    ;; BLS G1 pubkey size guard (POP-CANON-018).
+    ;; BLS G1 pubkey size guard (V1-CANON-018).
     (is-size-bls-g1 GOV_PUBKEY)
     ;; Version bumps by EXACTLY 1.  This makes new_registry_version
     ;; double as the "registration index" — useful for off-chain

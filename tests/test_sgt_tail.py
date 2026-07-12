@@ -1,8 +1,8 @@
-"""Unit tests for pgt_tail.clsp — the Populis Governance Token CAT2 TAIL.
+"""Unit tests for sgt_tail.clsp — the Solslot Governance Token CAT2 TAIL.
 
 The TAIL is the standard chia genesis-by-coin-id pattern: it admits a CAT
 spend only when delta == 0 AND the spent coin's parent matches the curried
-GENESIS_COIN_ID.  Total PGT supply is therefore fixed at whatever is minted
+GENESIS_COIN_ID.  Total SGT supply is therefore fixed at whatever is minted
 in the single bundle that spends the genesis coin (a Chia consensus rule
 forbids respending the genesis coin, so no further issuance is possible).
 
@@ -17,10 +17,10 @@ import pytest
 from chia.types.blockchain_format.program import Program
 from chia_rs.sized_bytes import bytes32
 
-from solslot_puzzles.pgt_driver import (
+from solslot_puzzles.sgt_driver import (
     make_cat_truths,
-    pgt_tail_hash,
-    pgt_tail_puzzle,
+    sgt_tail_hash,
+    sgt_tail_puzzle,
 )
 
 
@@ -54,7 +54,7 @@ def _truths(parent: bytes32, tail_hash: bytes32) -> Program:
 
 
 def _run_tail(curried: Program, truths: Program, delta: int = 0) -> Program:
-    """Invoke the curried PGT TAIL with the standard chia TAIL solution shape.
+    """Invoke the curried SGT TAIL with the standard chia TAIL solution shape.
 
     Solution: (Truths parent_is_cat lineage_proof delta inner_conditions tail_solution)
     """
@@ -62,10 +62,10 @@ def _run_tail(curried: Program, truths: Program, delta: int = 0) -> Program:
     return curried.run(solution)
 
 
-class TestPgtTailGenesisIssuance:
+class TestSgtTailGenesisIssuance:
     def test_genesis_match_delta_zero_returns_empty(self):
         """Genesis spend (parent matches, delta == 0) succeeds with no extra conditions."""
-        curried = pgt_tail_puzzle(GENESIS_COIN_ID)
+        curried = sgt_tail_puzzle(GENESIS_COIN_ID)
         tail_h = curried.get_tree_hash()
         truths = _truths(GENESIS_COIN_ID, tail_h)
 
@@ -76,7 +76,7 @@ class TestPgtTailGenesisIssuance:
 
     def test_wrong_parent_rejected(self):
         """A CAT coin not descended from the curried genesis cannot pass the TAIL."""
-        curried = pgt_tail_puzzle(GENESIS_COIN_ID)
+        curried = sgt_tail_puzzle(GENESIS_COIN_ID)
         tail_h = curried.get_tree_hash()
         truths = _truths(WRONG_PARENT_ID, tail_h)
 
@@ -84,11 +84,11 @@ class TestPgtTailGenesisIssuance:
             _run_tail(curried, truths, delta=0)
 
 
-class TestPgtTailFixedSupply:
+class TestSgtTailFixedSupply:
     @pytest.mark.parametrize("delta", [1, -1, 100, -100, 1_000_000])
     def test_nonzero_delta_always_rejected(self, delta: int):
         """Any non-zero delta (mint or melt) fails — supply is permanently capped."""
-        curried = pgt_tail_puzzle(GENESIS_COIN_ID)
+        curried = sgt_tail_puzzle(GENESIS_COIN_ID)
         tail_h = curried.get_tree_hash()
         truths = _truths(GENESIS_COIN_ID, tail_h)
 
@@ -97,7 +97,7 @@ class TestPgtTailFixedSupply:
 
     def test_nonzero_delta_rejected_even_with_wrong_parent(self):
         """The non-zero-delta guard runs first; parent check is moot."""
-        curried = pgt_tail_puzzle(GENESIS_COIN_ID)
+        curried = sgt_tail_puzzle(GENESIS_COIN_ID)
         tail_h = curried.get_tree_hash()
         truths = _truths(WRONG_PARENT_ID, tail_h)
 
@@ -105,22 +105,22 @@ class TestPgtTailFixedSupply:
             _run_tail(curried, truths, delta=42)
 
 
-class TestPgtTailHashing:
+class TestSgtTailHashing:
     def test_tail_hash_is_deterministic(self):
         """Two callers currying the same genesis coin id must derive the same tail hash."""
-        a = pgt_tail_hash(GENESIS_COIN_ID)
-        b = pgt_tail_hash(GENESIS_COIN_ID)
+        a = sgt_tail_hash(GENESIS_COIN_ID)
+        b = sgt_tail_hash(GENESIS_COIN_ID)
         assert a == b
         assert isinstance(a, bytes) and len(a) == 32
 
     def test_tail_hash_changes_with_genesis(self):
-        """Different genesis coins produce distinct PGT instances (separate currencies)."""
-        a = pgt_tail_hash(GENESIS_COIN_ID)
-        b = pgt_tail_hash(WRONG_PARENT_ID)
+        """Different genesis coins produce distinct SGT instances (separate currencies)."""
+        a = sgt_tail_hash(GENESIS_COIN_ID)
+        b = sgt_tail_hash(WRONG_PARENT_ID)
         assert a != b
 
     def test_genesis_coin_id_must_be_32_bytes(self):
         with pytest.raises(ValueError):
-            pgt_tail_puzzle(b"\x00" * 31)
+            sgt_tail_puzzle(b"\x00" * 31)
         with pytest.raises(ValueError):
-            pgt_tail_puzzle(b"\x00" * 33)
+            sgt_tail_puzzle(b"\x00" * 33)

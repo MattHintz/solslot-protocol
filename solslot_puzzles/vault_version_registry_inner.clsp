@@ -1,10 +1,10 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;; Vault Version Registry singleton — Populis canonical vault version, on-chain.
+;;; Vault Version Registry singleton — Solslot canonical vault version, on-chain.
 ;;;
 ;;; Publishes the current canonical vault descriptor so any client can detect
 ;;; that a user's vault is outdated and offer a one-click upgrade, fully
 ;;; decentralized with no backend.  See
-;;; research/POPULIS_VAULT_UPGRADE_DESIGN.md.
+;;; research/SOLSLOT_VAULT_UPGRADE_DESIGN.md.
 ;;;
 ;;; State (recurried each publish):
 ;;;   VAULT_INNER_MOD_HASH   — tree hash of the canonical vault_singleton_inner
@@ -17,7 +17,7 @@
 ;;; of its own and is never singly centralized by construction:
 ;;;   ADMIN_AUTHORITY_LAUNCHER_ID — admin_authority_v2 quorum authorizes the
 ;;;                                 params-only FAST-TRACK path.
-;;;   GOVERNANCE_LAUNCHER_ID      — PGT proposal tracker authorizes the
+;;;   GOVERNANCE_LAUNCHER_ID      — SGT proposal tracker authorizes the
 ;;;                                 code-change ROUTINE path.
 ;;;
 ;;; Tiered governance (design doc "Governance model"): the tier is an OBJECTIVE
@@ -27,7 +27,7 @@
 ;;;     unchanged).  A code change through the fast path is rejected by
 ;;;     consensus.  Authorized by the admin_authority_v2 quorum.
 ;;;   * SPEND_CODE_ROUTINE (2): VAULT_INNER_MOD_HASH may change (new vault
-;;;     logic / features).  Authorized by the PGT proposal tracker's EXECUTE
+;;;     logic / features).  Authorized by the SGT proposal tracker's EXECUTE
 ;;;     (staked-token ratification).
 ;;;
 ;;; Authorization is bound by asserting a PUZZLE_ANNOUNCEMENT from the
@@ -218,7 +218,7 @@
       (if (= spend_case SPEND_CODE_ROUTINE)
         ;; ── Code-change routine ────────────────────────────────────────
         ;; VAULT_INNER_MOD_HASH may change (new vault logic / features).
-        ;; Authorized by the PGT proposal tracker's EXECUTE (staked-token
+        ;; Authorized by the SGT proposal tracker's EXECUTE (staked-token
         ;; ratification).
         (publish-conditions SELF_MOD_HASH SINGLETON_MOD_HASH LAUNCHER_PUZZLE_HASH
           ADMIN_AUTHORITY_LAUNCHER_ID GOVERNANCE_LAUNCHER_ID

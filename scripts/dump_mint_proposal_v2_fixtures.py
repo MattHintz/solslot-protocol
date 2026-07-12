@@ -8,7 +8,7 @@ produces byte-identical hashes for the same inputs.
 
 Usage::
 
-    cd populis_protocol
+    cd solslot-protocol
     .venv/bin/python scripts/dump_mint_proposal_v2_fixtures.py
 
 The fixture is also exported by the regression test in
@@ -52,7 +52,7 @@ def build_fixture() -> dict[str, Any]:
         new_state_version, proposal_data_hash).  Cases for each
         transition / version combination.
       * ``transition_message`` \u2014 sha256tree of (transition_case,
-        new_state, new_state_version).  Wire-compatible with V1.
+        new_state, new_state_version). Canonical for Solslot V2.
       * ``inner_puzzle_hash`` \u2014 tree hash of the curried inner.
         Cases vary each curry slot to catch a TS port getting the
         order wrong.
@@ -310,7 +310,7 @@ def fixture_destination() -> Path:
     repo_root = Path(__file__).resolve().parents[2]
     return (
         repo_root
-        / "populis_portal"
+        / "solslot-portal"
         / "src"
         / "app"
         / "services"

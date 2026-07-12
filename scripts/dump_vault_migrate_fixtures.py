@@ -2,7 +2,7 @@
 
 The TS service ``vault-migrate-spend.service.ts`` reproduces the on-chain
 deed migration half of a one-click vault upgrade
-(``research/POPULIS_VAULT_UPGRADE_DESIGN.md``).  A deed (an NFT singleton
+(``research/SOLSLOT_VAULT_UPGRADE_DESIGN.md``).  A deed (an NFT singleton
 whose inner puzzle is ``p2_vault`` curried to the OLD vault's launcher) is
 re-bound to a NEW vault by co-spending:
 

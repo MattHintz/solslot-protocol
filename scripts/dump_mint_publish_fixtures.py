@@ -15,7 +15,7 @@ This script writes:
 The fixture is re-checked on every PR by
 :mod:`tests.test_mint_publish_fixtures` (this file's currency guard).
 
-Unlike the Phase 3 PGT VOTE fixture, mint-publish does not bundle any
+Unlike the Phase 3 SGT VOTE fixture, mint-publish does not bundle any
 puzzle-hex file: every puzzle the portal needs to re-curry
 (``smart_deed_inner``, ``mint_offer_delegate``,
 ``singleton_launcher_with_did``, ``mint_proposal_inner_v2``) is already
@@ -54,16 +54,16 @@ from solslot_puzzles.mint_publish_driver import (
     BILL_MINT_TAG,
     SINGLETON_AMOUNT,
     build_mint_publish_artifacts,
-    build_pgt_first_vote_coin_spend,
+    build_sgt_first_vote_coin_spend,
     build_proposal_eve_launch_spend,
     build_tracker_propose_coin_spend,
     canonical_p2_pool_mod_hash,
 )
-from solslot_puzzles.pgt_driver import (
-    cat_pgt_free_puzzle_hash,
-    pgt_free_inner_mod,
-    pgt_locked_inner_hash,
-    pgt_locked_inner_mod,
+from solslot_puzzles.sgt_driver import (
+    cat_sgt_free_puzzle_hash,
+    sgt_free_inner_mod,
+    sgt_locked_inner_hash,
+    sgt_locked_inner_mod,
     proposal_tracker_inner_puzzle,
 )
 from solslot_puzzles.property_registry_driver import (
@@ -126,7 +126,7 @@ QUORUM_THRESHOLD = 5_000  # 50.00%
 
 # ─── Spend-bundle synthetic inputs (4d.1) ──────────────────────────────────
 # These pin the wallet-side inputs the publish runner would supply at runtime
-# (XCH parent coin, current tracker singleton, proposer PGT free coin, etc).
+# (XCH parent coin, current tracker singleton, proposer SGT free coin, etc).
 # Deterministic sentinels so the TS port produces byte-equal CoinSpends.
 
 # Wallet's XCH parent coin spent to spawn the Artifact A launcher.  Its
@@ -152,15 +152,15 @@ POOL_STRUCT = Program.to(
 )
 QUORUM_BPS = 5_000
 VOTING_WINDOW = 300
-PGT_TOTAL_SUPPLY = 1_000_000
+SGT_TOTAL_SUPPLY = 1_000_000
 MIN_PROPOSAL_STAKE = 10_000
 VOTING_DEADLINE = 2_000_000_000
 
-# PGT first-vote coin (proposer's CAT2-wrapped PGT free coin).
-PGT_TAIL_HASH = bytes32(b"\xea" * 32)
-PGT_PARENT_COIN_INFO = bytes32(b"\xfe" * 32)
-PGT_LINEAGE_PARENT_NAME = bytes32(b"\xdd" * 32)
-PGT_LINEAGE_INNER_PH = bytes32(b"\xee" * 32)
+# SGT first-vote coin (proposer's CAT2-wrapped SGT free coin).
+SGT_TAIL_HASH = bytes32(b"\xea" * 32)
+SGT_PARENT_COIN_INFO = bytes32(b"\xfe" * 32)
+SGT_LINEAGE_PARENT_NAME = bytes32(b"\xdd" * 32)
+SGT_LINEAGE_INNER_PH = bytes32(b"\xee" * 32)
 FIRST_VOTE_AMOUNT = 10_000  # equals MIN_PROPOSAL_STAKE
 
 # Property-registry registration co-spend.  The fixture uses a non-eve current
@@ -181,15 +181,15 @@ IDENTITY_HASH = bytes32(IDENTITY_INNER.get_tree_hash())
 def _idle_tracker_inner() -> Program:
     return proposal_tracker_inner_puzzle(
         TRACKER_STRUCT,
-        bytes32(pgt_free_inner_mod().get_tree_hash()),
-        bytes32(pgt_locked_inner_mod().get_tree_hash()),
+        bytes32(sgt_free_inner_mod().get_tree_hash()),
+        bytes32(sgt_locked_inner_mod().get_tree_hash()),
         bytes32(CAT_MOD.get_tree_hash()),
-        PGT_TAIL_HASH,
+        SGT_TAIL_HASH,
         GOV_DID_PUZHASH,
         POOL_STRUCT,
         QUORUM_BPS,
         VOTING_WINDOW,
-        PGT_TOTAL_SUPPLY,
+        SGT_TOTAL_SUPPLY,
         MIN_PROPOSAL_STAKE,
         proposal_hash=0,
         bill_operation=0,
@@ -298,8 +298,8 @@ def _build_spend_sections(artifacts: Any) -> dict[str, Any]:
     """Compute the spend-builder sections that 4d.2's TS port reads.
 
     Returns four top-level keys: ``proposal_eve_launch``, ``tracker_propose``,
-    ``pgt_first_vote``, and ``property_registry_registration``.  Each follows
-    Phase 3's ``pgt_lock`` / ``tracker_vote`` shape (``{inputs, expected}``) so
+    ``sgt_first_vote``, and ``property_registry_registration``.  Each follows
+    Phase 3's ``sgt_lock`` / ``tracker_vote`` shape (``{inputs, expected}``) so
     the TS Karma spec can iterate over them uniformly.
     """
     # ── 1. proposal_eve_launch (Artifact A) ──
@@ -347,39 +347,39 @@ def _build_spend_sections(artifacts: Any) -> dict[str, Any]:
         voting_deadline=VOTING_DEADLINE,
     )
 
-    # ── 3. pgt_first_vote (proposer's PGT lock) ──
-    pgt_free_mod_h = bytes32(pgt_free_inner_mod().get_tree_hash())
-    pgt_locked_mod_h = bytes32(pgt_locked_inner_mod().get_tree_hash())
+    # ── 3. sgt_first_vote (proposer's SGT lock) ──
+    sgt_free_mod_h = bytes32(sgt_free_inner_mod().get_tree_hash())
+    sgt_locked_mod_h = bytes32(sgt_locked_inner_mod().get_tree_hash())
     cat_mod_hash_b32 = bytes32(CAT_MOD.get_tree_hash())
-    pgt_ph = cat_pgt_free_puzzle_hash(
+    sgt_ph = cat_sgt_free_puzzle_hash(
         TRACKER_STRUCT,
-        pgt_free_mod_h,
-        pgt_locked_mod_h,
+        sgt_free_mod_h,
+        sgt_locked_mod_h,
         cat_mod_hash_b32,
-        PGT_TAIL_HASH,
+        SGT_TAIL_HASH,
         IDENTITY_HASH,
     )
-    pgt_coin = Coin(PGT_PARENT_COIN_INFO, pgt_ph, uint64(FIRST_VOTE_AMOUNT))
-    locked_ph = pgt_locked_inner_hash(
-        pgt_free_mod_h,
+    sgt_coin = Coin(SGT_PARENT_COIN_INFO, sgt_ph, uint64(FIRST_VOTE_AMOUNT))
+    locked_ph = sgt_locked_inner_hash(
+        sgt_free_mod_h,
         TRACKER_STRUCT,
         IDENTITY_HASH,
         artifacts.proposal_hash,
         VOTING_DEADLINE,
     )
     voter_inner_solution = Program.to([[51, locked_ph, FIRST_VOTE_AMOUNT]])
-    pgt_lineage_proof = LineageProof(
-        parent_name=PGT_LINEAGE_PARENT_NAME,
-        inner_puzzle_hash=PGT_LINEAGE_INNER_PH,
+    sgt_lineage_proof = LineageProof(
+        parent_name=SGT_LINEAGE_PARENT_NAME,
+        inner_puzzle_hash=SGT_LINEAGE_INNER_PH,
         amount=uint64(FIRST_VOTE_AMOUNT),
     )
-    pgt_lock_spend = build_pgt_first_vote_coin_spend(
-        pgt_coin=pgt_coin,
+    sgt_lock_spend = build_sgt_first_vote_coin_spend(
+        sgt_coin=sgt_coin,
         voter_inner_puzzle=IDENTITY_INNER,
         voter_inner_solution=voter_inner_solution,
         proposal_tracker_struct=TRACKER_STRUCT,
-        pgt_tail_hash=PGT_TAIL_HASH,
-        lineage_proof=pgt_lineage_proof,
+        sgt_tail_hash=SGT_TAIL_HASH,
+        lineage_proof=sgt_lineage_proof,
         proposal_hash=artifacts.proposal_hash,
         voting_deadline=VOTING_DEADLINE,
     )
@@ -467,23 +467,23 @@ def _build_spend_sections(artifacts: Any) -> dict[str, Any]:
                 "coin_spend_hex": _hex(bytes(tracker_propose_spend)),
             },
         },
-        "pgt_first_vote": {
+        "sgt_first_vote": {
             "inputs": {
-                "pgt_coin": _coin_dict(pgt_coin),
+                "sgt_coin": _coin_dict(sgt_coin),
                 "voter_inner_puzzle_hex": _hex(bytes(IDENTITY_INNER)),
                 "voter_inner_solution_hex": _hex(bytes(voter_inner_solution)),
                 "proposal_tracker_struct_hex": _hex(bytes(TRACKER_STRUCT)),
-                "pgt_tail_hash": _hex(PGT_TAIL_HASH),
-                "lineage_proof": _lineage_proof_dict(pgt_lineage_proof),
+                "sgt_tail_hash": _hex(SGT_TAIL_HASH),
+                "lineage_proof": _lineage_proof_dict(sgt_lineage_proof),
                 "proposal_hash": _hex(artifacts.proposal_hash),
                 "voting_deadline": VOTING_DEADLINE,
                 "expected_locked_puzhash": _hex(locked_ph),
             },
             "expected": {
-                "coin": _coin_dict(pgt_lock_spend.coin),
-                "puzzle_reveal_hex": _hex(bytes(pgt_lock_spend.puzzle_reveal)),
-                "solution_hex": _hex(bytes(pgt_lock_spend.solution)),
-                "coin_spend_hex": _hex(bytes(pgt_lock_spend)),
+                "coin": _coin_dict(sgt_lock_spend.coin),
+                "puzzle_reveal_hex": _hex(bytes(sgt_lock_spend.puzzle_reveal)),
+                "solution_hex": _hex(bytes(sgt_lock_spend.solution)),
+                "coin_spend_hex": _hex(bytes(sgt_lock_spend)),
             },
         },
         "property_registry_registration": {

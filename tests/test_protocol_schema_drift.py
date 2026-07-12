@@ -28,12 +28,12 @@ SCHEMA = json.loads(
 
 
 def test_mint_draft_schema_matches_api_and_portal() -> None:
-    api = _sibling("populis_api")
-    portal = _sibling("populis_portal")
+    api = _sibling("solslot-api")
+    portal = _sibling("solslot-portal")
     expected = SCHEMA["mint_publish"]["draft_fields"]
 
     api_request_fields = _python_class_annotations(
-        api / "populis_api" / "mint_endpoints.py",
+        api / "solslot_api" / "mint_endpoints.py",
         "ProposeMintRequest",
     )
     portal_request_fields = _ts_interface_fields(
@@ -46,16 +46,16 @@ def test_mint_draft_schema_matches_api_and_portal() -> None:
 
 
 def test_mint_publish_metadata_wire_shape_matches_api_and_portal() -> None:
-    api = _sibling("populis_api")
-    portal = _sibling("populis_portal")
+    api = _sibling("solslot-api")
+    portal = _sibling("solslot-portal")
     expected = SCHEMA["mint_publish"]["proposal_metadata_fields"]
 
     api_validation_fields = _python_class_annotations(
-        api / "populis_api" / "mint_publish_validation.py",
+        api / "solslot_api" / "mint_publish_validation.py",
         "PublishProposalMetadata",
     )
     api_request_fields = _python_class_annotations(
-        api / "populis_api" / "mint_endpoints.py",
+        api / "solslot_api" / "mint_endpoints.py",
         "PublishProposalMetadataRequest",
     )
     portal_wire_fields = _ts_interface_fields(
@@ -80,18 +80,18 @@ def test_mint_publish_metadata_wire_shape_matches_api_and_portal() -> None:
 
 
 def test_mint_publish_protocol_context_env_mapping_matches_api_and_portal() -> None:
-    api = _sibling("populis_api")
-    portal = _sibling("populis_portal")
+    api = _sibling("solslot-api")
+    portal = _sibling("solslot-portal")
     expected = SCHEMA["mint_publish"]["protocol_context"]
 
     api_env_pairs = _api_field_to_env_pairs(
-        api / "populis_api" / "mint_publish_validation.py"
+        api / "solslot_api" / "mint_publish_validation.py"
     )
     expected_pairs = [(item["api_setting"], item["api_env"]) for item in expected]
     assert api_env_pairs == expected_pairs
 
     api_settings = set(
-        _python_class_annotations(api / "populis_api" / "config.py", "Settings")
+        _python_class_annotations(api / "solslot_api" / "config.py", "Settings")
     )
     for item in expected:
         assert item["api_setting"] in api_settings
@@ -100,13 +100,13 @@ def test_mint_publish_protocol_context_env_mapping_matches_api_and_portal() -> N
         portal / "src" / "environments" / "environment.ts",
         portal / "src" / "environments" / "environment.prod.ts",
     ]:
-        portal_keys = _portal_populis_protocol_keys(env_path)
+        portal_keys = _portal_solslot_protocol_keys(env_path)
         for item in expected:
             assert item["portal_key"] in portal_keys
 
 
 def test_property_id_and_asset_class_contract_matches_protocol_and_portal() -> None:
-    portal = _sibling("populis_portal")
+    portal = _sibling("solslot-portal")
     utils_path = portal / "src" / "app" / "utils" / "mint-property-id.ts"
     text = utils_path.read_text(encoding="utf-8")
 
@@ -121,11 +121,11 @@ def test_property_id_and_asset_class_contract_matches_protocol_and_portal() -> N
 
 
 def test_zkpassport_schema_matches_evm_and_portal() -> None:
-    evm = _sibling("populis_evm")
-    portal = _sibling("populis_portal")
+    evm = _sibling("solslot-evm")
+    portal = _sibling("solslot-portal")
     expected = SCHEMA["zkpassport"]
 
-    solidity = (evm / "contracts" / "PopulisZkPassportAttestationEmitter.sol").read_text(
+    solidity = (evm / "contracts" / "SolslotZkPassportAttestationEmitter.sol").read_text(
         encoding="utf-8"
     )
     assert _solidity_struct_fields(solidity, "VaultAttestation") == [
@@ -137,7 +137,7 @@ def test_zkpassport_schema_matches_evm_and_portal() -> None:
         for item in expected["vault_attestation_verified_event"]
     ]
     assert _solidity_constructor_fields(
-        solidity, "PopulisZkPassportAttestationEmitter"
+        solidity, "SolslotZkPassportAttestationEmitter"
     ) == [(item["name"], item["type"]) for item in expected["emitter_constructor"]]
     assert _solidity_validator_message_fields(solidity) == expected[
         "validator_message_fields"
@@ -163,12 +163,12 @@ def test_zkpassport_schema_matches_evm_and_portal() -> None:
 
 
 def test_mint_lifecycle_states_match_api_and_portal() -> None:
-    api = _sibling("populis_api")
-    portal = _sibling("populis_portal")
+    api = _sibling("solslot-api")
+    portal = _sibling("solslot-portal")
     expected = SCHEMA["state"]["mint_lifecycle_states"]
 
     assert _python_literal_assignment(
-        api / "populis_api" / "mint_proposals.py", "ALL_STATES"
+        api / "solslot_api" / "mint_proposals.py", "ALL_STATES"
     ) == tuple(expected)
     portal_states = _ts_union_literals(
         portal / "src" / "app" / "services" / "admin-api.service.ts",
@@ -256,14 +256,14 @@ def _ts_object_keys_after_type(path: Path, const_name: str, type_name: str) -> l
     return re.findall(r"^\s*([a-z_][a-z0-9_]*)\s*:", match.group("body"), re.MULTILINE)
 
 
-def _portal_populis_protocol_keys(path: Path) -> set[str]:
+def _portal_solslot_protocol_keys(path: Path) -> set[str]:
     lines = path.read_text(encoding="utf-8").splitlines()
     start = next(
-        (idx for idx, line in enumerate(lines) if re.match(r"\s*populisProtocol:\s*{", line)),
+        (idx for idx, line in enumerate(lines) if re.match(r"\s*solslotProtocol:\s*{", line)),
         None,
     )
     if start is None:
-        raise AssertionError(f"populisProtocol object not found in {path}")
+        raise AssertionError(f"solslotProtocol object not found in {path}")
     body: list[str] = []
     for line in lines[start + 1 :]:
         if re.match(r"\s{2}},?\s*$", line):

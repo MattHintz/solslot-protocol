@@ -2,7 +2,7 @@
 
 These pin the new module's outputs to the existing inline test
 helpers in ``test_admin_authority_v2.py`` (which were promoted to
-``eip712_helpers.py`` for cross-repo use by the Populis API + portal).
+``eip712_helpers.py`` for cross-repo use by the Solslot API + portal).
 
 If a value here drifts, the API and portal will hash admin records
 differently than the chain's view, silently breaking admin-desk
@@ -239,8 +239,8 @@ class TestComputeLeafHash:
         prefix = eip712_prefix_and_domain_separator(TESTNET11_GENESIS_CHALLENGE)
         type_hash = eip712_type_hash()
 
-        # Method 1: populis bytes-only helper.
-        populis_hash = compute_eip712_member_leaf_hash(
+        # Method 1: solslot bytes-only helper.
+        solslot_hash = compute_eip712_member_leaf_hash(
             secp256k1_pubkey=VALID_PUBKEY,
             prefix_and_domain_separator=prefix,
             type_hash=type_hash,
@@ -255,9 +255,9 @@ class TestComputeLeafHash:
             Program.to(VALID_PUBKEY).get_tree_hash(),
         )
 
-        assert populis_hash == chia_hash, (
-            f"populis bytes-only curry diverges from chia reference:\n"
-            f"  populis: 0x{populis_hash.hex()}\n"
+        assert solslot_hash == chia_hash, (
+            f"solslot bytes-only curry diverges from chia reference:\n"
+            f"  solslot: 0x{solslot_hash.hex()}\n"
             f"  chia:    0x{chia_hash.hex()}\n"
             f"This means admin-record leaf hashes won't match the actual "
             f"sha256tree of the curried Eip712Member puzzle and the "

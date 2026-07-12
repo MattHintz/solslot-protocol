@@ -1,6 +1,6 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;
-;; Per-user vault singleton for Populis Protocol.
+;; Per-user vault singleton for Solslot Protocol.
 ;; Adapted for pool interactions.
 ;;
 ;; Spend cases:
@@ -11,7 +11,7 @@
 ;;        redeploying the launcher; requires current key membership proof
 ;; 'm' - migrate a deed to a new vault: re-bind a deed NFT (held at p2_vault)
 ;;        from this vault's launcher to a destination vault's p2_vault.  The
-;;        on-chain half of the vault upgrade flow (research/POPULIS_VAULT_UPGRADE_DESIGN.md);
+;;        on-chain half of the vault upgrade flow (research/SOLSLOT_VAULT_UPGRADE_DESIGN.md);
 ;;        BLS-only, owner-signed over the destination.
 ;;
 ;; Auth types (curried as AUTH_TYPE):
@@ -554,7 +554,7 @@
   ;; p2_vault curried to THIS vault's launcher id — to re-bind to a NEW vault by
   ;; spending the deed to `new_p2_vault_puzzlehash`, the p2_vault puzzle hash
   ;; curried to the destination vault's launcher id.  This is the on-chain half
-  ;; of the vault upgrade flow (research/POPULIS_VAULT_UPGRADE_DESIGN.md): the
+  ;; of the vault upgrade flow (research/SOLSLOT_VAULT_UPGRADE_DESIGN.md): the
   ;; user launches a new vault at the canonical version, then migrates each deed
   ;; from the old vault to the new one with one signed spend per deed.
   ;;

@@ -607,7 +607,7 @@
             (is-uint64 TREASURY_RESERVE_TOKENS)
             (gte TOTAL_POOL_TOKEN_SUPPLY TREASURY_RESERVE_TOKENS)
             (= (count_list deed_releases) DEED_COUNT)
-            ;; ── POP-CANON-019: reject duplicate deed_id in releases ───────
+            ;; ── V1-CANON-019: reject duplicate deed_id in releases ───────
             ;; Without this guard, a settlement orchestrator could submit
             ;; deed_releases = [(D1, ph1), (D1, ph1), (D2, ph2)] for a
             ;; 3-deed pool: length check passes, but the two D1 entries
@@ -742,7 +742,7 @@
                                               (compute_token_amount deed_par_value FP_SCALE)
                                               (list PROTOCOL_DID_PUZHASH)))))))
                     (c
-                        ;; ── POP-CANON-020: cross-coin announcement pairing ────
+                        ;; ── V1-CANON-020: cross-coin announcement pairing ────
                         ;; vault_singleton_inner.clsp::spend_accept_offer asserts a
                         ;; CREATE_PUZZLE_ANNOUNCEMENT from THIS coin with body
                         ;;
@@ -896,7 +896,7 @@
                         (c
                             ;; Verify pool-token payment fanout via Chia offer settlement:
                             ;; principal -> treasury reserve, 0.3% -> protocol treasury,
-                            ;; 0.7% -> PGT rewards puzzle with the claim root in memos.
+                            ;; 0.7% -> SGT rewards puzzle with the claim root in memos.
                             (list ASSERT_PUZZLE_ANNOUNCEMENT
                                 (sha256
                                     (cat_offer_puzzle_hash CAT_MOD_HASH TOKEN_TAIL_HASH OFFER_MOD_HASH)

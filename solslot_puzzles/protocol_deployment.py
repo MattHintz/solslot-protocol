@@ -3,14 +3,14 @@
 Given:
   - a faucet (BLS-keyed XCH wallet that pays for launchers)
   - 4 unspent faucet coins reserved for genesis/launcher spends
-  - protocol parameters (quorum, voting window, PGT supply, min stake)
+  - protocol parameters (quorum, voting window, SGT supply, min stake)
 
 Produces:
   - a deterministic ``ProtocolDeploymentPlan`` capturing every launcher id,
     full puzzle hash, mod hash, and curry-derived hash needed to wire the
     protocol together.
   - a single signed ``SpendBundle`` that, when pushed to chain in one block,
-    creates the entire protocol stack (PGT genesis + pool singleton + DID
+    creates the entire protocol stack (SGT genesis + pool singleton + DID
     singleton + governance tracker singleton).
 
 The deployment is designed to be **atomic at the bundle level**: either
@@ -26,7 +26,7 @@ knowable up-front.
 
 Deployment order (in one bundle):
 
-    Cpgt    --> CREATE_COIN(CAT2_PGT_FULL_PH, 1_000_000)  + change
+    Csgt    --> CREATE_COIN(CAT2_SGT_FULL_PH, 1_000_000)  + change
     Cpool   --> CREATE_COIN(SINGLETON_LAUNCHER_HASH, 1)   + change
                   pool_launcher --> CREATE_COIN(POOL_FULL_PH, 1)
     Cdid    --> CREATE_COIN(SINGLETON_LAUNCHER_HASH, 1)   + change
@@ -34,8 +34,8 @@ Deployment order (in one bundle):
     Cgov    --> CREATE_COIN(SINGLETON_LAUNCHER_HASH, 1)   + change
                   gov_launcher  --> CREATE_COIN(TRACKER_FULL_PH, 1)
 
-The PGT CAT2 coin uses standard genesis-by-coin-id issuance — the resulting
-CAT coin's parent is Cpgt, and the curried PGT TAIL accepts that parent.
+The SGT CAT2 coin uses standard genesis-by-coin-id issuance — the resulting
+CAT coin's parent is Csgt, and the curried SGT TAIL accepts that parent.
 No separate launcher needed (CAT2 doesn't use the singleton launcher).
 """
 from __future__ import annotations
@@ -64,12 +64,12 @@ from chia_rs import AugSchemeMPL, SpendBundle
 from chia_rs.sized_bytes import bytes32
 from chia_rs.sized_ints import uint64
 
-from solslot_puzzles.pgt_driver import (
-    SINGLETON_LAUNCHER_HASH as PGT_SINGLETON_LAUNCHER_HASH,
-    pgt_free_inner_mod,
-    pgt_locked_inner_mod,
-    pgt_tail_hash,
-    pgt_tail_puzzle,
+from solslot_puzzles.sgt_driver import (
+    SINGLETON_LAUNCHER_HASH as SGT_SINGLETON_LAUNCHER_HASH,
+    sgt_free_inner_mod,
+    sgt_locked_inner_mod,
+    sgt_tail_hash,
+    sgt_tail_puzzle,
     proposal_tracker_inner_puzzle,
     proposal_tracker_mod,
 )
@@ -77,22 +77,22 @@ from solslot_puzzles.collection_nav_registry_driver import collection_nav_regist
 
 
 # Sanity: the launcher hash constant must be identical across modules.
-assert SINGLETON_LAUNCHER_HASH == PGT_SINGLETON_LAUNCHER_HASH, (
-    "SINGLETON_LAUNCHER_HASH constant divergence — check pgt_driver vs chia"
+assert SINGLETON_LAUNCHER_HASH == SGT_SINGLETON_LAUNCHER_HASH, (
+    "SINGLETON_LAUNCHER_HASH constant divergence — check sgt_driver vs chia"
 )
 
 
 # ─── Protocol constants (defaults; tunable per deployment) ──────────────────
 DEFAULT_QUORUM_BPS = 5000              # 50%
 DEFAULT_VOTING_WINDOW_SECONDS = 300    # 5 min
-DEFAULT_PGT_TOTAL_SUPPLY = 1_000_000   # fixed 1M PGT
+DEFAULT_SGT_TOTAL_SUPPLY = 1_000_000   # fixed 1M SGT
 DEFAULT_MIN_PROPOSAL_STAKE = 10_000    # 1% of supply, anti-spam
 DEFAULT_FP_SCALE = 1000                # pool token-to-par exchange rate scale
 DEFAULT_MIN_NAV_REGISTRY_VERSION = 0   # deployment-governed NAV freshness floor
 SINGLETON_AMOUNT = uint64(1)
 DEFAULT_EMPTY_B32 = bytes32(b"\x00" * 32)
 DEFAULT_EMPTY_GOV_PUBKEY = b"\x00" * 48
-PROTOCOL_VERSION = "solslot-alpha-v2"
+PROTOCOL_VERSION = "solslot-v2"
 POOL_PUZZLE_VERSION = 3
 SMART_DEED_PUZZLE_VERSION = 2
 
@@ -275,14 +275,14 @@ def quorum_did_inner_puzzle(tracker_launcher_id: bytes32) -> Program:
     return _quorum_did_mod().curry(singleton_struct(tracker_launcher_id))
 
 
-def pgt_free_inner_puzzle_for_owner(
+def sgt_free_inner_puzzle_for_owner(
     tracker_launcher_id: bytes32,
     owner_inner_puzhash: bytes32,
 ) -> Program:
-    """Curry pgt_free_inner for a specific owner under the given tracker."""
-    free_mod = pgt_free_inner_mod()
+    """Curry sgt_free_inner for a specific owner under the given tracker."""
+    free_mod = sgt_free_inner_mod()
     free_mod_hash = bytes32(free_mod.get_tree_hash())
-    locked_mod_hash = bytes32(pgt_locked_inner_mod().get_tree_hash())
+    locked_mod_hash = bytes32(sgt_locked_inner_mod().get_tree_hash())
     return free_mod.curry(
         free_mod_hash,
         locked_mod_hash,
@@ -291,24 +291,24 @@ def pgt_free_inner_puzzle_for_owner(
     )
 
 
-def cat2_puzzle_hash_for_pgt(
+def cat2_puzzle_hash_for_sgt(
     tracker_launcher_id: bytes32,
-    pgt_genesis_coin_id: bytes32,
+    sgt_genesis_coin_id: bytes32,
     owner_inner_puzhash: bytes32,
 ) -> bytes32:
-    """Compute the on-chain CAT2-wrapped PGT puzzle hash for a given owner.
+    """Compute the on-chain CAT2-wrapped SGT puzzle hash for a given owner.
 
-    This is where 1M PGT lands on genesis: a CAT2 coin whose:
-      - outer is curry(CAT_MOD, CAT_MOD_HASH, PGT_TAIL_HASH, INNER)
-      - inner is pgt_free_inner curried with (mod_hash, locked_mod_hash,
+    This is where 1M SGT lands on genesis: a CAT2 coin whose:
+      - outer is curry(CAT_MOD, CAT_MOD_HASH, SGT_TAIL_HASH, INNER)
+      - inner is sgt_free_inner curried with (mod_hash, locked_mod_hash,
         tracker_struct, owner_inner_puzhash)
     """
     from chia.wallet.cat_wallet.cat_utils import construct_cat_puzzle, CAT_MOD
 
-    inner = pgt_free_inner_puzzle_for_owner(tracker_launcher_id, owner_inner_puzhash)
+    inner = sgt_free_inner_puzzle_for_owner(tracker_launcher_id, owner_inner_puzhash)
     cat_full = construct_cat_puzzle(
         CAT_MOD,
-        pgt_tail_hash(pgt_genesis_coin_id),
+        sgt_tail_hash(sgt_genesis_coin_id),
         inner,
     )
     return bytes32(cat_full.get_tree_hash())
@@ -321,7 +321,7 @@ class ProtocolDeploymentParams:
 
     quorum_bps: int = DEFAULT_QUORUM_BPS
     voting_window_seconds: int = DEFAULT_VOTING_WINDOW_SECONDS
-    pgt_total_supply: int = DEFAULT_PGT_TOTAL_SUPPLY
+    sgt_total_supply: int = DEFAULT_SGT_TOTAL_SUPPLY
     min_proposal_stake: int = DEFAULT_MIN_PROPOSAL_STAKE
     fp_scale: int = DEFAULT_FP_SCALE
     min_nav_registry_version: int = DEFAULT_MIN_NAV_REGISTRY_VERSION
@@ -342,9 +342,9 @@ class ProtocolDeploymentPlan:
     # ── Inputs (echoed for manifest persistence) ─────────────────────────
     network: str
     params: ProtocolDeploymentParams
-    faucet_inner_puzhash: bytes32  # where PGT change / token treasury lands
+    faucet_inner_puzhash: bytes32  # where SGT change / token treasury lands
 
-    pgt_genesis_coin_id: bytes32   # name of Cpgt
+    sgt_genesis_coin_id: bytes32   # name of Csgt
     pool_genesis_coin_id: bytes32  # name of Cpool
     did_genesis_coin_id: bytes32   # name of Cdid
     gov_genesis_coin_id: bytes32   # name of Cgov
@@ -369,8 +369,8 @@ class ProtocolDeploymentPlan:
     tracker_launcher_id: bytes32 = field(init=False)
 
     # ── Derived puzzle hashes ─────────────────────────────────────────────
-    pgt_tail_hash: bytes32 = field(init=False)
-    pgt_full_puzhash: bytes32 = field(init=False)        # CAT2(PGT) coin's puzhash
+    sgt_tail_hash: bytes32 = field(init=False)
+    sgt_full_puzhash: bytes32 = field(init=False)        # CAT2(SGT) coin's puzhash
 
     pool_token_tail_hash: bytes32 = field(init=False)
     pool_inner_mod_hash: bytes32 = field(init=False)
@@ -437,8 +437,8 @@ class ProtocolDeploymentPlan:
             singleton_struct(self.tracker_launcher_id).get_tree_hash()
         )
 
-        # Step 2: PGT TAIL hash from genesis coin id
-        self.pgt_tail_hash = bytes32(pgt_tail_hash(self.pgt_genesis_coin_id))
+        # Step 2: SGT TAIL hash from genesis coin id
+        self.sgt_tail_hash = bytes32(sgt_tail_hash(self.sgt_genesis_coin_id))
 
         # Step 3: pool token tail hash (depends only on pool launcher id)
         self.pool_token_tail_hash = pool_token_tail_hash(self.pool_launcher_id)
@@ -476,15 +476,15 @@ class ProtocolDeploymentPlan:
         # Step 6: tracker inner / full ph (depends on did_full_puzhash + pool struct)
         tracker_inner = proposal_tracker_inner_puzzle(
             singleton_struct(self.tracker_launcher_id),
-            bytes32(pgt_free_inner_mod().get_tree_hash()),
-            bytes32(pgt_locked_inner_mod().get_tree_hash()),
+            bytes32(sgt_free_inner_mod().get_tree_hash()),
+            bytes32(sgt_locked_inner_mod().get_tree_hash()),
             CAT_MOD_HASH,
-            self.pgt_tail_hash,
+            self.sgt_tail_hash,
             self.did_full_puzhash,
             singleton_struct(self.pool_launcher_id),
             self.params.quorum_bps,
             self.params.voting_window_seconds,
-            self.params.pgt_total_supply,
+            self.params.sgt_total_supply,
             self.params.min_proposal_stake,
         )
         self.tracker_inner_puzhash = bytes32(tracker_inner.get_tree_hash())
@@ -492,10 +492,10 @@ class ProtocolDeploymentPlan:
             self.tracker_launcher_id, self.tracker_inner_puzhash
         )
 
-        # Step 7: PGT CAT2 puzhash where the 1M genesis lands (faucet-owned)
-        self.pgt_full_puzhash = cat2_puzzle_hash_for_pgt(
+        # Step 7: SGT CAT2 puzhash where the 1M genesis lands (faucet-owned)
+        self.sgt_full_puzhash = cat2_puzzle_hash_for_sgt(
             self.tracker_launcher_id,
-            self.pgt_genesis_coin_id,
+            self.sgt_genesis_coin_id,
             self.faucet_inner_puzhash,
         )
 
@@ -517,7 +517,7 @@ def build_deployment_bundle(
     *,
     plan: ProtocolDeploymentPlan,
     faucet,                                   # Solslot API faucet implementation
-    pgt_coin: Coin,
+    sgt_coin: Coin,
     pool_coin: Coin,
     did_coin: Coin,
     gov_coin: Coin,
@@ -529,12 +529,12 @@ def build_deployment_bundle(
       - belong to the faucet (puzzle_hash == faucet.address_puzzle_hash)
       - have name() == the corresponding *_genesis_coin_id in `plan`
       - have amount ≥ (mint_target + fee)
-        where mint_target is 1_000_000 for pgt_coin and 1 for the others
+        where mint_target is 1_000_000 for sgt_coin and 1 for the others
 
     Returns the SpendBundle + the same plan (for downstream manifesting).
     """
-    if pgt_coin.name() != plan.pgt_genesis_coin_id:
-        raise ValueError("pgt_coin name does not match plan.pgt_genesis_coin_id")
+    if sgt_coin.name() != plan.sgt_genesis_coin_id:
+        raise ValueError("sgt_coin name does not match plan.sgt_genesis_coin_id")
     if pool_coin.name() != plan.pool_genesis_coin_id:
         raise ValueError("pool_coin name does not match plan.pool_genesis_coin_id")
     if did_coin.name() != plan.did_genesis_coin_id:
@@ -543,7 +543,7 @@ def build_deployment_bundle(
         raise ValueError("gov_coin name does not match plan.gov_genesis_coin_id")
 
     for coin, label in [
-        (pgt_coin, "pgt_coin"),
+        (sgt_coin, "sgt_coin"),
         (pool_coin, "pool_coin"),
         (did_coin, "did_coin"),
         (gov_coin, "gov_coin"),
@@ -555,11 +555,11 @@ def build_deployment_bundle(
 
     # Build each parent spend (faucet-funded).  Each emits one or two
     # CREATE_COIN conditions (target + change) plus optional fee.
-    pgt_spend, pgt_sig = _faucet_parent_spend(
+    sgt_spend, sgt_sig = _faucet_parent_spend(
         faucet=faucet,
-        coin=pgt_coin,
-        target_puzhash=plan.pgt_full_puzhash,
-        target_amount=plan.params.pgt_total_supply,
+        coin=sgt_coin,
+        target_puzhash=plan.sgt_full_puzhash,
+        target_amount=plan.params.sgt_total_supply,
         fee=fee_per_spend,
     )
     pool_parent, pool_parent_sig = _faucet_parent_spend(
@@ -608,12 +608,12 @@ def build_deployment_bundle(
 
     # Aggregate all four faucet signatures (the launchers don't need sigs).
     aggregated_sig = AugSchemeMPL.aggregate(
-        [pgt_sig, pool_parent_sig, did_parent_sig, gov_parent_sig]
+        [sgt_sig, pool_parent_sig, did_parent_sig, gov_parent_sig]
     )
 
     bundle = SpendBundle(
         coin_spends=[
-            pgt_spend,
+            sgt_spend,
             pool_parent,
             pool_launcher_spend,
             did_parent,
@@ -730,7 +730,7 @@ def plan_from_manifest_dict(data: dict[str, Any]) -> ProtocolDeploymentPlan:
         network=data["network"],
         params=params,
         faucet_inner_puzhash=_b32(data["faucet_inner_puzhash"]),
-        pgt_genesis_coin_id=_b32(data["pgt_genesis_coin_id"]),
+        sgt_genesis_coin_id=_b32(data["sgt_genesis_coin_id"]),
         pool_genesis_coin_id=_b32(data["pool_genesis_coin_id"]),
         did_genesis_coin_id=_b32(data["did_genesis_coin_id"]),
         gov_genesis_coin_id=_b32(data["gov_genesis_coin_id"]),
@@ -739,7 +739,7 @@ def plan_from_manifest_dict(data: dict[str, Any]) -> ProtocolDeploymentPlan:
     # Sanity: stored derived hashes should match recomputed values.
     for key in [
         "pool_launcher_id", "did_launcher_id", "tracker_launcher_id",
-        "pgt_tail_hash", "pgt_full_puzhash",
+        "sgt_tail_hash", "sgt_full_puzhash",
         "pool_token_tail_hash", "pool_inner_puzhash", "pool_full_puzhash",
         "pool_inner_mod_hash", "p2_pool_mod_hash", "smart_deed_inner_mod_hash",
         "governance_singleton_struct_hash",
@@ -792,10 +792,10 @@ def load_manifest_dict(path: Path) -> dict[str, Any]:
     required = {
         "network", "params", "protocol_version", "pool_puzzle_version",
         "smart_deed_puzzle_version", "faucet_inner_puzhash",
-        "pgt_genesis_coin_id", "pool_genesis_coin_id",
+        "sgt_genesis_coin_id", "pool_genesis_coin_id",
         "did_genesis_coin_id", "gov_genesis_coin_id",
         "pool_launcher_id", "did_launcher_id", "tracker_launcher_id",
-        "pgt_tail_hash", "pgt_full_puzhash",
+        "sgt_tail_hash", "sgt_full_puzhash",
         "pool_token_tail_hash", "pool_inner_puzhash", "pool_full_puzhash",
         "pool_inner_mod_hash", "p2_pool_mod_hash", "smart_deed_inner_mod_hash",
         "governance_singleton_struct_hash",
@@ -836,7 +836,7 @@ __all__ = [
     "SMART_DEED_PUZZLE_VERSION",
     "DEFAULT_QUORUM_BPS",
     "DEFAULT_VOTING_WINDOW_SECONDS",
-    "DEFAULT_PGT_TOTAL_SUPPLY",
+    "DEFAULT_SGT_TOTAL_SUPPLY",
     "DEFAULT_MIN_PROPOSAL_STAKE",
     "DEFAULT_FP_SCALE",
     "DEFAULT_MIN_NAV_REGISTRY_VERSION",
@@ -850,8 +850,8 @@ __all__ = [
     "pool_token_tail_hash",
     "pool_inner_puzzle",
     "quorum_did_inner_puzzle",
-    "pgt_free_inner_puzzle_for_owner",
-    "cat2_puzzle_hash_for_pgt",
+    "sgt_free_inner_puzzle_for_owner",
+    "cat2_puzzle_hash_for_sgt",
     "plan_to_manifest_dict",
     "plan_from_manifest_dict",
     "save_manifest",

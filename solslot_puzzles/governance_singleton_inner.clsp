@@ -1,12 +1,12 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;; Populis governance proposal tracker singleton.
+;;; Solslot governance proposal tracker singleton.
 ;;;
 ;;; This is the v2 governance puzzle.  The legacy `vote_weight` raw-atom
-;;; parameter (CRITICAL-3 in the 2026-04-19 audit) is replaced with PGT-backed
-;;; voting: every vote increment is bound to a real PGT CAT spend whose
+;;; parameter (CRITICAL-3 in the 2026-04-19 audit) is replaced with SGT-backed
+;;; voting: every vote increment is bound to a real SGT CAT spend whose
 ;;; LOCK announcement is asserted here.  The CAT2 conservation invariant
-;;; together with the genesis-by-coin-id PGT TAIL bounds the maximum vote
-;;; weight at PGT_TOTAL_SUPPLY, and the QUORUM_BPS check enforces the
+;;; together with the genesis-by-coin-id SGT TAIL bounds the maximum vote
+;;; weight at SGT_TOTAL_SUPPLY, and the QUORUM_BPS check enforces the
 ;;; minimum aggregate weight before EXECUTE can dispatch a bill.
 ;;;
 ;;; State machine:
@@ -21,23 +21,23 @@
 ;;; Curried parameters (immutable across protocol lifetime):
 ;;;   MOD_HASH                — self-reference for state recreation
 ;;;   SINGLETON_STRUCT        — standard singleton struct (this tracker)
-;;;   PGT_FREE_MOD_HASH       — pgt_free_inner.clsp tree hash
-;;;   PGT_LOCKED_MOD_HASH     — pgt_locked_inner.clsp tree hash
+;;;   SGT_FREE_MOD_HASH       — sgt_free_inner.clsp tree hash
+;;;   SGT_LOCKED_MOD_HASH     — sgt_locked_inner.clsp tree hash
 ;;;   CAT_MOD_HASH            — chia CAT2 outer mod tree hash
-;;;   PGT_TAIL_HASH           — PGT TAIL puzzle hash
+;;;   SGT_TAIL_HASH           — SGT TAIL puzzle hash
 ;;;   PROTOCOL_DID_PUZHASH    — DID full puzzle hash (kept for future MINT routing)
 ;;;   POOL_SINGLETON_STRUCT   — pool singleton struct (FREEZE / SETTLE target)
 ;;;   QUORUM_BPS              — minimum vote weight in basis points (e.g. 5000)
 ;;;   VOTING_WINDOW_SECONDS   — voting window (e.g. 300 = 5 min)
-;;;   PGT_TOTAL_SUPPLY        — fixed PGT supply (denominator for quorum check)
-;;;   MIN_PROPOSAL_STAKE      — minimum first-vote PGT mojos to open a proposal
-;;;                            (anti-spam; locked PGT is returned on EXEC/EXPIRE
+;;;   SGT_TOTAL_SUPPLY        — fixed SGT supply (denominator for quorum check)
+;;;   MIN_PROPOSAL_STAKE      — minimum first-vote SGT mojos to open a proposal
+;;;                            (anti-spam; locked SGT is returned on EXEC/EXPIRE
 ;;;                             so this is a stake-deposit, not a fee)
 ;;;
 ;;; Curried state (changes each spend via curry_hashes recreation):
 ;;;   PROPOSAL_HASH    — 0 when idle, else the hashed bill operation
 ;;;   BILL_OPERATION   — 0 when idle, else the bill tuple (MINT/FREEZE/SETTLE)
-;;;   VOTE_TALLY       — accumulated PGT mojos voted so far
+;;;   VOTE_TALLY       — accumulated SGT mojos voted so far
 ;;;   VOTING_DEADLINE  — absolute seconds when voting closes
 ;;;
 ;;; Bill operation tuples:
@@ -50,46 +50,46 @@
 ;;; Spend cases:
 ;;;   1 — PROPOSE : open a new proposal.  Requires:
 ;;;                  - tracker is idle (PROPOSAL_HASH = 0)
-;;;                  - first PGT lock announcement covering at least MIN_PROPOSAL_STAKE
+;;;                  - first SGT lock announcement covering at least MIN_PROPOSAL_STAKE
 ;;;                  - now ≤ deadline; deadline ≤ now + VOTING_WINDOW_SECONDS
-;;;                  (Note: v2 governance is fully PGT-stake-gated.  The legacy
+;;;                  (Note: v2 governance is fully SGT-stake-gated.  The legacy
 ;;;                   DID PROP gate was unsatisfiable — quorum_did_inner only
 ;;;                   handles MINT — and was removed.  Anyone holding
-;;;                   MIN_PROPOSAL_STAKE PGT can propose.)
+;;;                   MIN_PROPOSAL_STAKE SGT can propose.)
 ;;;
 ;;;   2 — VOTE    : add weight to existing proposal.  Requires:
 ;;;                  - PROPOSAL_HASH matches
 ;;;                  - now < VOTING_DEADLINE (still open)
-;;;                  - PGT lock announcement covering the new weight
+;;;                  - SGT lock announcement covering the new weight
 ;;;
 ;;;   3 — EXECUTE : dispatch the bill.  Requires:
 ;;;                  - PROPOSAL_HASH != 0
 ;;;                  - now ≥ VOTING_DEADLINE
-;;;                  - VOTE_TALLY * 10000 ≥ QUORUM_BPS * PGT_TOTAL_SUPPLY
+;;;                  - VOTE_TALLY * 10000 ≥ QUORUM_BPS * SGT_TOTAL_SUPPLY
 ;;;                  - sha256tree(BILL_OPERATION) == PROPOSAL_HASH
 ;;;                  - sends SEND_MESSAGE to DID/pool per bill type
-;;;                  - emits EXEC announcement to release locked PGT
+;;;                  - emits EXEC announcement to release locked SGT
 ;;;                  - state resets to IDLE
 ;;;
 ;;;   4 — EXPIRE  : abandon a failed proposal.  Requires:
 ;;;                  - PROPOSAL_HASH != 0
 ;;;                  - now ≥ VOTING_DEADLINE
-;;;                  - VOTE_TALLY * 10000 < QUORUM_BPS * PGT_TOTAL_SUPPLY
-;;;                  - emits EXEC announcement so locked PGT can release
+;;;                  - VOTE_TALLY * 10000 < QUORUM_BPS * SGT_TOTAL_SUPPLY
+;;;                  - emits EXEC announcement so locked SGT can release
 ;;;                  - state resets to IDLE
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 (mod (
         MOD_HASH
         SINGLETON_STRUCT
-        PGT_FREE_MOD_HASH
-        PGT_LOCKED_MOD_HASH
+        SGT_FREE_MOD_HASH
+        SGT_LOCKED_MOD_HASH
         CAT_MOD_HASH
-        PGT_TAIL_HASH
+        SGT_TAIL_HASH
         PROTOCOL_DID_PUZHASH
         POOL_SINGLETON_STRUCT
         QUORUM_BPS
         VOTING_WINDOW_SECONDS
-        PGT_TOTAL_SUPPLY
+        SGT_TOTAL_SUPPLY
         MIN_PROPOSAL_STAKE
         ;; --- curried state (recreated each spend) ---
         PROPOSAL_HASH
@@ -114,10 +114,10 @@
     (defconstant TRK_EXECUTE 3)
     (defconstant TRK_EXPIRE 4)
 
-    ;; PGT LOCK announcement tag (matches pgt_free_inner.clsp)
+    ;; SGT LOCK announcement tag (matches sgt_free_inner.clsp)
     (defconstant LOCK_TAG 0x4c4f434b)
 
-    ;; Tracker EXEC release tag (matches pgt_locked_inner.clsp)
+    ;; Tracker EXEC release tag (matches sgt_locked_inner.clsp)
     (defconstant EXEC_TAG 0x45584543)
 
     ;; Bill operation tags (single ASCII bytes)
@@ -134,7 +134,7 @@
     ;; MUST equal vault_version_registry_inner.clsp `TAG_ROUTINE`.
     (defconstant REGISTRY_TAG_ROUTINE 0x5254)
 
-    ;; Pool message tags (matches pool_singleton_inner.clsp existing format)
+    ;; Pool message tags (matches pool_singleton_inner_v3.clsp existing format)
     (defconstant POOL_GOV_TAG 0x474f5620)   ; "GOV "
     (defconstant POOL_SETT_TAG 0x53455454)  ; "SETT"
     (defconstant DID_MINT_TAG 0x4d494e54)   ; "MINT"
@@ -146,16 +146,16 @@
     ;; Compute the tracker's own next inner puzzle hash from a state tuple.
     (defun-inline next_inner_ph
             (mod_hash singleton_struct
-             pgt_free_mh pgt_locked_mh cat_mh pgt_tail_h
+             sgt_free_mh sgt_locked_mh cat_mh sgt_tail_h
              did_ph pool_struct quorum voting_window total_supply min_stake
              proposal_hash bill_op vote_tally voting_deadline)
         (curry_hashes mod_hash
             (sha256 1 mod_hash)
             (sha256tree singleton_struct)
-            (sha256 1 pgt_free_mh)
-            (sha256 1 pgt_locked_mh)
+            (sha256 1 sgt_free_mh)
+            (sha256 1 sgt_locked_mh)
             (sha256 1 cat_mh)
-            (sha256 1 pgt_tail_h)
+            (sha256 1 sgt_tail_h)
             (sha256 1 did_ph)
             (sha256tree pool_struct)
             (sha256 1 quorum)
@@ -168,19 +168,19 @@
             (sha256 1 voting_deadline))
     )
 
-    ;; Compute the puzzle hash of the CAT-wrapped PGT free coin owned by a
+    ;; Compute the puzzle hash of the CAT-wrapped SGT free coin owned by a
     ;; given user (their voter_inner_puzhash).  Used to verify LOCK
-    ;; announcements: only a real PGT spend can produce a matching announce.
-    (defun-inline cat_pgt_free_puzhash
+    ;; announcements: only a real SGT spend can produce a matching announce.
+    (defun-inline cat_sgt_free_puzhash
             (mod_hash singleton_struct
-             pgt_free_mh pgt_locked_mh cat_mh pgt_tail_h
+             sgt_free_mh sgt_locked_mh cat_mh sgt_tail_h
              voter_inner_puzhash)
         (curry_hashes cat_mh
             (sha256 1 cat_mh)
-            (sha256 1 pgt_tail_h)
-            (curry_hashes pgt_free_mh
-                (sha256 1 pgt_free_mh)
-                (sha256 1 pgt_locked_mh)
+            (sha256 1 sgt_tail_h)
+            (curry_hashes sgt_free_mh
+                (sha256 1 sgt_free_mh)
+                (sha256 1 sgt_locked_mh)
                 (sha256tree singleton_struct)
                 (sha256 1 voter_inner_puzhash)))
     )
@@ -193,17 +193,17 @@
             (list ASSERT_MY_PUZZLEHASH (calculate_full_puzzle_hash singleton_struct my_ph)))
     )
 
-    ;; Build the LOCK announcement id that a PGT free coin emits when locking.
-    ;; Format must match pgt_free_inner.clsp exactly:
-    ;;   sender_ph = CAT(CAT_MOD, PGT_TAIL, pgt_free_inner.curry(...))
+    ;; Build the LOCK announcement id that a SGT free coin emits when locking.
+    ;; Format must match sgt_free_inner.clsp exactly:
+    ;;   sender_ph = CAT(CAT_MOD, SGT_TAIL, sgt_free_inner.curry(...))
     ;;   message   = PROTOCOL_PREFIX || sha256tree(LOCK_TAG proposal_hash amount deadline)
     (defun-inline lock_announcement_id
             (mod_hash singleton_struct
-             pgt_free_mh pgt_locked_mh cat_mh pgt_tail_h
+             sgt_free_mh sgt_locked_mh cat_mh sgt_tail_h
              voter_inner_puzhash proposal_hash amount deadline)
         (sha256
-            (cat_pgt_free_puzhash mod_hash singleton_struct
-                pgt_free_mh pgt_locked_mh cat_mh pgt_tail_h
+            (cat_sgt_free_puzhash mod_hash singleton_struct
+                sgt_free_mh sgt_locked_mh cat_mh sgt_tail_h
                 voter_inner_puzhash)
             (concat PROTOCOL_PREFIX
                 (sha256tree (list LOCK_TAG proposal_hash amount deadline))))
@@ -228,7 +228,7 @@
     ;; bill_operation must be a tagged tuple whose sha256tree equals proposal_hash.
     (defun spend_propose
             (mod_hash singleton_struct
-             pgt_free_mh pgt_locked_mh cat_mh pgt_tail_h
+             sgt_free_mh sgt_locked_mh cat_mh sgt_tail_h
              did_ph pool_struct quorum voting_window total_supply min_stake
              my_id my_ph my_amount
              proposal_hash bill_op voter_inner_puzhash first_vote_amount voting_deadline)
@@ -240,7 +240,7 @@
             (is-uint64 voting_deadline)
             ;; Anti-spam: first vote must meet MIN_PROPOSAL_STAKE.  This stake
             ;; is locked for the voting window and returned on EXEC/EXPIRE
-            ;; (via the EXEC announcement that pgt_locked_inner watches).
+            ;; (via the EXEC announcement that sgt_locked_inner watches).
             (gte first_vote_amount min_stake)
             (= proposal_hash (sha256tree bill_op))
             ;; Time bound: voting must close within VOTING_WINDOW_SECONDS of now.
@@ -252,16 +252,16 @@
                 ;; Recreate the tracker singleton in OPEN state.
                 (list CREATE_COIN
                     (next_inner_ph mod_hash singleton_struct
-                        pgt_free_mh pgt_locked_mh cat_mh pgt_tail_h
+                        sgt_free_mh sgt_locked_mh cat_mh sgt_tail_h
                         did_ph pool_struct quorum voting_window total_supply min_stake
                         proposal_hash bill_op first_vote_amount voting_deadline)
                     my_amount)
                 (c
-                    ;; First voter's PGT lock announcement.  Anyone holding
-                    ;; >= MIN_PROPOSAL_STAKE PGT can satisfy this.
+                    ;; First voter's SGT lock announcement.  Anyone holding
+                    ;; >= MIN_PROPOSAL_STAKE SGT can satisfy this.
                     (list ASSERT_PUZZLE_ANNOUNCEMENT
                         (lock_announcement_id mod_hash singleton_struct
-                            pgt_free_mh pgt_locked_mh cat_mh pgt_tail_h
+                            sgt_free_mh sgt_locked_mh cat_mh sgt_tail_h
                             voter_inner_puzhash proposal_hash first_vote_amount voting_deadline))
                     (c
                         ;; Voting window upper bound.
@@ -276,10 +276,10 @@
 
     ;; SPEND CASE 2 — VOTE
     ;; params = (voter_inner_puzhash additional_vote_amount)
-    ;; Requires PGT lock announcement matching the active PROPOSAL_HASH and VOTING_DEADLINE.
+    ;; Requires SGT lock announcement matching the active PROPOSAL_HASH and VOTING_DEADLINE.
     (defun spend_vote
             (mod_hash singleton_struct
-             pgt_free_mh pgt_locked_mh cat_mh pgt_tail_h
+             sgt_free_mh sgt_locked_mh cat_mh sgt_tail_h
              did_ph pool_struct quorum voting_window total_supply min_stake
              proposal_hash bill_op vote_tally voting_deadline
              my_id my_ph my_amount
@@ -293,15 +293,15 @@
                 ;; Recreate the tracker with increased tally.
                 (list CREATE_COIN
                     (next_inner_ph mod_hash singleton_struct
-                        pgt_free_mh pgt_locked_mh cat_mh pgt_tail_h
+                        sgt_free_mh sgt_locked_mh cat_mh sgt_tail_h
                         did_ph pool_struct quorum voting_window total_supply min_stake
                         proposal_hash bill_op (+ vote_tally additional_vote_amount) voting_deadline)
                     my_amount)
                 (c
-                    ;; PGT lock announcement for the new vote weight.
+                    ;; SGT lock announcement for the new vote weight.
                     (list ASSERT_PUZZLE_ANNOUNCEMENT
                         (lock_announcement_id mod_hash singleton_struct
-                            pgt_free_mh pgt_locked_mh cat_mh pgt_tail_h
+                            sgt_free_mh sgt_locked_mh cat_mh sgt_tail_h
                             voter_inner_puzhash proposal_hash additional_vote_amount voting_deadline))
                     (c
                         ;; Voting window: must still be open.
@@ -316,7 +316,7 @@
     ;;
     ;; All SEND_MESSAGE conditions use mode 0x10 (sender-puzzle, receiver-none)
     ;; matching the DID's RECEIVE_MESSAGE 0x10 in quorum_did_inner.clsp and the
-    ;; pool's RECEIVE_MESSAGE 0x10 in pool_singleton_inner.clsp.  Per CHIP-25,
+    ;; pool's RECEIVE_MESSAGE 0x10 in pool_singleton_inner_v3.clsp.  Per CHIP-25,
     ;; modes must be identical on both sides for the message to pair.
     ;;
     ;; For MINT, the dispatch ALSO asserts the DID's puzzle announcement of
@@ -370,10 +370,10 @@
     ;; SPEND CASE 3 — EXECUTE
     ;; params = ()  (no extra args; bill_op + recipient identity all live in
     ;;               curried state or in the bill's own contents).
-    ;; Quorum check: VOTE_TALLY * 10000 ≥ QUORUM_BPS * PGT_TOTAL_SUPPLY.
+    ;; Quorum check: VOTE_TALLY * 10000 ≥ QUORUM_BPS * SGT_TOTAL_SUPPLY.
     (defun spend_execute
             (mod_hash singleton_struct
-             pgt_free_mh pgt_locked_mh cat_mh pgt_tail_h
+             sgt_free_mh sgt_locked_mh cat_mh sgt_tail_h
              did_ph pool_struct quorum voting_window total_supply min_stake
              proposal_hash bill_op vote_tally voting_deadline
              my_id my_ph my_amount)
@@ -385,7 +385,7 @@
                 ;; Reset the tracker to IDLE.
                 (list CREATE_COIN
                     (next_inner_ph mod_hash singleton_struct
-                        pgt_free_mh pgt_locked_mh cat_mh pgt_tail_h
+                        sgt_free_mh sgt_locked_mh cat_mh sgt_tail_h
                         did_ph pool_struct quorum voting_window total_supply min_stake
                         0 0 0 0)
                     my_amount)
@@ -393,7 +393,7 @@
                     ;; Voting window must have passed.
                     (list ASSERT_SECONDS_ABSOLUTE voting_deadline)
                     (c
-                        ;; EXEC release announcement so locked PGT can return early.
+                        ;; EXEC release announcement so locked SGT can return early.
                         (list CREATE_PUZZLE_ANNOUNCEMENT
                             (concat PROTOCOL_PREFIX
                                 (sha256tree (list EXEC_TAG proposal_hash))))
@@ -408,19 +408,19 @@
     ;; params = ()  (no extra args needed; tracker state has everything)
     (defun spend_expire
             (mod_hash singleton_struct
-             pgt_free_mh pgt_locked_mh cat_mh pgt_tail_h
+             sgt_free_mh sgt_locked_mh cat_mh sgt_tail_h
              did_ph pool_struct quorum voting_window total_supply min_stake
              proposal_hash bill_op vote_tally voting_deadline
              my_id my_ph my_amount)
         (assert
             proposal_hash                        ; tracker is open (truthy)
-            ;; Quorum NOT met: VOTE_TALLY * 10000 < QUORUM_BPS * PGT_TOTAL_SUPPLY
+            ;; Quorum NOT met: VOTE_TALLY * 10000 < QUORUM_BPS * SGT_TOTAL_SUPPLY
             (> (* quorum total_supply) (* vote_tally 10000))
             (c
                 ;; Reset to IDLE.
                 (list CREATE_COIN
                     (next_inner_ph mod_hash singleton_struct
-                        pgt_free_mh pgt_locked_mh cat_mh pgt_tail_h
+                        sgt_free_mh sgt_locked_mh cat_mh sgt_tail_h
                         did_ph pool_struct quorum voting_window total_supply min_stake
                         0 0 0 0)
                     my_amount)
@@ -448,9 +448,9 @@
                 (not PROPOSAL_HASH)        ; tracker must be idle to propose
                 (spend_propose
                     MOD_HASH SINGLETON_STRUCT
-                    PGT_FREE_MOD_HASH PGT_LOCKED_MOD_HASH CAT_MOD_HASH PGT_TAIL_HASH
+                    SGT_FREE_MOD_HASH SGT_LOCKED_MOD_HASH CAT_MOD_HASH SGT_TAIL_HASH
                     PROTOCOL_DID_PUZHASH POOL_SINGLETON_STRUCT
-                    QUORUM_BPS VOTING_WINDOW_SECONDS PGT_TOTAL_SUPPLY MIN_PROPOSAL_STAKE
+                    QUORUM_BPS VOTING_WINDOW_SECONDS SGT_TOTAL_SUPPLY MIN_PROPOSAL_STAKE
                     my_id my_inner_puzzlehash my_amount
                     (f params)            ; proposal_hash
                     (f (r params))        ; bill_op
@@ -460,9 +460,9 @@
             (if (= spend_case TRK_VOTE)
                 (spend_vote
                     MOD_HASH SINGLETON_STRUCT
-                    PGT_FREE_MOD_HASH PGT_LOCKED_MOD_HASH CAT_MOD_HASH PGT_TAIL_HASH
+                    SGT_FREE_MOD_HASH SGT_LOCKED_MOD_HASH CAT_MOD_HASH SGT_TAIL_HASH
                     PROTOCOL_DID_PUZHASH POOL_SINGLETON_STRUCT
-                    QUORUM_BPS VOTING_WINDOW_SECONDS PGT_TOTAL_SUPPLY MIN_PROPOSAL_STAKE
+                    QUORUM_BPS VOTING_WINDOW_SECONDS SGT_TOTAL_SUPPLY MIN_PROPOSAL_STAKE
                     PROPOSAL_HASH BILL_OPERATION VOTE_TALLY VOTING_DEADLINE
                     my_id my_inner_puzzlehash my_amount
                     (f params)            ; voter_inner_puzhash
@@ -470,17 +470,17 @@
                 (if (= spend_case TRK_EXECUTE)
                     (spend_execute
                         MOD_HASH SINGLETON_STRUCT
-                        PGT_FREE_MOD_HASH PGT_LOCKED_MOD_HASH CAT_MOD_HASH PGT_TAIL_HASH
+                        SGT_FREE_MOD_HASH SGT_LOCKED_MOD_HASH CAT_MOD_HASH SGT_TAIL_HASH
                         PROTOCOL_DID_PUZHASH POOL_SINGLETON_STRUCT
-                        QUORUM_BPS VOTING_WINDOW_SECONDS PGT_TOTAL_SUPPLY MIN_PROPOSAL_STAKE
+                        QUORUM_BPS VOTING_WINDOW_SECONDS SGT_TOTAL_SUPPLY MIN_PROPOSAL_STAKE
                         PROPOSAL_HASH BILL_OPERATION VOTE_TALLY VOTING_DEADLINE
                         my_id my_inner_puzzlehash my_amount)
                     (if (= spend_case TRK_EXPIRE)
                         (spend_expire
                             MOD_HASH SINGLETON_STRUCT
-                            PGT_FREE_MOD_HASH PGT_LOCKED_MOD_HASH CAT_MOD_HASH PGT_TAIL_HASH
+                            SGT_FREE_MOD_HASH SGT_LOCKED_MOD_HASH CAT_MOD_HASH SGT_TAIL_HASH
                             PROTOCOL_DID_PUZHASH POOL_SINGLETON_STRUCT
-                            QUORUM_BPS VOTING_WINDOW_SECONDS PGT_TOTAL_SUPPLY MIN_PROPOSAL_STAKE
+                            QUORUM_BPS VOTING_WINDOW_SECONDS SGT_TOTAL_SUPPLY MIN_PROPOSAL_STAKE
                             PROPOSAL_HASH BILL_OPERATION VOTE_TALLY VOTING_DEADLINE
                             my_id my_inner_puzzlehash my_amount)
                         (x))))))

@@ -31,25 +31,25 @@
       {
         "portal_key": "protocolDidSingletonStructHex",
         "api_setting": "protocol_did_singleton_struct_hex",
-        "api_env": "POPULIS_PROTOCOL_DID_SINGLETON_STRUCT_HEX",
+        "api_env": "SOLSLOT_PROTOCOL_DID_SINGLETON_STRUCT_HEX",
         "kind": "serialized_clvm_program"
       },
       {
         "portal_key": "protocolDidPuzhash",
         "api_setting": "protocol_did_puzhash",
-        "api_env": "POPULIS_PROTOCOL_DID_PUZHASH",
+        "api_env": "SOLSLOT_PROTOCOL_DID_PUZHASH",
         "kind": "bytes32"
       },
       {
         "portal_key": "p2PoolModHash",
         "api_setting": "p2_pool_mod_hash",
-        "api_env": "POPULIS_P2_POOL_MOD_HASH",
+        "api_env": "SOLSLOT_P2_POOL_MOD_HASH",
         "kind": "bytes32"
       },
       {
         "portal_key": "p2VaultModHash",
         "api_setting": "p2_vault_mod_hash",
-        "api_env": "POPULIS_P2_VAULT_MOD_HASH",
+        "api_env": "SOLSLOT_P2_VAULT_MOD_HASH",
         "kind": "bytes32"
       }
     ],
