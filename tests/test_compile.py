@@ -25,6 +25,15 @@ class TestCompile:
         assert mod is not None
         assert mod.get_tree_hash() is not None
 
+    def test_smart_deed_inner_v2(self):
+        mod: Program = load_clvm(
+            "smart_deed_inner_v2.clsp",
+            package_or_requirement="solslot_puzzles",
+            recompile=True,
+        )
+        assert mod is not None
+        assert mod.get_tree_hash() is not None
+
     def test_vault_singleton_inner(self):
         mod: Program = load_clvm(
             "vault_singleton_inner.clsp",
@@ -52,6 +61,15 @@ class TestCompile:
         assert mod is not None
         assert mod.get_tree_hash() is not None
 
+    def test_p2_pool_v2(self):
+        mod: Program = load_clvm(
+            "p2_pool_v2.clsp",
+            package_or_requirement="solslot_puzzles",
+            recompile=True,
+        )
+        assert mod is not None
+        assert mod.get_tree_hash() is not None
+
     def test_pool_token_tail(self):
         mod: Program = load_clvm(
             "pool_token_tail.clsp",
@@ -64,6 +82,15 @@ class TestCompile:
     def test_pool_singleton_inner(self):
         mod: Program = load_clvm(
             "pool_singleton_inner.clsp",
+            package_or_requirement="solslot_puzzles",
+            recompile=True,
+        )
+        assert mod is not None
+        assert mod.get_tree_hash() is not None
+
+    def test_pool_singleton_inner_v3(self):
+        mod: Program = load_clvm(
+            "pool_singleton_inner_v3.clsp",
             package_or_requirement="solslot_puzzles",
             recompile=True,
         )

@@ -1,11 +1,11 @@
 """Generate fixture file for the portal's TS port of admin_authority_v2_driver.
 
-The TS service in ``populis_portal`` reproduces a subset of the Python
+The Solslot portal service reproduces a subset of the Python
 driver helpers (``compute_state_hash``, ``compute_admins_hash``,
 ``compute_pending_ops_hash``, ``admin_authority_v2_inner_mod_hash``,
 ``make_inner_puzzle_hash``, ``compute_roster_update_binding_hash``) so
 that the portal can construct + verify v2 admin authority spends entirely
-client-side without depending on the Populis API.
+client-side without depending on the Solslot API.
 
 This script writes a JSON fixture mapping each helper to a list of
 ``(input, expected_output)`` cases.  The portal's Karma test reads
@@ -13,7 +13,7 @@ the fixture and asserts the TS implementation produces matching hex.
 
 Usage::
 
-    cd populis_protocol
+    cd solslot-protocol
     .venv/bin/python scripts/dump_v2_fixtures.py
 
 The fixture is also exported by the regression test in
@@ -372,14 +372,11 @@ def build_fixture() -> dict[str, Any]:
 
 
 def fixture_destination() -> Path:
-    """Resolve the canonical destination inside the portal repo."""
-    repo_root = Path(__file__).resolve().parents[2]
+    """Resolve the canonical protocol-owned fixture destination."""
+    protocol_root = Path(__file__).resolve().parents[1]
     return (
-        repo_root
-        / "populis_portal"
-        / "src"
-        / "app"
-        / "services"
+        protocol_root
+        / "fixtures"
         / "admin-authority-v2"
         / "admin-authority-v2.fixtures.json"
     )

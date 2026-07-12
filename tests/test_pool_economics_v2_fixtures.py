@@ -46,6 +46,7 @@ def test_expected_action_spec_surface() -> None:
         "next_state",
         "nav_evidence_message",
         "required_nav_evidence_message",
+        "deed_commitment",
         "pool_action_message",
         "deed_message",
         "token_outputs",

@@ -1,4 +1,4 @@
-"""Unit tests for pool_singleton_inner.clsp — the pool state machine.
+"""Unit tests for pool_singleton_inner_v3.clsp — the pool state machine.
 
 Tests run curried puzzles via Program.run() to verify:
   1. Deposit case produces correct conditions when ACTIVE (with state recreation)
@@ -42,7 +42,7 @@ from solslot_puzzles.pool_economics_v2 import (
 )
 
 POOL_INNER_MOD: Program = load_clvm(
-    "pool_singleton_inner.clsp",
+    "pool_singleton_inner_v3.clsp",
     package_or_requirement="solslot_puzzles",
     recompile=True,
 )
@@ -51,6 +51,10 @@ POOL_INNER_MOD: Program = load_clvm(
 LAUNCHER_PUZZLE_HASH = SINGLETON_LAUNCHER_HASH
 POOL_LAUNCHER_ID = bytes32(b"\xbb" * 32)
 POOL_SINGLETON_STRUCT = Program.to((SINGLETON_MOD_HASH, (POOL_LAUNCHER_ID, LAUNCHER_PUZZLE_HASH)))
+GOVERNANCE_LAUNCHER_ID = bytes32(b"\xbc" * 32)
+GOVERNANCE_SINGLETON_STRUCT = Program.to(
+    (SINGLETON_MOD_HASH, (GOVERNANCE_LAUNCHER_ID, LAUNCHER_PUZZLE_HASH))
+)
 PROTOCOL_DID_PUZHASH = bytes32(b"\x03" * 32)
 TOKEN_TAIL_HASH = bytes32(b"\x04" * 32)
 CAT_MOD_HASH = bytes32(b"\x05" * 32)
@@ -64,6 +68,10 @@ TRUSTED_TREASURY_RESERVE_PUZHASH = bytes32(b"\xf1" * 32)
 TRUSTED_PROTOCOL_TREASURY_PUZHASH = bytes32(b"\xf2" * 32)
 TRUSTED_GOVERNANCE_REWARDS_PUZHASH = bytes32(b"\xf3" * 32)
 TRUSTED_GOVERNANCE_REWARDS_ROOT = bytes32(b"\xf4" * 32)
+DEED_LAUNCHER_ID = bytes32(b"\xd2" * 32)
+DEED_PAR_VALUE = 123_000
+DEED_ASSET_CLASS = 1
+DEED_PROPERTY_ID = bytes32(b"\xa2" * 32)
 FP_SCALE = 1000
 MOD_HASH = POOL_INNER_MOD.get_tree_hash()
 
@@ -108,6 +116,7 @@ def curry_pool(
     return POOL_INNER_MOD.curry(
         MOD_HASH,
         POOL_SINGLETON_STRUCT,
+        GOVERNANCE_SINGLETON_STRUCT,
         PROTOCOL_DID_PUZHASH,
         TOKEN_TAIL_HASH,
         CAT_MOD_HASH,
@@ -209,35 +218,47 @@ class TestPoolDeposit:
 
         sol = make_pool_solution(
             my_id, my_inner_puzhash, 1,
-            POOL_SPEND_DEPOSIT, [deed_id, deed_par_value, depositor_puzhash, token_coin_id],
+            POOL_SPEND_DEPOSIT,
+            [
+                deed_id,
+                DEED_LAUNCHER_ID,
+                deed_par_value,
+                DEED_ASSET_CLASS,
+                DEED_PROPERTY_ID,
+                bytes32(b"\xa1" * 32),
+                250_000,
+                depositor_puzhash,
+                token_coin_id,
+            ],
         )
         result = curried.run(sol)
         conditions = result.as_python()
 
-        # 8 conditions: CREATE_COIN, token mint puzzle+coin announcements,
-        #               SEND_MESSAGE, REMARK, ASSERT_MY_COIN_ID, ASSERT_MY_AMOUNT, ASSERT_MY_PUZZLEHASH
-        assert len(conditions) == 8
+        # 9 conditions: state, deed evidence, token authorization, deed ack,
+        # remark, and the three singleton identity assertions.
+        assert len(conditions) == 9
         # CREATE_COIN (recreate with updated state via curry_hashes)
         assert conditions[0][0] == bytes([51])
+        assert conditions[1][0] == bytes([61])
         # CREATE_PUZZLE_ANNOUNCEMENT (token mint authorization)
-        assert conditions[1][0] == bytes([62])
-        assert conditions[1][1][:1] == PROTOCOL_PREFIX
+        assert conditions[2][0] == bytes([62])
+        assert conditions[2][1][:1] == PROTOCOL_PREFIX
         # CREATE_COIN_ANNOUNCEMENT (same token mint authorization body)
-        assert conditions[2][0] == bytes([60])
-        assert conditions[2][1] == conditions[1][1]
+        assert conditions[3][0] == bytes([60])
+        assert conditions[3][1] == conditions[2][1]
         # SEND_MESSAGE 0x10 (CHIP-25 message to deed)
-        assert conditions[3][0] == bytes([66])
-        assert conditions[3][1] == bytes([0x10])  # mode: sender commits puzzle_hash
-        assert conditions[3][2][:1] == PROTOCOL_PREFIX
+        assert conditions[4][0] == bytes([66])
+        assert conditions[4][1] == bytes([0x10])  # mode: sender commits puzzle_hash
+        assert conditions[4][2][:1] == PROTOCOL_PREFIX
         # REMARK (driver hint with new state)
-        assert conditions[4][0] == bytes([1])  # REMARK = 1
+        assert conditions[5][0] == bytes([1])  # REMARK = 1
         # ASSERT_MY_COIN_ID
-        assert conditions[5][0] == bytes([70])
-        assert conditions[5][1] == my_id
+        assert conditions[6][0] == bytes([70])
+        assert conditions[6][1] == my_id
         # ASSERT_MY_AMOUNT
-        assert conditions[6][0] == bytes([73])
+        assert conditions[7][0] == bytes([73])
         # ASSERT_MY_PUZZLEHASH
-        assert conditions[7][0] == bytes([72])
+        assert conditions[8][0] == bytes([72])
 
     def test_deposit_frozen_fails(self):
         curried = curry_pool(pool_status=POOL_FROZEN, tvl=0, deed_count=0)
@@ -246,7 +267,10 @@ class TestPoolDeposit:
 
         sol = make_pool_solution(
             my_id, my_inner_puzhash, 1,
-            POOL_SPEND_DEPOSIT, [bytes32(b"\xdd" * 32), 100000, bytes32(b"\xee" * 32), bytes32(b"\xff" * 32)],
+            POOL_SPEND_DEPOSIT,
+            [bytes32(b"\xdd" * 32), DEED_LAUNCHER_ID, 100000, 1,
+             DEED_PROPERTY_ID, bytes32(b"\xa1" * 32), 250_000,
+             bytes32(b"\xee" * 32), bytes32(b"\xff" * 32)],
         )
         with pytest.raises(ValueError):
             curried.run(sol)
@@ -260,7 +284,10 @@ class TestPoolDeposit:
 
         sol = make_pool_solution(
             my_id, my_inner_puzhash, 1,
-            POOL_SPEND_DEPOSIT, [bytes32(b"\xdd" * 32), deed_par_value, bytes32(b"\xee" * 32), bytes32(b"\xff" * 32)],
+            POOL_SPEND_DEPOSIT,
+            [bytes32(b"\xdd" * 32), DEED_LAUNCHER_ID, deed_par_value, 1,
+             DEED_PROPERTY_ID, bytes32(b"\xa1" * 32), 250_000,
+             bytes32(b"\xee" * 32), bytes32(b"\xff" * 32)],
         )
         result = curried.run(sol)
         conditions = result.as_python()
@@ -276,9 +303,9 @@ class TestPoolDeposit:
 
 
 class TestPoolRedeem:
-    """Test SPEND CASE 2 — REDEEM."""
+    """Legacy SPEND CASE 2 is permanently disabled in v3."""
 
-    def test_redeem_active_returns_conditions(self):
+    def test_redeem_active_fails(self):
         curried = curry_pool(
             pool_status=POOL_ACTIVE,
             tvl=100000,
@@ -296,27 +323,8 @@ class TestPoolRedeem:
             my_id, my_inner_puzhash, 1,
             POOL_SPEND_REDEEM, [deed_id, deed_par_value, vault_launcher_id, LAUNCHER_PUZZLE_HASH, token_coin_id],
         )
-        result = curried.run(sol)
-        conditions = result.as_python()
-
-        # 8 conditions
-        assert len(conditions) == 8
-        # CREATE_COIN (recreate with updated state)
-        assert conditions[0][0] == bytes([51])
-        # CREATE_PUZZLE_ANNOUNCEMENT (token melt authorization)
-        assert conditions[1][0] == bytes([62])
-        assert conditions[1][1][:1] == PROTOCOL_PREFIX
-        # CREATE_COIN_ANNOUNCEMENT (same token melt authorization body)
-        assert conditions[2][0] == bytes([60])
-        assert conditions[2][1] == conditions[1][1]
-        # SEND_MESSAGE 0x10 (CHIP-25 message to deed)
-        assert conditions[3][0] == bytes([66])
-        assert conditions[3][1] == bytes([0x10])  # mode: sender commits puzzle_hash
-        assert conditions[3][2][:1] == PROTOCOL_PREFIX
-
-        # State recreation: new pool should have tvl=0, deed_count=0
-        expected_new = curry_pool(pool_status=POOL_ACTIVE, tvl=0, deed_count=0)
-        assert conditions[0][1] == expected_new.get_tree_hash()
+        with pytest.raises(ValueError):
+            curried.run(sol)
 
     def test_redeem_frozen_fails(self):
         curried = curry_pool(pool_status=POOL_FROZEN, tvl=100000, deed_count=1)
@@ -332,9 +340,9 @@ class TestPoolRedeem:
 
 
 class TestPoolGenerateOffer:
-    """Test SPEND CASE 5 — GENERATE_OFFER (Chia native offer settlement)."""
+    """Legacy SPEND CASE 5 is permanently disabled in v3."""
 
-    def test_generate_offer_returns_conditions(self):
+    def test_generate_offer_fails(self):
         curried = curry_pool(pool_status=POOL_ACTIVE, tvl=100000, deed_count=1)
         my_id = bytes32(b"\x11" * 32)
         my_inner_puzhash = curried.get_tree_hash()
@@ -346,33 +354,8 @@ class TestPoolGenerateOffer:
             my_id, my_inner_puzhash, 1,
             POOL_SPEND_GENERATE_OFFER, [deed_id, deed_par_value, buyer_vault_launcher_id, LAUNCHER_PUZZLE_HASH],
         )
-        result = curried.run(sol)
-        conditions = result.as_python()
-
-        # 8 conditions: CREATE_COIN, ASSERT_PUZZLE_ANNOUNCEMENT (CAT settlement),
-        #               CREATE_PUZZLE_ANNOUNCEMENT (POP-CANON-020 vault pairing),
-        #               SEND_MESSAGE, REMARK, ASSERT_MY_COIN_ID, ASSERT_MY_AMOUNT,
-        #               ASSERT_MY_PUZZLEHASH.
-        # The CREATE_PUZZLE_ANNOUNCEMENT was added by POP-CANON-020 to satisfy
-        # vault_singleton_inner.clsp::spend_accept_offer's matching ASSERT_PUZZLE_ANNOUNCEMENT.
-        assert len(conditions) == 8
-        # CREATE_COIN (state recreation: deed leaves pool)
-        assert conditions[0][0] == bytes([51])
-        # ASSERT_PUZZLE_ANNOUNCEMENT (verify token payment via CAT settlement to protocol treasury)
-        assert conditions[1][0] == bytes([63])  # ASSERT_PUZZLE_ANNOUNCEMENT
-        # CREATE_PUZZLE_ANNOUNCEMENT (POP-CANON-020: vault accept-offer pairing)
-        assert conditions[2][0] == bytes([62])  # CREATE_PUZZLE_ANNOUNCEMENT
-        assert conditions[2][1][:1] == PROTOCOL_PREFIX
-        # SEND_MESSAGE 0x10 (tell deed to release to buyer)
-        assert conditions[3][0] == bytes([66])  # SEND_MESSAGE
-        assert conditions[3][1] == bytes([0x10])
-        assert conditions[3][2][:1] == PROTOCOL_PREFIX
-        # REMARK
-        assert conditions[4][0] == bytes([1])
-
-        # State recreation: deed leaves pool (tvl - par_value, count - 1)
-        expected_new = curry_pool(pool_status=POOL_ACTIVE, tvl=0, deed_count=0)
-        assert conditions[0][1] == expected_new.get_tree_hash()
+        with pytest.raises(ValueError):
+            curried.run(sol)
 
     def test_generate_offer_frozen_fails(self):
         curried = curry_pool(pool_status=POOL_FROZEN, tvl=100000, deed_count=1)
@@ -443,6 +426,10 @@ class TestPoolV2SpecificDeedSwap:
         spec = build_specific_deed_swap_spec(
             state,
             deed_id=deed_id,
+            deed_launcher_id=DEED_LAUNCHER_ID,
+            par_value_mojos=DEED_PAR_VALUE,
+            asset_class=DEED_ASSET_CLASS,
+            property_id_canon=DEED_PROPERTY_ID,
             p2_vault_puzzle_hash=p2_vault,
             collection_id_canon=collection_id,
             share_ppm=share_ppm,
@@ -460,6 +447,10 @@ class TestPoolV2SpecificDeedSwap:
             POOL_SPEND_V2_SPECIFIC_DEED_SWAP,
             [
                 deed_id,
+                DEED_LAUNCHER_ID,
+                DEED_PAR_VALUE,
+                DEED_ASSET_CLASS,
+                DEED_PROPERTY_ID,
                 collection_id,
                 share_ppm,
                 collection_nav_mojos,
@@ -505,11 +496,11 @@ class TestPoolV2SpecificDeedSwap:
         assert atom_int(conditions[4][0]) == CREATE_PUZZLE_ANNOUNCEMENT
         assert conditions[4][1] == spec.pool_action_message
 
-        assert atom_int(conditions[5][0]) == SEND_MESSAGE
-        assert conditions[5][1] == bytes([0x10])
-        assert conditions[5][2] == PROTOCOL_PREFIX + Program.to([
-            POOL_SPEND_REDEEM,
+        assert atom_int(conditions[5][0]) == CREATE_PUZZLE_ANNOUNCEMENT
+        assert conditions[5][1] == PROTOCOL_PREFIX + Program.to([
+            my_id,
             deed_id,
+            spec.deed_commitment,
             p2_vault,
         ]).get_tree_hash()
 
@@ -540,6 +531,10 @@ class TestPoolV2SpecificDeedSwap:
             POOL_SPEND_V2_SPECIFIC_DEED_SWAP,
             [
                 bytes32(b"\xd1" * 32),
+                DEED_LAUNCHER_ID,
+                DEED_PAR_VALUE,
+                DEED_ASSET_CLASS,
+                DEED_PROPERTY_ID,
                 bytes32(b"\xa1" * 32),
                 250_000,
                 1_000_000_000,
@@ -573,6 +568,10 @@ class TestPoolV2SpecificDeedSwap:
             POOL_SPEND_V2_SPECIFIC_DEED_SWAP,
             [
                 bytes32(b"\xd1" * 32),
+                DEED_LAUNCHER_ID,
+                DEED_PAR_VALUE,
+                DEED_ASSET_CLASS,
+                DEED_PROPERTY_ID,
                 bytes32(b"\xa1" * 32),
                 250_000,
                 1_000_000_000,
@@ -608,6 +607,10 @@ class TestPoolV2SpecificDeedSwap:
             POOL_SPEND_V2_SPECIFIC_DEED_SWAP,
             [
                 bytes32(b"\xd1" * 32),
+                DEED_LAUNCHER_ID,
+                DEED_PAR_VALUE,
+                DEED_ASSET_CLASS,
+                DEED_PROPERTY_ID,
                 bytes32(b"\xa1" * 32),
                 250_000,
                 1_000_000_000,
@@ -643,6 +646,10 @@ class TestPoolV2SpecificDeedSwap:
             POOL_SPEND_V2_SPECIFIC_DEED_SWAP,
             [
                 bytes32(b"\xd1" * 32),
+                DEED_LAUNCHER_ID,
+                DEED_PAR_VALUE,
+                DEED_ASSET_CLASS,
+                DEED_PROPERTY_ID,
                 bytes32(b"\xa1" * 32),
                 250_000,
                 1_000_000_000,
@@ -703,6 +710,10 @@ class TestPoolV2TrueRedemption:
         spec = build_true_redemption_spec(
             state,
             deed_id=deed_id,
+            deed_launcher_id=DEED_LAUNCHER_ID,
+            par_value_mojos=DEED_PAR_VALUE,
+            asset_class=DEED_ASSET_CLASS,
+            property_id_canon=DEED_PROPERTY_ID,
             p2_vault_puzzle_hash=p2_vault,
             collection_id_canon=collection_id,
             share_ppm=share_ppm,
@@ -717,6 +728,10 @@ class TestPoolV2TrueRedemption:
             POOL_SPEND_V2_TRUE_REDEMPTION,
             [
                 deed_id,
+                DEED_LAUNCHER_ID,
+                DEED_PAR_VALUE,
+                DEED_ASSET_CLASS,
+                DEED_PROPERTY_ID,
                 collection_id,
                 share_ppm,
                 collection_nav_mojos,
@@ -759,11 +774,11 @@ class TestPoolV2TrueRedemption:
         assert atom_int(conditions[5][0]) == CREATE_PUZZLE_ANNOUNCEMENT
         assert conditions[5][1] == spec.pool_action_message
 
-        assert atom_int(conditions[6][0]) == SEND_MESSAGE
-        assert conditions[6][1] == bytes([0x10])
-        assert conditions[6][2] == PROTOCOL_PREFIX + Program.to([
-            POOL_SPEND_REDEEM,
+        assert atom_int(conditions[6][0]) == CREATE_PUZZLE_ANNOUNCEMENT
+        assert conditions[6][1] == PROTOCOL_PREFIX + Program.to([
+            my_id,
             deed_id,
+            spec.deed_commitment,
             p2_vault,
         ]).get_tree_hash()
 
@@ -790,6 +805,10 @@ class TestPoolV2TrueRedemption:
             POOL_SPEND_V2_TRUE_REDEMPTION,
             [
                 bytes32(b"\xd1" * 32),
+                DEED_LAUNCHER_ID,
+                DEED_PAR_VALUE,
+                DEED_ASSET_CLASS,
+                DEED_PROPERTY_ID,
                 bytes32(b"\xa1" * 32),
                 0,
                 1_000_000_000,
@@ -820,6 +839,10 @@ class TestPoolV2TrueRedemption:
             POOL_SPEND_V2_TRUE_REDEMPTION,
             [
                 bytes32(b"\xd1" * 32),
+                DEED_LAUNCHER_ID,
+                DEED_PAR_VALUE,
+                DEED_ASSET_CLASS,
+                DEED_PROPERTY_ID,
                 bytes32(b"\xa1" * 32),
                 250_000,
                 1_000_000_000,
@@ -850,6 +873,10 @@ class TestPoolV2TrueRedemption:
             POOL_SPEND_V2_TRUE_REDEMPTION,
             [
                 bytes32(b"\xd1" * 32),
+                DEED_LAUNCHER_ID,
+                DEED_PAR_VALUE,
+                DEED_ASSET_CLASS,
+                DEED_PROPERTY_ID,
                 bytes32(b"\xa1" * 32),
                 250_000,
                 1_000_000_000,
@@ -882,6 +909,10 @@ class TestPoolV2TrueRedemption:
             POOL_SPEND_V2_TRUE_REDEMPTION,
             [
                 bytes32(b"\xd1" * 32),
+                DEED_LAUNCHER_ID,
+                DEED_PAR_VALUE,
+                DEED_ASSET_CLASS,
+                DEED_PROPERTY_ID,
                 bytes32(b"\xa1" * 32),
                 250_000,
                 1_000_000_000,
@@ -942,6 +973,7 @@ class TestPoolV2ReserveAcquisition:
         spec = build_reserve_acquisition_spec(
             state,
             deed_id=deed_id,
+            deed_launcher_id=DEED_LAUNCHER_ID,
             property_id_canon=property_id,
             par_value_mojos=par_value_mojos,
             asset_class=asset_class,
@@ -960,6 +992,7 @@ class TestPoolV2ReserveAcquisition:
             POOL_SPEND_V2_RESERVE_ACQUISITION,
             [
                 deed_id,
+                DEED_LAUNCHER_ID,
                 property_id,
                 par_value_mojos,
                 asset_class,
@@ -1065,6 +1098,7 @@ class TestPoolV2ReserveAcquisition:
         spec = build_reserve_acquisition_spec(
             state,
             deed_id=deed_id,
+            deed_launcher_id=DEED_LAUNCHER_ID,
             property_id_canon=property_id,
             par_value_mojos=par_value_mojos,
             asset_class=asset_class,
@@ -1083,6 +1117,7 @@ class TestPoolV2ReserveAcquisition:
             POOL_SPEND_V2_RESERVE_ACQUISITION,
             [
                 deed_id,
+                DEED_LAUNCHER_ID,
                 property_id,
                 par_value_mojos,
                 asset_class,
@@ -1130,6 +1165,7 @@ class TestPoolV2ReserveAcquisition:
             POOL_SPEND_V2_RESERVE_ACQUISITION,
             [
                 bytes32(b"\xd1" * 32),
+                DEED_LAUNCHER_ID,
                 bytes32(b"\xa2" * 32),
                 123_000,
                 1,
@@ -1165,6 +1201,7 @@ class TestPoolV2ReserveAcquisition:
             POOL_SPEND_V2_RESERVE_ACQUISITION,
             [
                 bytes32(b"\xd1" * 32),
+                DEED_LAUNCHER_ID,
                 bytes32(b"\xa2" * 32),
                 123_000,
                 1,
@@ -1200,6 +1237,7 @@ class TestPoolV2ReserveAcquisition:
             POOL_SPEND_V2_RESERVE_ACQUISITION,
             [
                 bytes32(b"\xd1" * 32),
+                DEED_LAUNCHER_ID,
                 bytes32(b"\xa2" * 32),
                 123_000,
                 1,
@@ -1224,12 +1262,9 @@ class TestPoolSettlementBinding:
 
     splitxch_root = bytes32(b"\xab" * 32)
     gov_inner_puzhash = bytes32(b"\xac" * 32)
-    gov_singleton_struct = Program.to(
-        (SINGLETON_MOD_HASH, (bytes32(b"\xad" * 32), LAUNCHER_PUZZLE_HASH))
-    )
     releases = [
-        (bytes32(b"\x21" * 32), bytes32(b"\x31" * 32)),
-        (bytes32(b"\x22" * 32), bytes32(b"\x32" * 32)),
+        [bytes32(b"\x21" * 32), bytes32(b"\x41" * 32), bytes32(b"\x31" * 32)],
+        [bytes32(b"\x22" * 32), bytes32(b"\x42" * 32), bytes32(b"\x32" * 32)],
     ]
 
     def run_settlement(self, releases=None):
@@ -1245,7 +1280,6 @@ class TestPoolSettlementBinding:
                 99_999,
                 releases,
                 self.gov_inner_puzhash,
-                self.gov_singleton_struct,
             ],
         )
         return curried.run(sol).as_python()
@@ -1283,7 +1317,7 @@ class TestPoolSettlementBinding:
     def test_mutating_release_destination_changes_required_governance_message(self):
         mutated = [
             self.releases[0],
-            (self.releases[1][0], bytes32(b"\xfe" * 32)),
+            [self.releases[1][0], self.releases[1][1], bytes32(b"\xfe" * 32)],
         ]
         assert settlement_message(self.splitxch_root, 99_999, len(self.releases), mutated) != settlement_message(
             self.splitxch_root,
@@ -1327,7 +1361,7 @@ class TestPoolGovernance:
 
         sol = make_pool_solution(
             my_id, my_inner_puzhash, 1,
-            POOL_SPEND_GOVERNANCE, [POOL_FROZEN, gov_inner_puzhash, gov_singleton_struct],
+            POOL_SPEND_GOVERNANCE, [POOL_FROZEN, gov_inner_puzhash],
         )
         result = curried.run(sol)
         conditions = result.as_python()
@@ -1362,7 +1396,7 @@ class TestPoolGovernance:
 
         sol = make_pool_solution(
             my_id, my_inner_puzhash, 1,
-            POOL_SPEND_GOVERNANCE, [2, gov_inner_puzhash, gov_singleton_struct],
+            POOL_SPEND_GOVERNANCE, [2, gov_inner_puzhash],
         )
         with pytest.raises(ValueError):
             curried.run(sol)
@@ -1379,7 +1413,7 @@ class TestPoolGovernance:
 
         sol = make_pool_solution(
             my_id, my_inner_puzhash, 1,
-            POOL_SPEND_GOVERNANCE, [99, gov_inner_puzhash, gov_singleton_struct],
+            POOL_SPEND_GOVERNANCE, [99, gov_inner_puzhash],
         )
         with pytest.raises(ValueError):
             curried.run(sol)
@@ -1396,7 +1430,7 @@ class TestPoolGovernance:
 
         sol = make_pool_solution(
             my_id, my_inner_puzhash, 1,
-            POOL_SPEND_GOVERNANCE, [POOL_ACTIVE, gov_inner_puzhash, gov_singleton_struct],
+            POOL_SPEND_GOVERNANCE, [POOL_ACTIVE, gov_inner_puzhash],
         )
         # Should NOT raise; should produce 6 conditions including the
         # CREATE_COIN that recreates the pool with POOL_ACTIVE.

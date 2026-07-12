@@ -7,7 +7,7 @@ detect accidental or malicious corruption of the deployed puzzles.
 Usage:
     from solslot_puzzles import load_puzzle, verify_puzzle_checksum
 
-    pool_mod = load_puzzle("pool_singleton_inner.clsp")
+    pool_mod = load_puzzle("pool_singleton_inner_v3.clsp")
     verify_puzzle_checksum()  # raises PuzzleIntegrityError on mismatch
 """
 from __future__ import annotations
@@ -25,11 +25,14 @@ logger = logging.getLogger(__name__)
 PUZZLE_FILENAMES = (
     "singleton_launcher_with_did.clsp",
     "smart_deed_inner.clsp",
+    "smart_deed_inner_v2.clsp",
     "vault_singleton_inner.clsp",
     "p2_vault.clsp",
     "p2_pool.clsp",
+    "p2_pool_v2.clsp",
     "pool_token_tail.clsp",
     "pool_singleton_inner.clsp",
+    "pool_singleton_inner_v3.clsp",
     "governance_singleton_inner.clsp",
     "quorum_did_inner.clsp",
     "mint_offer_delegate.clsp",
@@ -90,6 +93,11 @@ PUZZLE_FILENAMES = (
 # All four A.x puzzles' mod hashes therefore changed; the new values
 # are pinned in the corresponding driver caches and API singletons.py.
 FROZEN_CHECKSUM: Optional[str] = (
+    # 2026-07-11: Solslot Alpha v2 security freeze.
+    #   - pool_singleton_inner_v3 permanently disables legacy exits 2 and 5,
+    #     pins the governance singleton struct, and binds deed commitments.
+    #   - smart_deed_inner_v2 curries the commitment into p2_pool_v2.
+    #   - p2_pool_v2 requires the committed metadata on every release.
     # 2026-07-05: refrozen for Pool Economic V2 audit hardening.
     #   - pool_singleton_inner.clsp now curries and enforces the trusted NAV
     #     registry identity, canonical V2 fee/reserve destination hashes, and
@@ -177,7 +185,7 @@ FROZEN_CHECKSUM: Optional[str] = (
     #   - ceb141a: vault_singleton_inner gained the 'm' (migrate) spend case
     #     for the vault upgrade flow (research/POPULIS_VAULT_UPGRADE_DESIGN.md).
     #   - vault_version_registry_inner.clsp added to PUZZLE_FILENAMES.
-    "31905b9233a9f3bbd89b11a3cb1fa54bdc3d998d5d75c821f08fbfcbd9bf89c0"
+    "ef2bd8cd4cca9c2bf7abeeaaed20d27a1d2bb17db5260c807f1a6a71f2013032"
 )
 
 # ── Cache ──

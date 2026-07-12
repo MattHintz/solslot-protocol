@@ -376,8 +376,13 @@ def build_fixture() -> dict[str, Any]:
 
 
 def fixture_destination() -> Path:
-    repo_root = Path(__file__).resolve().parents[2]
-    return repo_root / "populis_portal" / "src" / "app" / "services" / "admin-authority-v2" / "admin-roster-mips-execution-coin-spend.fixture.json"
+    protocol_root = Path(__file__).resolve().parents[1]
+    return (
+        protocol_root
+        / "fixtures"
+        / "admin-authority-v2"
+        / "admin-roster-mips-execution-coin-spend.fixture.json"
+    )
 
 
 def write_fixture() -> Path:

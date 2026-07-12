@@ -38,6 +38,16 @@ def test_vault_version_registry_is_canonical_and_loadable():
     )
 
 
+def test_solslot_v2_pool_modules_are_canonical_and_loadable():
+    for filename in (
+        "pool_singleton_inner_v3.clsp",
+        "smart_deed_inner_v2.clsp",
+        "p2_pool_v2.clsp",
+    ):
+        assert filename in PUZZLE_FILENAMES
+        assert load_puzzle(filename).get_tree_hash() is not None
+
+
 def test_no_duplicate_puzzle_filenames():
     """Canonical order must not contain duplicates (would double-count the checksum)."""
     assert len(PUZZLE_FILENAMES) == len(set(PUZZLE_FILENAMES))

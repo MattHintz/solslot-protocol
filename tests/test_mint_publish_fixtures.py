@@ -1,7 +1,7 @@
 """Guard the cross-repo mint-publish fixture (Phase 4b).
 
-The portal's Karma test (sub-brick 4c) reads
-``populis_portal/src/app/services/mint-proposal-v2/mint-publish.fixtures.json``
+The portal's Karma test (sub-brick 4c) reads the protocol-owned
+``fixtures/mint-proposal-v2/mint-publish.fixtures.json`` artifact
 to assert its TS port of ``build_mint_publish_artifacts`` matches the Python
 driver byte-for-byte.  This pytest re-runs the dumper and asserts the on-disk
 fixture is up to date so PRs that change
@@ -236,16 +236,16 @@ def test_fixture_matches_pinned_golden_vector() -> None:
     expected = fix["expected"]
     # Pinned in tests/test_mint_publish_driver.py::TestBuildMintPublishArtifacts.
     assert expected["smart_deed_inner_puzhash"] == (
-        "0xc170fd09c025202e2164bf2baaffe2eaa11b7764c6ca1076ea72e2badda6af13"
+        "0x7c136b467c78029bad205002a0c2f57bdd92a5f87dcaedc2bac233d378e3e0dd"
     )
     assert expected["eve_inner_puzhash"] == (
         "0xa88e74279e1f8b22d052d469f8e6505bbacba24aea48d5f18aa43d20d232383f"
     )
     assert expected["deed_full_puzhash"] == (
-        "0x07fdffea875d461bbe5e8291e8205a6838bc9e35ef626196a31f875bad03e9d1"
+        "0xfbabfd153e14099e9b4f6241c12a3a955ba734ba6ab63213ad3095c587a24a83"
     )
     assert expected["proposal_hash"] == (
-        "0x8dfa535f4da69ffed3d218c718db12b18ca12bbf67f1230170ac5338589160c5"
+        "0x2687dd7f1541480a5b0167bca6d938b353ad4f93e21d6a0adaf9fda742afacda"
     )
     assert expected["deed_launcher_id"] == (
         "0x1310b78bf387ea58bb9365e261ff099a6971fd2ca5cc98e750b1d07e92e29b1d"

@@ -182,6 +182,7 @@ class PoolV2ActionSpec:
     next_state: PoolEconomicState
     nav_evidence: CollectionNavEvidence
     required_nav_evidence_message: bytes
+    deed_commitment: bytes32
     pool_action_message: bytes
     deed_message: bytes
     token_outputs: tuple[TokenOutput, ...]
@@ -361,24 +362,42 @@ def token_settlement_payment_message(
     return bytes32(Program.to(coin_id).cons(Program.to(payments)).get_tree_hash())
 
 
-def deed_pool_redeem_message(
-    deed_id: bytes | bytes32,
-    p2_vault_puzzle_hash: bytes | bytes32,
+def deed_metadata_commitment(
+    deed_launcher_id: bytes | bytes32,
+    par_value_mojos: int,
+    asset_class: int,
+    property_id_canon: bytes | bytes32,
     collection_id_canon: bytes | bytes32,
     share_ppm: int,
-) -> bytes:
-    deed = _as_b32(deed_id, "deed_id")
-    p2_vault = _as_b32(p2_vault_puzzle_hash, "p2_vault_puzzle_hash")
+) -> bytes32:
+    launcher_id = _as_b32(deed_launcher_id, "deed_launcher_id")
+    property_id = _as_b32(property_id_canon, "property_id_canon")
     collection = _as_b32(collection_id_canon, "collection_id_canon")
+    if par_value_mojos <= 0:
+        raise ValueError("par_value_mojos must be positive")
+    _validate_uint64(par_value_mojos, "par_value_mojos")
+    _validate_uint64(asset_class, "asset_class")
     if share_ppm <= 0 or share_ppm > SHARE_PPM_DENOMINATOR:
         raise ValueError("share_ppm must be in 1..1_000_000")
-    return prefixed_tree_message(
-        [DEED_SPEND_POOL_REDEEM, deed, p2_vault, collection, int(share_ppm)]
+    return bytes32(
+        Program.to(
+            [launcher_id, par_value_mojos, asset_class, property_id, collection, share_ppm]
+        ).get_tree_hash()
     )
+
+
+def deed_pool_redeem_message(
+    deed_commitment: bytes | bytes32,
+    p2_vault_puzzle_hash: bytes | bytes32,
+) -> bytes:
+    commitment = _as_b32(deed_commitment, "deed_commitment")
+    p2_vault = _as_b32(p2_vault_puzzle_hash, "p2_vault_puzzle_hash")
+    return prefixed_tree_message([DEED_SPEND_POOL_REDEEM, commitment, p2_vault])
 
 
 def deed_pool_deposit_message(
     deed_id: bytes | bytes32,
+    deed_launcher_id: bytes | bytes32,
     par_value_mojos: int,
     asset_class: int,
     property_id_canon: bytes | bytes32,
@@ -388,16 +407,19 @@ def deed_pool_deposit_message(
     deed = _as_b32(deed_id, "deed_id")
     property_id = _as_b32(property_id_canon, "property_id_canon")
     collection = _as_b32(collection_id_canon, "collection_id_canon")
-    if par_value_mojos <= 0:
-        raise ValueError("par_value_mojos must be positive")
-    if asset_class <= 0:
-        raise ValueError("asset_class must be positive")
-    if share_ppm <= 0 or share_ppm > SHARE_PPM_DENOMINATOR:
-        raise ValueError("share_ppm must be in 1..1_000_000")
+    commitment = deed_metadata_commitment(
+        deed_launcher_id,
+        par_value_mojos,
+        asset_class,
+        property_id,
+        collection,
+        share_ppm,
+    )
     return prefixed_tree_message(
         [
             DEED_SPEND_POOL_DEPOSIT,
             deed,
+            commitment,
             int(par_value_mojos),
             int(asset_class),
             property_id,
@@ -437,6 +459,10 @@ def build_specific_deed_swap_spec(
     state: PoolEconomicState,
     *,
     deed_id: bytes | bytes32,
+    deed_launcher_id: bytes | bytes32,
+    par_value_mojos: int,
+    asset_class: int,
+    property_id_canon: bytes | bytes32,
     p2_vault_puzzle_hash: bytes | bytes32,
     collection_id_canon: bytes | bytes32,
     share_ppm: int,
@@ -449,6 +475,14 @@ def build_specific_deed_swap_spec(
     deed = _as_b32(deed_id, "deed_id")
     p2_vault = _as_b32(p2_vault_puzzle_hash, "p2_vault_puzzle_hash")
     collection = _as_b32(collection_id_canon, "collection_id_canon")
+    commitment = deed_metadata_commitment(
+        deed_launcher_id,
+        par_value_mojos,
+        asset_class,
+        property_id_canon,
+        collection,
+        share_ppm,
+    )
     reserve_ph = _as_b32(treasury_reserve_puzhash, "treasury_reserve_puzhash")
     protocol_ph = _as_b32(protocol_treasury_puzhash, "protocol_treasury_puzhash")
     rewards_ph = _as_b32(governance_rewards_puzhash, "governance_rewards_puzhash")
@@ -459,11 +493,12 @@ def build_specific_deed_swap_spec(
         collection_nav_mojos=nav_evidence.nav_value_mojos,
         share_ppm=share_ppm,
     )
-    deed_message = deed_pool_redeem_message(deed, p2_vault, collection, share_ppm)
+    deed_message = deed_pool_redeem_message(commitment, p2_vault)
     pool_action_message = prefixed_tree_message(
         [
             POOL_V2_SPECIFIC_DEED_SWAP_TAG,
             deed,
+            commitment,
             p2_vault,
             collection,
             int(share_ppm),
@@ -488,6 +523,7 @@ def build_specific_deed_swap_spec(
         next_state=_next_state_from_quote(quote),
         nav_evidence=nav_evidence,
         required_nav_evidence_message=nav_evidence.announcement_message,
+        deed_commitment=commitment,
         pool_action_message=pool_action_message,
         deed_message=deed_message,
         token_outputs=(
@@ -517,6 +553,10 @@ def build_true_redemption_spec(
     state: PoolEconomicState,
     *,
     deed_id: bytes | bytes32,
+    deed_launcher_id: bytes | bytes32,
+    par_value_mojos: int,
+    asset_class: int,
+    property_id_canon: bytes | bytes32,
     p2_vault_puzzle_hash: bytes | bytes32,
     collection_id_canon: bytes | bytes32,
     share_ppm: int,
@@ -527,17 +567,26 @@ def build_true_redemption_spec(
     p2_vault = _as_b32(p2_vault_puzzle_hash, "p2_vault_puzzle_hash")
     collection = _as_b32(collection_id_canon, "collection_id_canon")
     token_id = _as_b32(token_coin_id, "token_coin_id")
+    commitment = deed_metadata_commitment(
+        deed_launcher_id,
+        par_value_mojos,
+        asset_class,
+        property_id_canon,
+        collection,
+        share_ppm,
+    )
     _validate_nav_evidence(nav_evidence, collection)
     quote = quote_true_redemption(
         state,
         collection_nav_mojos=nav_evidence.nav_value_mojos,
         share_ppm=share_ppm,
     )
-    deed_message = deed_pool_redeem_message(deed, p2_vault, collection, share_ppm)
+    deed_message = deed_pool_redeem_message(commitment, p2_vault)
     pool_action_message = prefixed_tree_message(
         [
             POOL_V2_TRUE_REDEMPTION_TAG,
             deed,
+            commitment,
             p2_vault,
             collection,
             int(share_ppm),
@@ -557,6 +606,7 @@ def build_true_redemption_spec(
         next_state=_next_state_from_quote(quote),
         nav_evidence=nav_evidence,
         required_nav_evidence_message=nav_evidence.announcement_message,
+        deed_commitment=commitment,
         pool_action_message=pool_action_message,
         deed_message=deed_message,
         token_outputs=(),
@@ -570,6 +620,7 @@ def build_reserve_acquisition_spec(
     state: PoolEconomicState,
     *,
     deed_id: bytes | bytes32,
+    deed_launcher_id: bytes | bytes32,
     property_id_canon: bytes | bytes32,
     par_value_mojos: int,
     asset_class: int,
@@ -604,8 +655,17 @@ def build_reserve_acquisition_spec(
                 quote.fresh_tokens_to_mint,
             ),
         )
+    commitment = deed_metadata_commitment(
+        deed_launcher_id,
+        par_value_mojos,
+        asset_class,
+        property_id,
+        collection,
+        share_ppm,
+    )
     deed_message = deed_pool_deposit_message(
         deed,
+        deed_launcher_id,
         par_value_mojos,
         asset_class,
         property_id,
@@ -616,6 +676,7 @@ def build_reserve_acquisition_spec(
         [
             POOL_V2_RESERVE_ACQUISITION_TAG,
             deed,
+            commitment,
             property_id,
             int(par_value_mojos),
             int(asset_class),
@@ -645,6 +706,7 @@ def build_reserve_acquisition_spec(
         next_state=_next_state_from_quote(quote),
         nav_evidence=nav_evidence,
         required_nav_evidence_message=nav_evidence.announcement_message,
+        deed_commitment=commitment,
         pool_action_message=pool_action_message,
         deed_message=deed_message,
         token_outputs=outputs,
@@ -685,6 +747,7 @@ __all__ = [
     "prefixed_tree_message",
     "token_authorization_message",
     "token_settlement_payment_message",
+    "deed_metadata_commitment",
     "deed_pool_redeem_message",
     "deed_pool_deposit_message",
     "build_specific_deed_swap_spec",

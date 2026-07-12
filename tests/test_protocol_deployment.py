@@ -45,6 +45,9 @@ from solslot_puzzles.protocol_deployment import (
     DEFAULT_MIN_NAV_REGISTRY_VERSION,
     DEFAULT_PGT_TOTAL_SUPPLY,
     DEFAULT_QUORUM_BPS,
+    POOL_PUZZLE_VERSION,
+    PROTOCOL_VERSION,
+    SMART_DEED_PUZZLE_VERSION,
     ProtocolDeploymentParams,
     ProtocolDeploymentPlan,
     build_deployment_bundle,
@@ -80,7 +83,7 @@ def trusted_v2_kwargs() -> dict:
 class _FakeFaucet:
     """Minimal Faucet stand-in for unit tests.
 
-    Real Faucet (in populis_api) wraps a BIP32-derived BLS key + a
+    The real Solslot API faucet wraps a BIP32-derived BLS key plus a
     standard ``puzzle_for_pk`` puzzle.  This stand-in mirrors the same
     contract using a deterministic seed.
     """
@@ -99,7 +102,7 @@ class _FakeFaucet:
             "puzzle": Program.from_bytes(bytes(P2_DELEGATED_MOD)).curry(wallet_pk),
         })()
         self.address_puzzle_hash = bytes32(self.key.puzzle.get_tree_hash())
-        # testnet11 AGG_SIG_ME data (matches populis_api.faucet)
+        # testnet11 AGG_SIG_ME data (matches the Solslot API faucet)
         self.agg_sig_me_data = bytes.fromhex(
             "37a90eb5185a9c4439a91ddc98bbadce7b4feba060d50116a067de66bf236615"
         )
@@ -233,6 +236,30 @@ class TestPlanDerivation:
         )
         assert a.pool_inner_puzhash != b.pool_inner_puzhash
 
+    def test_pool_commits_to_governance_launcher(self, faucet):
+        a = ProtocolDeploymentPlan(
+            network="testnet11",
+            params=ProtocolDeploymentParams(),
+            faucet_inner_puzhash=faucet.address_puzzle_hash,
+            pgt_genesis_coin_id=PGT_GENESIS,
+            pool_genesis_coin_id=POOL_GENESIS,
+            did_genesis_coin_id=DID_GENESIS,
+            gov_genesis_coin_id=GOV_GENESIS,
+            **trusted_v2_kwargs(),
+        )
+        b = ProtocolDeploymentPlan(
+            network="testnet11",
+            params=ProtocolDeploymentParams(),
+            faucet_inner_puzhash=faucet.address_puzzle_hash,
+            pgt_genesis_coin_id=PGT_GENESIS,
+            pool_genesis_coin_id=POOL_GENESIS,
+            did_genesis_coin_id=DID_GENESIS,
+            gov_genesis_coin_id=bytes32(b"\xde" * 32),
+            **trusted_v2_kwargs(),
+        )
+        assert a.governance_singleton_struct_hash != b.governance_singleton_struct_hash
+        assert a.pool_inner_puzhash != b.pool_inner_puzhash
+
     def test_empty_v2_trust_anchors_rejected(self, faucet):
         """Deployment plans must not silently curry sentinel V2 trust anchors."""
         with pytest.raises(ValueError, match="trusted_nav_registry_gov_pubkey"):
@@ -251,6 +278,9 @@ class TestPlanDerivation:
 class TestManifestRoundtrip:
     def test_to_dict_contains_all_fields(self, plan):
         m = plan_to_manifest_dict(plan)
+        assert m["protocol_version"] == PROTOCOL_VERSION
+        assert m["pool_puzzle_version"] == POOL_PUZZLE_VERSION
+        assert m["smart_deed_puzzle_version"] == SMART_DEED_PUZZLE_VERSION
         assert m["params"]["min_nav_registry_version"] == DEFAULT_MIN_NAV_REGISTRY_VERSION
         for required in [
             "network", "params", "faucet_inner_puzhash",
@@ -259,6 +289,8 @@ class TestManifestRoundtrip:
             "pool_launcher_id", "did_launcher_id", "tracker_launcher_id",
             "pgt_tail_hash", "pgt_full_puzhash",
             "pool_token_tail_hash", "pool_inner_puzhash", "pool_full_puzhash",
+            "pool_inner_mod_hash", "p2_pool_mod_hash", "smart_deed_inner_mod_hash",
+            "governance_singleton_struct_hash",
             "did_inner_puzhash", "did_full_puzhash",
             "tracker_inner_puzhash", "tracker_full_puzhash",
         ]:
@@ -287,6 +319,12 @@ class TestManifestRoundtrip:
         # Corrupt the stored pool_full_puzhash
         m["pool_full_puzhash"] = "0x" + ("00" * 32)
         with pytest.raises(ValueError, match="Manifest corruption"):
+            plan_from_manifest_dict(m)
+
+    def test_retired_manifest_rejected(self, plan):
+        m = plan_to_manifest_dict(plan)
+        m["protocol_version"] = "populis-v1"
+        with pytest.raises(ValueError, match="retired protocol_version"):
             plan_from_manifest_dict(m)
 
     def test_save_load_round_trip(self, plan, tmp_path):

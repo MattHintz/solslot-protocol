@@ -7,7 +7,7 @@ UI controls consume the values.
 
 Usage::
 
-    cd populis_protocol
+    cd solslot-protocol
     .venv/bin/python scripts/dump_pool_economics_v2_fixtures.py
 """
 from __future__ import annotations
@@ -86,10 +86,15 @@ POOL_SPEND_V2_RESERVE_ACQUISITION = 8
 COLLECTION_ID = b32(0xA1)
 PROPERTY_ID = b32(0xA2)
 DEED_ID = b32(0xD1)
+DEED_LAUNCHER_ID = b32(0xD2)
 TOKEN_COIN_ID = b32(0xE1)
 POOL_LAUNCHER_ID = b32(0x13)
 POOL_SINGLETON_STRUCT = Program.to(
     (SINGLETON_MOD_HASH, (POOL_LAUNCHER_ID, SINGLETON_LAUNCHER_HASH))
+)
+GOVERNANCE_LAUNCHER_ID = b32(0x18)
+GOVERNANCE_SINGLETON_STRUCT = Program.to(
+    (SINGLETON_MOD_HASH, (GOVERNANCE_LAUNCHER_ID, SINGLETON_LAUNCHER_HASH))
 )
 PROTOCOL_DID_PUZHASH = b32(0x14)
 POOL_PARENT_COIN_ID = b32(0x15)
@@ -144,7 +149,7 @@ def _p2_vault_mod_hash() -> bytes32:
 
 def _pool_inner_mod() -> Program:
     return load_clvm(
-        "pool_singleton_inner.clsp",
+        "pool_singleton_inner_v3.clsp",
         package_or_requirement="solslot_puzzles",
         recompile=True,
     )
@@ -157,6 +162,7 @@ POOL_INNER_MOD_HASH = bytes32(POOL_INNER_MOD.get_tree_hash())
 POOL_INNER = POOL_INNER_MOD.curry(
     POOL_INNER_MOD_HASH,
     POOL_SINGLETON_STRUCT,
+    GOVERNANCE_SINGLETON_STRUCT,
     PROTOCOL_DID_PUZHASH,
     POOL_TOKEN_TAIL_HASH,
     CAT_MOD_HASH,
@@ -267,6 +273,7 @@ def _spec_expected_dict(spec: PoolV2ActionSpec) -> dict[str, Any]:
         "next_state": _state_dict(spec.next_state),
         "nav_evidence_message": _hex(spec.nav_evidence.evidence_message),
         "required_nav_evidence_message": _hex(spec.required_nav_evidence_message),
+        "deed_commitment": _hex(spec.deed_commitment),
         "pool_action_message": _hex(spec.pool_action_message),
         "deed_message": _hex(spec.deed_message),
         "token_outputs": [_token_output_dict(output) for output in spec.token_outputs],
@@ -341,6 +348,10 @@ def build_fixture() -> dict[str, Any]:
     swap = build_specific_deed_swap_spec(
         STATE,
         deed_id=DEED_ID,
+        deed_launcher_id=DEED_LAUNCHER_ID,
+        par_value_mojos=123_000,
+        asset_class=1,
+        property_id_canon=PROPERTY_ID,
         p2_vault_puzzle_hash=P2_VAULT,
         collection_id_canon=COLLECTION_ID,
         share_ppm=250_000,
@@ -353,6 +364,10 @@ def build_fixture() -> dict[str, Any]:
     redemption = build_true_redemption_spec(
         STATE,
         deed_id=DEED_ID,
+        deed_launcher_id=DEED_LAUNCHER_ID,
+        par_value_mojos=123_000,
+        asset_class=1,
+        property_id_canon=PROPERTY_ID,
         p2_vault_puzzle_hash=P2_VAULT,
         collection_id_canon=COLLECTION_ID,
         share_ppm=250_000,
@@ -362,6 +377,7 @@ def build_fixture() -> dict[str, Any]:
     acquisition = build_reserve_acquisition_spec(
         STATE,
         deed_id=DEED_ID,
+        deed_launcher_id=DEED_LAUNCHER_ID,
         property_id_canon=PROPERTY_ID,
         par_value_mojos=123_000,
         asset_class=1,
@@ -373,6 +389,10 @@ def build_fixture() -> dict[str, Any]:
     )
     swap_params = [
         DEED_ID,
+        DEED_LAUNCHER_ID,
+        123_000,
+        1,
+        PROPERTY_ID,
         COLLECTION_ID,
         250_000,
         NAV_EVIDENCE.nav_value_mojos,
@@ -389,6 +409,10 @@ def build_fixture() -> dict[str, Any]:
     ]
     redemption_params = [
         DEED_ID,
+        DEED_LAUNCHER_ID,
+        123_000,
+        1,
+        PROPERTY_ID,
         COLLECTION_ID,
         250_000,
         NAV_EVIDENCE.nav_value_mojos,
@@ -402,6 +426,7 @@ def build_fixture() -> dict[str, Any]:
     ]
     acquisition_params = [
         DEED_ID,
+        DEED_LAUNCHER_ID,
         PROPERTY_ID,
         123_000,
         1,
@@ -450,6 +475,7 @@ def build_fixture() -> dict[str, Any]:
             "min_nav_registry_version": MIN_NAV_REGISTRY_VERSION,
             "pool_amount": int(POOL_AMOUNT),
             "deed_id": _hex(DEED_ID),
+            "deed_launcher_id": _hex(DEED_LAUNCHER_ID),
             "p2_vault_puzzle_hash": _hex(P2_VAULT),
             "buyer_vault_launcher_id": _hex(BUYER_VAULT_LAUNCHER_ID),
             "launcher_puzzle_hash": _hex(SINGLETON_LAUNCHER_HASH),
@@ -522,13 +548,8 @@ def build_fixture() -> dict[str, Any]:
     }
 
 
-def _services_dir() -> Path:
-    repo_root = Path(__file__).resolve().parents[2]
-    return repo_root / "populis_portal" / "src" / "app" / "services"
-
-
 def fixture_destination() -> Path:
-    return _services_dir() / "pool-economics-v2.fixtures.json"
+    return Path(__file__).resolve().parents[1] / "fixtures" / "pool-economics-v2.fixtures.json"
 
 
 def main() -> None:

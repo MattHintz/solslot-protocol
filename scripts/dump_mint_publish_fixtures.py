@@ -8,7 +8,7 @@ desk *before* the publish bundle is signed.
 
 This script writes:
 
-  * ``populis_portal/src/app/services/mint-proposal-v2/mint-publish.fixtures.json``
+  * ``fixtures/mint-proposal-v2/mint-publish.fixtures.json``
     A single canonical fixture (deterministic inputs + expected outputs) that
     the TS Karma test reads to assert byte-equality.
 
@@ -23,7 +23,7 @@ part of the protocol puzzle bundle the portal loads via existing helpers.
 
 Usage::
 
-    cd populis_protocol
+    cd solslot-protocol
     .venv/bin/python scripts/dump_mint_publish_fixtures.py
 """
 from __future__ import annotations
@@ -57,6 +57,7 @@ from solslot_puzzles.mint_publish_driver import (
     build_pgt_first_vote_coin_spend,
     build_proposal_eve_launch_spend,
     build_tracker_propose_coin_spend,
+    canonical_p2_pool_mod_hash,
 )
 from solslot_puzzles.pgt_driver import (
     cat_pgt_free_puzzle_hash,
@@ -103,7 +104,7 @@ PROPERTY_ID = bytes32(b"\xa1" * 32)
 COLLECTION_ID = bytes32(b"\xa8" * 32)
 ROYALTY_PUZHASH = bytes32(b"\xa2" * 32)
 PROTOCOL_DID_PUZHASH = bytes32(b"\xa3" * 32)
-P2_POOL_MOD_HASH = bytes32(b"\xa4" * 32)
+P2_POOL_MOD_HASH = canonical_p2_pool_mod_hash()
 P2_VAULT_MOD_HASH = bytes32(b"\xa5" * 32)
 PROPERTY_REGISTRY_PUZZLE_HASH = bytes32(b"\xa7" * 32)
 OWNER_MEMBER_HASH = bytes32(b"\xa6" * 32)
@@ -520,15 +521,8 @@ def _build_spend_sections(artifacts: Any) -> dict[str, Any]:
 
 
 def _services_dir() -> Path:
-    repo_root = Path(__file__).resolve().parents[2]
-    return (
-        repo_root
-        / "populis_portal"
-        / "src"
-        / "app"
-        / "services"
-        / "mint-proposal-v2"
-    )
+    protocol_root = Path(__file__).resolve().parents[1]
+    return protocol_root / "fixtures" / "mint-proposal-v2"
 
 
 def fixture_destination() -> Path:

@@ -19,6 +19,7 @@ from solslot_puzzles.pool_economics_v2 import (
     build_specific_deed_swap_spec,
     build_true_redemption_spec,
     deed_nav_mojos,
+    deed_metadata_commitment,
     deed_pool_deposit_message,
     deed_pool_redeem_message,
     fee_split_for_principal,
@@ -162,17 +163,22 @@ def test_nav_evidence_message_is_registry_driver_compatible():
 
 def test_deed_and_token_messages_match_clvm_tree_shapes():
     deed_id = b32(0xD1)
+    deed_launcher_id = b32(0xD3)
     p2_vault = b32(0xD2)
     collection_id = b32(0xA1)
     token_coin_id = b32(0xE1)
     property_id = b32(0xA2)
 
-    assert deed_pool_redeem_message(deed_id, p2_vault, collection_id, 250_000) == (
+    commitment = deed_metadata_commitment(
+        deed_launcher_id, 123_000, 1, property_id, collection_id, 250_000
+    )
+    assert deed_pool_redeem_message(commitment, p2_vault) == (
         PROTOCOL_PREFIX
-        + Program.to([DEED_SPEND_POOL_REDEEM, deed_id, p2_vault, collection_id, 250_000]).get_tree_hash()
+        + Program.to([DEED_SPEND_POOL_REDEEM, commitment, p2_vault]).get_tree_hash()
     )
     assert deed_pool_deposit_message(
         deed_id,
+        deed_launcher_id,
         123_000,
         1,
         property_id,
@@ -184,6 +190,7 @@ def test_deed_and_token_messages_match_clvm_tree_shapes():
             [
                 DEED_SPEND_POOL_DEPOSIT,
                 deed_id,
+                commitment,
                 123_000,
                 1,
                 property_id,
@@ -208,6 +215,8 @@ def test_specific_deed_swap_spec_binds_nav_deed_reserve_and_fee_outputs():
         treasury_reserve_tokens=200_000_000,
     )
     deed_id = b32(0xD1)
+    deed_launcher_id = b32(0xD3)
+    property_id = b32(0xA2)
     p2_vault = b32(0xD2)
     collection_id = b32(0xA1)
     evidence = nav_evidence(collection_id)
@@ -215,6 +224,10 @@ def test_specific_deed_swap_spec_binds_nav_deed_reserve_and_fee_outputs():
     spec = build_specific_deed_swap_spec(
         state,
         deed_id=deed_id,
+        deed_launcher_id=deed_launcher_id,
+        par_value_mojos=123_000,
+        asset_class=1,
+        property_id_canon=property_id,
         p2_vault_puzzle_hash=p2_vault,
         collection_id_canon=collection_id,
         share_ppm=250_000,
@@ -234,10 +247,8 @@ def test_specific_deed_swap_spec_binds_nav_deed_reserve_and_fee_outputs():
     )
     assert spec.required_nav_evidence_message == evidence.announcement_message
     assert spec.deed_message == deed_pool_redeem_message(
-        deed_id,
+        spec.deed_commitment,
         p2_vault,
-        collection_id,
-        250_000,
     )
     assert [(o.role, o.amount) for o in spec.token_outputs] == [
         ("treasury_reserve_principal", 150_000_000),
@@ -289,6 +300,8 @@ def test_true_redemption_spec_melts_principal_tokens_and_releases_deed():
         treasury_reserve_tokens=200_000_000,
     )
     deed_id = b32(0xD1)
+    deed_launcher_id = b32(0xD3)
+    property_id = b32(0xA2)
     p2_vault = b32(0xD2)
     collection_id = b32(0xA1)
     token_coin_id = b32(0xE1)
@@ -296,6 +309,10 @@ def test_true_redemption_spec_melts_principal_tokens_and_releases_deed():
     spec = build_true_redemption_spec(
         state,
         deed_id=deed_id,
+        deed_launcher_id=deed_launcher_id,
+        par_value_mojos=123_000,
+        asset_class=1,
+        property_id_canon=property_id,
         p2_vault_puzzle_hash=p2_vault,
         collection_id_canon=collection_id,
         share_ppm=250_000,
@@ -315,10 +332,8 @@ def test_true_redemption_spec_melts_principal_tokens_and_releases_deed():
         150_000_000,
     )
     assert spec.deed_message == deed_pool_redeem_message(
-        deed_id,
+        spec.deed_commitment,
         p2_vault,
-        collection_id,
-        250_000,
     )
 
 
@@ -330,6 +345,7 @@ def test_reserve_acquisition_spec_uses_reserve_then_mints_shortfall():
         treasury_reserve_tokens=200_000_000,
     )
     deed_id = b32(0xD1)
+    deed_launcher_id = b32(0xD3)
     property_id = b32(0xA2)
     collection_id = b32(0xA1)
     seller = b32(0xB1)
@@ -337,6 +353,7 @@ def test_reserve_acquisition_spec_uses_reserve_then_mints_shortfall():
     spec = build_reserve_acquisition_spec(
         state,
         deed_id=deed_id,
+        deed_launcher_id=deed_launcher_id,
         property_id_canon=property_id,
         par_value_mojos=123_000,
         asset_class=1,
@@ -368,6 +385,7 @@ def test_reserve_acquisition_spec_uses_reserve_then_mints_shortfall():
     assert spec.token_authorizations == ()
     assert spec.deed_message == deed_pool_deposit_message(
         deed_id,
+        deed_launcher_id,
         123_000,
         1,
         property_id,
@@ -388,6 +406,7 @@ def test_reserve_acquisition_requires_mint_coin_for_fresh_shortfall():
         build_reserve_acquisition_spec(
             state,
             deed_id=b32(0xD1),
+            deed_launcher_id=b32(0xD3),
             property_id_canon=b32(0xA2),
             par_value_mojos=123_000,
             asset_class=1,
@@ -417,6 +436,10 @@ def test_action_specs_reject_nav_evidence_for_wrong_collection():
         build_true_redemption_spec(
             state,
             deed_id=b32(0xD1),
+            deed_launcher_id=b32(0xD3),
+            par_value_mojos=123_000,
+            asset_class=1,
+            property_id_canon=b32(0xA3),
             p2_vault_puzzle_hash=b32(0xD2),
             collection_id_canon=b32(0xA1),
             share_ppm=250_000,

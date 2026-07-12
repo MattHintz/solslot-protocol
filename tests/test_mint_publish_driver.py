@@ -68,6 +68,7 @@ from solslot_puzzles.mint_publish_driver import (
     deed_launcher_coin_for_parent,
     deed_launcher_puzzle_hash,
     deed_singleton_struct,
+    canonical_p2_pool_mod_hash,
     make_mint_offer_eve_inner,
     make_smart_deed_inner,
     proposal_singleton_launcher_coin_for_parent,
@@ -86,7 +87,7 @@ PROPERTY_ID = _b(0xA1)
 COLLECTION_ID = _b(0xA8)
 ROYALTY_PUZHASH = _b(0xA2)
 PROTOCOL_DID_PUZHASH = _b(0xA3)
-P2_POOL_MOD_HASH = _b(0xA4)
+P2_POOL_MOD_HASH = canonical_p2_pool_mod_hash()
 P2_VAULT_MOD_HASH = _b(0xA5)
 PROPERTY_REGISTRY_PUZZLE_HASH = _b(0xA7)
 OWNER_MEMBER_HASH = _b(0xA6)
@@ -275,6 +276,12 @@ class TestSmartDeedInner:
         kwargs = self._kwargs()
         kwargs[field] = bad_value
         with pytest.raises(ValueError, match=msg):
+            make_smart_deed_inner(**kwargs)
+
+    def test_rejects_retired_p2_pool_module_hash(self):
+        kwargs = self._kwargs()
+        kwargs["p2_pool_mod_hash"] = _b(0xA5)
+        with pytest.raises(ValueError, match="retired or unsupported"):
             make_smart_deed_inner(**kwargs)
 
 
@@ -774,20 +781,20 @@ class TestBuildMintPublishArtifacts:
         # current observed value in the assertion diff, copy the new
         # hex into the slot, and bump the freeze comment below.
         #
-        # Refrozen 2026-06-30: Pool Economic V2 collection/share metadata
-        # is bound into smart-deed curry args and proposal_data_hash.
+        # Refrozen 2026-07-11: Solslot v2 uses smart_deed_inner_v2 and
+        # p2_pool_v2, binding the canonical deed commitment into escrow.
         pinned = {
             "smart_deed_inner_puzhash": (
-                "c170fd09c025202e2164bf2baaffe2eaa11b7764c6ca1076ea72e2badda6af13"
+                "7c136b467c78029bad205002a0c2f57bdd92a5f87dcaedc2bac233d378e3e0dd"
             ),
             "eve_inner_puzhash": (
                 "a88e74279e1f8b22d052d469f8e6505bbacba24aea48d5f18aa43d20d232383f"
             ),
             "deed_full_puzhash": (
-                "07fdffea875d461bbe5e8291e8205a6838bc9e35ef626196a31f875bad03e9d1"
+                "fbabfd153e14099e9b4f6241c12a3a955ba734ba6ab63213ad3095c587a24a83"
             ),
             "proposal_hash": (
-                "8dfa535f4da69ffed3d218c718db12b18ca12bbf67f1230170ac5338589160c5"
+                "2687dd7f1541480a5b0167bca6d938b353ad4f93e21d6a0adaf9fda742afacda"
             ),
             "deed_launcher_id": (
                 "1310b78bf387ea58bb9365e261ff099a6971fd2ca5cc98e750b1d07e92e29b1d"

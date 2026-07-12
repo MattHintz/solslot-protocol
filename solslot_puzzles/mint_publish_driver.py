@@ -37,12 +37,12 @@ the wallet can sign.
 
 Cross-repo binding:
 
-  * ``populis_portal/src/app/services/mint-proposal-v2/`` mirrors
+  * The Solslot portal mint-proposal service mirrors
     every hash computation in TypeScript; the fixture dump in
     :file:`scripts/dump_mint_publish_fixtures.py` (sub-brick 4b)
     is the canonical reference both sides regression against.
 
-  * ``populis_api/populis_api/mint_endpoints.py``'s upcoming
+  * The Solslot API mint endpoint's
     ``POST /admin/committee/propose`` (sub-brick 4e) re-runs this
     driver server-side to validate the spend bundle the portal
     submits — the API never trusts the portal's hash claims.
@@ -91,7 +91,7 @@ from solslot_puzzles.pgt_driver import (
 #: defconstant (``'M' = 0x4d``).
 BILL_MINT_TAG = 0x4D
 
-#: Singleton coin amount (mojos).  All Populis singletons are
+#: Singleton coin amount (mojos).  All Solslot singletons are
 #: odd-amount singletons per chia singleton_top_layer_v1_1.
 SINGLETON_AMOUNT = 1
 
@@ -107,8 +107,13 @@ _SINGLETON_LAUNCHER_WITH_DID_MOD: Program | None = None
 def _smart_deed_inner_mod() -> Program:
     global _SMART_DEED_INNER_MOD
     if _SMART_DEED_INNER_MOD is None:
-        _SMART_DEED_INNER_MOD = load_puzzle("smart_deed_inner.clsp")
+        _SMART_DEED_INNER_MOD = load_puzzle("smart_deed_inner_v2.clsp")
     return _SMART_DEED_INNER_MOD
+
+
+def canonical_p2_pool_mod_hash() -> bytes32:
+    """Return the only escrow module accepted by Solslot protocol v2."""
+    return bytes32(load_puzzle("p2_pool_v2.clsp").get_tree_hash())
 
 
 def _mint_offer_delegate_mod() -> Program:
@@ -220,7 +225,7 @@ def make_smart_deed_inner(
     p2_pool_mod_hash: bytes32,
     p2_vault_mod_hash: bytes32,
 ) -> Program:
-    """Curry :file:`smart_deed_inner.clsp` for the post-purchase deed inner.
+    """Curry :file:`smart_deed_inner_v2.clsp` for the post-purchase deed inner.
 
     Currying order **must** match the puzzle's mod arguments (see
     the .clsp source):
@@ -265,6 +270,12 @@ def make_smart_deed_inner(
     if len(p2_pool_mod_hash) != 32:
         raise ValueError(
             f"p2_pool_mod_hash must be 32 bytes, got {len(p2_pool_mod_hash)}"
+        )
+    expected_p2_pool_mod_hash = canonical_p2_pool_mod_hash()
+    if p2_pool_mod_hash != expected_p2_pool_mod_hash:
+        raise ValueError(
+            "p2_pool_mod_hash is retired or unsupported; expected Solslot v2 "
+            f"{expected_p2_pool_mod_hash.hex()}"
         )
     if len(p2_vault_mod_hash) != 32:
         raise ValueError(
@@ -453,9 +464,9 @@ class MintPublishArtifacts:
     Consumed by:
       * :mod:`scripts.dump_mint_publish_fixtures` (sub-brick 4b) →
         portal Karma fixture.
-      * :class:`populis_portal.MintProposalV2Service` (sub-brick 4c)
+      * the Solslot portal mint-proposal service (sub-brick 4c)
         re-derives every field client-side, byte-equal.
-      * :class:`populis_api.mint_endpoints.publish_endpoint` (sub-brick
+      * the Solslot API publish endpoint (sub-brick
         4e) re-derives server-side and rejects bundles whose claimed
         hashes drift from the canonical computation.
 

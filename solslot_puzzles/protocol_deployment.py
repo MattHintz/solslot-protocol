@@ -1,4 +1,4 @@
-"""Populis Protocol — testnet deployment driver.
+"""Solslot Protocol v2 testnet deployment driver.
 
 Given:
   - a faucet (BLS-keyed XCH wallet that pays for launchers)
@@ -92,6 +92,9 @@ DEFAULT_MIN_NAV_REGISTRY_VERSION = 0   # deployment-governed NAV freshness floor
 SINGLETON_AMOUNT = uint64(1)
 DEFAULT_EMPTY_B32 = bytes32(b"\x00" * 32)
 DEFAULT_EMPTY_GOV_PUBKEY = b"\x00" * 48
+PROTOCOL_VERSION = "solslot-alpha-v2"
+POOL_PUZZLE_VERSION = 3
+SMART_DEED_PUZZLE_VERSION = 2
 
 
 def _reject_empty_b32(value: bytes32, name: str) -> None:
@@ -114,7 +117,7 @@ def _pool_inner_mod() -> Program:
     global _POOL_INNER_MOD
     if _POOL_INNER_MOD is None:
         _POOL_INNER_MOD = load_clvm(
-            "pool_singleton_inner.clsp",
+            "pool_singleton_inner_v3.clsp",
             package_or_requirement="solslot_puzzles",
             recompile=True,
         )
@@ -148,6 +151,22 @@ def _p2_vault_mod_hash() -> bytes32:
         "p2_vault.clsp", package_or_requirement="solslot_puzzles", recompile=True
     )
     return bytes32(p2_vault.get_tree_hash())
+
+
+def _p2_pool_v2_mod_hash() -> bytes32:
+    p2_pool = load_clvm(
+        "p2_pool_v2.clsp", package_or_requirement="solslot_puzzles", recompile=True
+    )
+    return bytes32(p2_pool.get_tree_hash())
+
+
+def _smart_deed_inner_v2_mod_hash() -> bytes32:
+    smart_deed = load_clvm(
+        "smart_deed_inner_v2.clsp",
+        package_or_requirement="solslot_puzzles",
+        recompile=True,
+    )
+    return bytes32(smart_deed.get_tree_hash())
 
 
 # ─── Deterministic launcher-coin computation ────────────────────────────────
@@ -195,6 +214,7 @@ def pool_token_tail_hash(pool_launcher_id: bytes32) -> bytes32:
 def pool_inner_puzzle(
     pool_launcher_id: bytes32,
     protocol_did_full_puzhash: bytes32,
+    governance_launcher_id: bytes32,
     *,
     nav_registry_mod_hash: bytes32 | None = None,
     nav_registry_gov_pubkey: bytes | None = None,
@@ -212,6 +232,7 @@ def pool_inner_puzzle(
     treasury_reserve_tokens: int = 0,
 ) -> Program:
     """Curry the pool singleton inner puzzle for the given deployment context."""
+    _reject_empty_b32(governance_launcher_id, "governance_launcher_id")
     mod = _pool_inner_mod()
     mod_hash = mod.get_tree_hash()
     nav_registry_mod_hash = nav_registry_mod_hash or collection_nav_registry_inner_mod_hash()
@@ -226,6 +247,7 @@ def pool_inner_puzzle(
     return mod.curry(
         mod_hash,
         singleton_struct(pool_launcher_id),
+        singleton_struct(governance_launcher_id),
         protocol_did_full_puzhash,
         pool_token_tail_hash(pool_launcher_id),
         CAT_MOD_HASH,
@@ -336,6 +358,11 @@ class ProtocolDeploymentPlan:
     trusted_governance_rewards_puzhash: bytes32 | None = None
     trusted_governance_rewards_root: bytes32 = DEFAULT_EMPTY_B32
 
+    # ── Versioned deployment identity ────────────────────────────────────
+    protocol_version: str = field(init=False, default=PROTOCOL_VERSION)
+    pool_puzzle_version: int = field(init=False, default=POOL_PUZZLE_VERSION)
+    smart_deed_puzzle_version: int = field(init=False, default=SMART_DEED_PUZZLE_VERSION)
+
     # ── Derived launcher IDs ──────────────────────────────────────────────
     pool_launcher_id: bytes32 = field(init=False)
     did_launcher_id: bytes32 = field(init=False)
@@ -346,6 +373,10 @@ class ProtocolDeploymentPlan:
     pgt_full_puzhash: bytes32 = field(init=False)        # CAT2(PGT) coin's puzhash
 
     pool_token_tail_hash: bytes32 = field(init=False)
+    pool_inner_mod_hash: bytes32 = field(init=False)
+    p2_pool_mod_hash: bytes32 = field(init=False)
+    smart_deed_inner_mod_hash: bytes32 = field(init=False)
+    governance_singleton_struct_hash: bytes32 = field(init=False)
     pool_inner_puzhash: bytes32 = field(init=False)
     pool_full_puzhash: bytes32 = field(init=False)
 
@@ -399,6 +430,12 @@ class ProtocolDeploymentPlan:
         self.tracker_launcher_id = bytes32(
             Coin(self.gov_genesis_coin_id, SINGLETON_LAUNCHER_HASH, SINGLETON_AMOUNT).name()
         )
+        self.pool_inner_mod_hash = bytes32(_pool_inner_mod().get_tree_hash())
+        self.p2_pool_mod_hash = _p2_pool_v2_mod_hash()
+        self.smart_deed_inner_mod_hash = _smart_deed_inner_v2_mod_hash()
+        self.governance_singleton_struct_hash = bytes32(
+            singleton_struct(self.tracker_launcher_id).get_tree_hash()
+        )
 
         # Step 2: PGT TAIL hash from genesis coin id
         self.pgt_tail_hash = bytes32(pgt_tail_hash(self.pgt_genesis_coin_id))
@@ -417,6 +454,7 @@ class ProtocolDeploymentPlan:
         pool_inner = pool_inner_puzzle(
             self.pool_launcher_id,
             self.did_full_puzhash,
+            self.tracker_launcher_id,
             nav_registry_mod_hash=self.trusted_nav_registry_mod_hash,
             nav_registry_gov_pubkey=self.trusted_nav_registry_gov_pubkey,
             nav_registry_launcher_id=self.trusted_nav_registry_launcher_id,
@@ -478,7 +516,7 @@ class DeploymentBundle:
 def build_deployment_bundle(
     *,
     plan: ProtocolDeploymentPlan,
-    faucet,                                   # populis_api.faucet.Faucet
+    faucet,                                   # Solslot API faucet implementation
     pgt_coin: Coin,
     pool_coin: Coin,
     did_coin: Coin,
@@ -658,6 +696,20 @@ def plan_from_manifest_dict(data: dict[str, Any]) -> ProtocolDeploymentPlan:
     def _b32(s: Any) -> bytes32:
         return bytes32.fromhex(s[2:] if s.startswith("0x") else s)
 
+    if data.get("protocol_version") != PROTOCOL_VERSION:
+        raise ValueError(
+            f"Unsupported or retired protocol_version: {data.get('protocol_version')!r}"
+        )
+    if data.get("pool_puzzle_version") != POOL_PUZZLE_VERSION:
+        raise ValueError(
+            f"Unsupported or retired pool_puzzle_version: {data.get('pool_puzzle_version')!r}"
+        )
+    if data.get("smart_deed_puzzle_version") != SMART_DEED_PUZZLE_VERSION:
+        raise ValueError(
+            "Unsupported or retired smart_deed_puzzle_version: "
+            f"{data.get('smart_deed_puzzle_version')!r}"
+        )
+
     params = ProtocolDeploymentParams(**data["params"])
     trusted_kwargs: dict[str, Any] = {}
     for key in [
@@ -689,6 +741,8 @@ def plan_from_manifest_dict(data: dict[str, Any]) -> ProtocolDeploymentPlan:
         "pool_launcher_id", "did_launcher_id", "tracker_launcher_id",
         "pgt_tail_hash", "pgt_full_puzhash",
         "pool_token_tail_hash", "pool_inner_puzhash", "pool_full_puzhash",
+        "pool_inner_mod_hash", "p2_pool_mod_hash", "smart_deed_inner_mod_hash",
+        "governance_singleton_struct_hash",
         "did_inner_puzhash", "did_full_puzhash",
         "tracker_inner_puzhash", "tracker_full_puzhash",
         "trusted_nav_registry_mod_hash", "trusted_nav_registry_launcher_id",
@@ -736,12 +790,15 @@ def load_manifest_dict(path: Path) -> dict[str, Any]:
     """
     raw = json.loads(path.read_text())
     required = {
-        "network", "params", "faucet_inner_puzhash",
+        "network", "params", "protocol_version", "pool_puzzle_version",
+        "smart_deed_puzzle_version", "faucet_inner_puzhash",
         "pgt_genesis_coin_id", "pool_genesis_coin_id",
         "did_genesis_coin_id", "gov_genesis_coin_id",
         "pool_launcher_id", "did_launcher_id", "tracker_launcher_id",
         "pgt_tail_hash", "pgt_full_puzhash",
         "pool_token_tail_hash", "pool_inner_puzhash", "pool_full_puzhash",
+        "pool_inner_mod_hash", "p2_pool_mod_hash", "smart_deed_inner_mod_hash",
+        "governance_singleton_struct_hash",
         "did_inner_puzhash", "did_full_puzhash",
         "tracker_inner_puzhash", "tracker_full_puzhash",
     }
@@ -749,7 +806,21 @@ def load_manifest_dict(path: Path) -> dict[str, Any]:
     if missing:
         raise ValueError(f"Manifest missing required fields: {sorted(missing)}")
     # Sanity: all 32-byte hex fields should be 0x-prefixed 64 hex chars
-    hex_fields = required - {"network", "params"}
+    if raw["protocol_version"] != PROTOCOL_VERSION:
+        raise ValueError(f"Unsupported or retired protocol_version: {raw['protocol_version']!r}")
+    if raw["pool_puzzle_version"] != POOL_PUZZLE_VERSION:
+        raise ValueError(
+            f"Unsupported or retired pool_puzzle_version: {raw['pool_puzzle_version']!r}"
+        )
+    if raw["smart_deed_puzzle_version"] != SMART_DEED_PUZZLE_VERSION:
+        raise ValueError(
+            "Unsupported or retired smart_deed_puzzle_version: "
+            f"{raw['smart_deed_puzzle_version']!r}"
+        )
+    hex_fields = required - {
+        "network", "params", "protocol_version", "pool_puzzle_version",
+        "smart_deed_puzzle_version",
+    }
     for f in hex_fields:
         v = raw[f]
         if not isinstance(v, str) or not v.startswith("0x") or len(v) != 66:
@@ -760,6 +831,9 @@ def load_manifest_dict(path: Path) -> dict[str, Any]:
 
 
 __all__ = [
+    "PROTOCOL_VERSION",
+    "POOL_PUZZLE_VERSION",
+    "SMART_DEED_PUZZLE_VERSION",
     "DEFAULT_QUORUM_BPS",
     "DEFAULT_VOTING_WINDOW_SECONDS",
     "DEFAULT_PGT_TOTAL_SUPPLY",
