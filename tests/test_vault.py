@@ -375,7 +375,7 @@ class TestVaultBLSAcceptOffer:
         # Pinned solution tree hash. Embeds the vault inner puzzle hash, so it
         # updates whenever vault_singleton_inner.clsp's mod hash changes — here,
         # the 'm' (migrate) spend case (vault upgrade flow) was added.
-        assert sol.get_tree_hash().hex() == "435c607c67a8892d3690b4abaad15cf9e5f375251d567ece2e35f89fdf0167c9"
+        assert sol.get_tree_hash().hex() == "4892098fce995a73f42b6d80963bfd1e0a52d5649028810a2a4cad0258ee2e5f"
         fields = list(sol.as_iter())
         params = list(fields[4].as_iter())
         assert bytes32(fields[0].as_atom()) == my_id
@@ -1897,14 +1897,14 @@ class TestEVMWalletLoginEndToEnd:
         )
 
         td = eip712_typed_data_for_vault_spend(b"o", DEED_LAUNCHER_ID, bytes32(b"\x11" * 32))
-        assert td["primaryType"] == "PopulisVaultSpend"
+        assert td["primaryType"] == "SolslotVaultSpend"
         assert td["domain"] == {
             "name": EIP712_DOMAIN_NAME,
             "version": EIP712_DOMAIN_VERSION,
             "chainId": EIP712_DOMAIN_CHAIN_ID,
         }
         assert "EIP712Domain" in td["types"]
-        assert "PopulisVaultSpend" in td["types"]
+        assert "SolslotVaultSpend" in td["types"]
         # bytes32 fields serialized as 0x-prefixed 64-hex strings
         assert td["message"]["spend_case"].startswith("0x") and len(td["message"]["spend_case"]) == 66
         assert td["message"]["deed_launcher_id"] == "0x" + bytes(DEED_LAUNCHER_ID).hex()

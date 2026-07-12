@@ -98,6 +98,7 @@ FROZEN_CHECKSUM: Optional[str] = (
     #     pins the governance singleton struct, and binds deed commitments.
     #   - smart_deed_inner_v2 curries the commitment into p2_pool_v2.
     #   - p2_pool_v2 requires the committed metadata on every release.
+    #   - vault and zkPassport bridge domains advance to Solslot policy v2.
     # 2026-07-05: refrozen for Pool Economic V2 audit hardening.
     #   - pool_singleton_inner.clsp now curries and enforces the trusted NAV
     #     registry identity, canonical V2 fee/reserve destination hashes, and
@@ -185,7 +186,7 @@ FROZEN_CHECKSUM: Optional[str] = (
     #   - ceb141a: vault_singleton_inner gained the 'm' (migrate) spend case
     #     for the vault upgrade flow (research/POPULIS_VAULT_UPGRADE_DESIGN.md).
     #   - vault_version_registry_inner.clsp added to PUZZLE_FILENAMES.
-    "ef2bd8cd4cca9c2bf7abeeaaed20d27a1d2bb17db5260c807f1a6a71f2013032"
+    "d90752a947683bcf60473a7347047e14a53f014c8e32e89fbc07f0b69781bb37"
 )
 
 # ── Cache ──

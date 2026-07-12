@@ -30,7 +30,8 @@ from solslot_puzzles.zkpassport_attestation import (
 #   pk    = sk.get_g1()
 #   hash  = make_bridge_policy_hash([bytes(pk)], threshold=1)
 #
-# Store the seed in the API .env as POPULIS_ZKPASSPORT_VALIDATOR_SEED_HEX.
+# This deterministic key is a test vector only. The clean genesis ceremony
+# must generate a fresh key and publish its resulting policy hash.
 # ---------------------------------------------------------------------------
 
 TESTNET11_ZKPASSPORT_VALIDATOR_PUBKEY_HEX: str = (
@@ -43,7 +44,7 @@ TESTNET11_ZKPASSPORT_VALIDATOR_PUBKEY: bytes = bytes.fromhex(
 TESTNET11_ZKPASSPORT_VALIDATOR_THRESHOLD: int = 1
 
 TESTNET11_ZKPASSPORT_BRIDGE_POLICY_HASH: bytes32 = bytes32.fromhex(
-    "c87f45cd23d052c88256de8823a4a01f40da4e2066156f48f3b3dfc0a50350d7"
+    "fa54f59ec567afdb899a97f9ce0b4d124ed30da2e789dcb102577d0e6f013b20"
 )
 
 _ZKPASSPORT_BRIDGE_MOD: Program | None = None

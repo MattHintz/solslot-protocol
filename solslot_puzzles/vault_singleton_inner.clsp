@@ -69,24 +69,22 @@
   ;;
   ;; DOMAIN_SEPARATOR = keccak256(
   ;;   keccak256("EIP712Domain(string name,string version,uint256 chainId)")
-  ;;   || keccak256("Populis Protocol")
-  ;;   || keccak256("1")
-  ;;   || pad32(1)
+  ;;   || keccak256("Solslot Vault")
+  ;;   || keccak256("2")
+  ;;   || pad32(11155111)
   ;; )
   ;;
-  ;; chainId=1 (Ethereum mainnet) is chosen for EVM wallet UX compatibility; the
-  ;; signature is a typed-data attestation, never a valid Ethereum tx, so it
-  ;; carries no cross-chain replay risk.  To regenerate this constant after a
-  ;; domain change run:
+  ;; The domain is pinned to the fresh Solslot alpha deployment on Ethereum
+  ;; Sepolia. To regenerate this constant after a domain change run:
   ;;   python -c "from solslot_puzzles.vault_driver import eip712_prefix_and_domain_separator as f; print('0x'+f().hex())"
-  (defconstant PREFIX_AND_DOMAIN_SEPARATOR 0x1901a0214ddc79441c42a8c07069114bb656bd36511866db2570c2ed9cd5e4695d69)
-  ;; POPULIS_VAULT_TYPEHASH = keccak256("PopulisVaultSpend(bytes32 spend_case,bytes32 deed_launcher_id,bytes32 vault_coin_id)")
-  (defconstant POPULIS_VAULT_TYPEHASH 0x8b3b93e042ecfbb633e42c5bb8477fa782ab7824c28ba0a0e95566f5041b5e32)
+  (defconstant PREFIX_AND_DOMAIN_SEPARATOR 0x190140f26a3f7cdc037a9df8d20b451c5f8029b9000d9cf0ecfd79a2f137f94027d7)
+  ;; SOLSLOT_VAULT_TYPEHASH = keccak256("SolslotVaultSpend(bytes32 spend_case,bytes32 deed_launcher_id,bytes32 vault_coin_id)")
+  (defconstant SOLSLOT_VAULT_TYPEHASH 0x1af9d01361853ac94263ad6f6b97c57fc9802ddaf2c0afd60acf85fcdf4c8580)
   ;; 31 zero bytes used to right-pad a 1-byte spend_case atom into an EIP-712 bytes32 field.
   ;; Driver produces spend_case as `spend_case.ljust(32, b"\x00")`; this constant matches.
   (defconstant SPEND_CASE_PAD_31_ZEROS 0x00000000000000000000000000000000000000000000000000000000000000)
-  (defconstant ZKPASSPORT_ATTEST_DOMAIN 0x706f70756c69732d7a6b70617373706f72742d7661756c742d6174746573746174696f6e2d7631)
-  (defconstant ZKPASSPORT_POLICY_VERSION 1)
+  (defconstant ZKPASSPORT_ATTEST_DOMAIN 0x736f6c736c6f742d7a6b70617373706f72742d7661756c742d6174746573746174696f6e2d7632)
+  (defconstant ZKPASSPORT_POLICY_VERSION 2)
   (defconstant ZKPASSPORT_EMPTY_ATTEST_ROOT 0x4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a)
 
   ;; Pool spend case constants for announcement matching
@@ -175,7 +173,7 @@
           pubkey
           signature_data
           PREFIX_AND_DOMAIN_SEPARATOR
-          POPULIS_VAULT_TYPEHASH
+          SOLSLOT_VAULT_TYPEHASH
           (concat spend_case SPEND_CASE_PAD_31_ZEROS)
           deed_launcher_id
           my_id

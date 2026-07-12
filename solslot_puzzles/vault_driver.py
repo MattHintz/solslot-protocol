@@ -129,7 +129,7 @@ class VaultInnerState:
 # same byte sequence (vanishingly unlikely but possible) cannot collide.
 #
 # Format: sha256(VAULT_HINT_DOMAIN || auth_type_byte || owner_pubkey_bytes)
-VAULT_HINT_DOMAIN = b"populis-vault-discovery-v1"
+VAULT_HINT_DOMAIN = b"solslot-vault-discovery-v2"
 
 
 def vault_discovery_hint(auth_type: int, owner_pubkey: bytes) -> bytes32:
@@ -160,18 +160,18 @@ def vault_discovery_hint(auth_type: int, owner_pubkey: bytes) -> bytes32:
 # in solslot_puzzles/vault_singleton_inner.clsp to match.  See the eip712 audit
 # helper `eip712_prefix_and_domain_separator()` below — it is the generator.
 #
-# chainId = 84532 (Base Sepolia) — matches the deployed PopulisZkPassportAttestationEmitter
-# on Base Sepolia.  The signature is a typed-data attestation bound to the chain where
+# chainId = 11155111 (Ethereum Sepolia) matches the Solslot alpha EVM deployment.
+# The signature is a typed-data attestation bound to the chain where
 # the emitter lives; update this if the emitter is redeployed to a different chain.
 # ---------------------------------------------------------------------------
-EIP712_DOMAIN_NAME: str = "Populis Protocol"
-EIP712_DOMAIN_VERSION: str = "1"
-EIP712_DOMAIN_CHAIN_ID: int = 84532
+EIP712_DOMAIN_NAME: str = "Solslot Vault"
+EIP712_DOMAIN_VERSION: str = "2"
+EIP712_DOMAIN_CHAIN_ID: int = 11155111
 
-# Typehash: keccak256("PopulisVaultSpend(bytes32 spend_case,bytes32 deed_launcher_id,bytes32 vault_coin_id)")
-# Mirrors POPULIS_VAULT_TYPEHASH in vault_singleton_inner.clsp.
-POPULIS_VAULT_TYPEHASH_STRING: bytes = (
-    b"PopulisVaultSpend(bytes32 spend_case,bytes32 deed_launcher_id,bytes32 vault_coin_id)"
+# Typehash: keccak256("SolslotVaultSpend(bytes32 spend_case,bytes32 deed_launcher_id,bytes32 vault_coin_id)")
+# Mirrors SOLSLOT_VAULT_TYPEHASH in vault_singleton_inner.clsp.
+SOLSLOT_VAULT_TYPEHASH_STRING: bytes = (
+    b"SolslotVaultSpend(bytes32 spend_case,bytes32 deed_launcher_id,bytes32 vault_coin_id)"
 )
 
 
@@ -303,7 +303,7 @@ def _keccak256(data: bytes) -> bytes:
 
 
 def eip712_domain_separator() -> bytes:
-    """Return the 32-byte EIP-712 DOMAIN_SEPARATOR for the Populis domain.
+    """Return the 32-byte EIP-712 DOMAIN_SEPARATOR for the Solslot domain.
 
     Formula (EIP-712, no verifyingContract/salt):
         DOMAIN_TYPEHASH = keccak256("EIP712Domain(string name,string version,uint256 chainId)")
@@ -370,7 +370,7 @@ def eip712_typed_data_for_vault_spend(
                 {"name": "version", "type": "string"},
                 {"name": "chainId", "type": "uint256"},
             ],
-            "PopulisVaultSpend": [
+            "SolslotVaultSpend": [
                 {"name": "spend_case", "type": "bytes32"},
                 {"name": "deed_launcher_id", "type": "bytes32"},
                 {"name": "vault_coin_id", "type": "bytes32"},
@@ -381,7 +381,7 @@ def eip712_typed_data_for_vault_spend(
             "version": EIP712_DOMAIN_VERSION,
             "chainId": EIP712_DOMAIN_CHAIN_ID,
         },
-        "primaryType": "PopulisVaultSpend",
+        "primaryType": "SolslotVaultSpend",
         "message": {
             "spend_case": "0x" + spend_case_padded.hex(),
             "deed_launcher_id": "0x" + bytes(deed_launcher_id).hex(),
@@ -404,7 +404,7 @@ def signing_message_for_vault_spend(
     For BLS wallets the AGG_SIG_ME message is produced by the CLVM; this helper
     is only needed for the secp256k1 path.
     """
-    typehash = _keccak256(POPULIS_VAULT_TYPEHASH_STRING)
+    typehash = _keccak256(SOLSLOT_VAULT_TYPEHASH_STRING)
     spend_case_padded = spend_case.ljust(32, b"\x00")
     struct_hash = _keccak256(
         typehash + spend_case_padded + bytes(deed_launcher_id) + bytes(vault_coin_id)

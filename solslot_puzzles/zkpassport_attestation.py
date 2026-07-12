@@ -18,9 +18,9 @@ from chia_rs.sized_bytes import bytes32
 ZKPASSPORT_EMPTY_ATTEST_ROOT: bytes32 = bytes32(
     bytes.fromhex("4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a")
 )
-ZKPASSPORT_ATTEST_DOMAIN = b"populis-zkpassport-vault-attestation-v1"
-ZKPASSPORT_SCOPE = "populis.app"
-ZKPASSPORT_POLICY_VERSION = 1
+ZKPASSPORT_ATTEST_DOMAIN = b"solslot-zkpassport-vault-attestation-v2"
+ZKPASSPORT_SCOPE = "staging.solslot.com"
+ZKPASSPORT_POLICY_VERSION = 2
 
 
 @dataclass(frozen=True)
@@ -79,7 +79,7 @@ def compute_attestation_root(leaves: Sequence[bytes32]) -> bytes32:
     """Compute the deterministic binary Merkle root for attestation leaves.
 
     Empty roots intentionally use the same sha256tree(empty-list) value as
-    CLVM/Program.to([]), which is already used elsewhere in Populis for empty
+    CLVM/Program.to([]), which is already used elsewhere in Solslot for empty
     flat-list state hashes.  A single leaf is its own root.  Odd-width levels
     duplicate the final node, matching the conventional Chia-side binary tree
     helper shape used by off-chain proof builders.
