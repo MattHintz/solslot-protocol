@@ -25,6 +25,7 @@ EXCLUDED_PARTS = frozenset(
         ".ruff_cache",
         ".venv",
         "__pycache__",
+        "cache",
         "node_modules",
         "venv",
     }
