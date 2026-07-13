@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "mint_publish": {
     "draft_fields": [
       "par_value",
@@ -81,11 +81,7 @@
       "serviceSubscopeHash",
       "proofTimestamp"
     ],
-    "vault_attestation_components": [
-      {
-        "name": "vaultLauncherId",
-        "type": "bytes32"
-      },
+    "verified_proof_fields_components": [
       {
         "name": "scopedNullifier",
         "type": "bytes32"
@@ -105,13 +101,11 @@
       {
         "name": "proofTimestamp",
         "type": "uint64"
-      },
+      }
+    ],
+    "enrollment_binding_components": [
       {
-        "name": "attestationLeafHash",
-        "type": "bytes32"
-      },
-      {
-        "name": "attestationRoot",
+        "name": "vaultLauncherId",
         "type": "bytes32"
       },
       {
@@ -121,14 +115,6 @@
       {
         "name": "bridgeAmount",
         "type": "uint64"
-      },
-      {
-        "name": "bridgeCoinId",
-        "type": "bytes32"
-      },
-      {
-        "name": "bridgeMessage",
-        "type": "bytes32"
       }
     ],
     "vault_attestation_verified_event": [

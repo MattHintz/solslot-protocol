@@ -105,7 +105,6 @@ def _tracker_inner(
     )
 
 
-@pytest.mark.asyncio
 @pytest.fixture()
 async def sim_chain() -> AsyncGenerator[Tuple[SpendSim, SimClient], None]:
     async with SpendSim.managed(None, defaults=DEFAULT_CONSTANTS) as sim:

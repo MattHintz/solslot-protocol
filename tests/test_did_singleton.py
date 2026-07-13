@@ -104,7 +104,6 @@ def launch_conditions_and_solution_with_did(
 does_not_raise = nullcontext
 
 
-@pytest.mark.asyncio
 @pytest.fixture()
 async def sim_chain(
     db_path: Optional[Path] = None,

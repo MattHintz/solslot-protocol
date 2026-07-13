@@ -96,13 +96,10 @@ def test_mint_publish_protocol_context_env_mapping_matches_api_and_portal() -> N
     for item in expected:
         assert item["api_setting"] in api_settings
 
-    for env_path in [
-        portal / "src" / "environments" / "environment.ts",
-        portal / "src" / "environments" / "environment.prod.ts",
-    ]:
-        portal_keys = _portal_solslot_protocol_keys(env_path)
-        for item in expected:
-            assert item["portal_key"] in portal_keys
+    shared_env = portal / "src" / "environments" / "environment.shared.ts"
+    portal_keys = _portal_solslot_protocol_keys(shared_env)
+    for item in expected:
+        assert item["portal_key"] in portal_keys
 
 
 def test_property_id_and_asset_class_contract_matches_protocol_and_portal() -> None:
@@ -122,15 +119,20 @@ def test_property_id_and_asset_class_contract_matches_protocol_and_portal() -> N
 
 def test_zkpassport_schema_matches_evm_and_portal() -> None:
     evm = _sibling("solslot-evm")
-    portal = _sibling("solslot-portal")
+    api = _sibling("solslot-api")
+    customer = _sibling("solslot") / "slui"
     expected = SCHEMA["zkpassport"]
 
     solidity = (evm / "contracts" / "SolslotZkPassportAttestationEmitter.sol").read_text(
         encoding="utf-8"
     )
-    assert _solidity_struct_fields(solidity, "VaultAttestation") == [
+    assert _solidity_struct_fields(solidity, "VerifiedProofFields") == [
         (item["name"], item["type"])
-        for item in expected["vault_attestation_components"]
+        for item in expected["verified_proof_fields_components"]
+    ]
+    assert _solidity_struct_fields(solidity, "EnrollmentBinding") == [
+        (item["name"], item["type"])
+        for item in expected["enrollment_binding_components"]
     ]
     assert _solidity_event_fields(solidity, "VaultAttestationVerified") == [
         (item["name"], item["type"], item["indexed"])
@@ -144,22 +146,18 @@ def test_zkpassport_schema_matches_evm_and_portal() -> None:
     ]
 
     attestation_service = (
-        portal / "src" / "app" / "services" / "zkpassport-attestation.service.ts"
-    ).read_text(encoding="utf-8")
-    poller_service = (
-        portal
-        / "src"
-        / "app"
-        / "services"
-        / "zkpassport-evm-attestation-poller.service.ts"
+        customer / "src" / "app" / "services" / "zkpassport-attestation.service.ts"
     ).read_text(encoding="utf-8")
     assert _portal_validator_message_fields(attestation_service) == expected[
         "validator_message_fields"
     ]
-    assert _portal_event_abi_fields(poller_service, "VaultAttestationVerified") == [
-        (item["name"], item["type"], item["indexed"])
-        for item in expected["vault_attestation_verified_event"]
-    ]
+    expected_event_signature = "VaultAttestationVerified(" + ",".join(
+        item["type"] for item in expected["vault_attestation_verified_event"]
+    ) + ")"
+    assert _python_literal_assignment(
+        api / "solslot_api" / "zkpassport_enrollments.py",
+        "_ATTESTATION_EVENT_SIGNATURE",
+    ) == expected_event_signature
 
 
 def test_mint_lifecycle_states_match_api_and_portal() -> None:
@@ -344,9 +342,9 @@ def _solidity_constructor_fields(text: str, contract_name: str) -> list[tuple[st
 
 
 def _solidity_validator_message_fields(text: str) -> list[str]:
-    body = _solidity_block(text, r"function\s+_validatorMessageFields[^{]*")
+    body = _solidity_block(text, r"function\s+_validatorMessage[^{]*")
     assignments: dict[int, str] = {}
-    for index, expr in re.findall(r"fields\[(\d+)\]\s*=\s*([^;]+);", body):
+    for index, expr in re.findall(r"atoms\[(\d+)\]\s*=\s*([^;]+);", body):
         assignments[int(index)] = _validator_expr_name(expr.strip())
     return [assignments[i] for i in range(len(assignments))]
 
@@ -354,11 +352,19 @@ def _solidity_validator_message_fields(text: str) -> list[str]:
 def _validator_expr_name(expr: str) -> str:
     if "POLICY_VERSION" in expr:
         return "policyVersion"
-    if expr == "bridgePolicyHash":
-        return "bridgePolicyHash"
-    match = re.search(r"attestation\.([A-Za-z0-9_]+)", expr)
+    match = re.search(r"fields\.([A-Za-z0-9_]+)", expr)
     if match:
         return match.group(1)
+    for name in [
+        "vaultLauncherId",
+        "attestationRoot",
+        "bridgePolicyHash",
+        "bridgeCoinId",
+        "bridgeMessage",
+        "attestationLeafHash",
+    ]:
+        if re.search(rf"\b{re.escape(name)}\b", expr):
+            return name
     raise AssertionError(f"Cannot map validator expression {expr!r}")
 
 
@@ -381,7 +387,10 @@ def _portal_validator_message_fields(text: str) -> list[str]:
         if "uintBytes32(policyVersion)" in line:
             fields.append("policyVersion")
             continue
-        match = re.search(r"bytes32\(input\.([A-Za-z0-9_]+),\s*'([^']+)'\)", line)
+        match = re.search(
+            r"bytes32\(input\.([A-Za-z0-9_]+),\s*['\"]([^'\"]+)['\"]\)",
+            line,
+        )
         if match:
             assert match.group(1) == match.group(2)
             fields.append(match.group(1))
