@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import re
 import subprocess
 import tarfile
 import zipfile
@@ -14,6 +15,7 @@ from typing import Iterable
 
 FORBIDDEN_DIGEST = "4b61ef4fda96729ef3703e602087708f3fa1ebfc2d809e0be3398086f8ec6706"
 FORBIDDEN_LENGTH = 7
+HEX_RUN = re.compile(rb"[0-9a-fA-F]{14,}")
 ARCHIVE_SUFFIXES = (".tar", ".tgz", ".tar.gz", ".zip")
 EXCLUDED_PARTS = frozenset(
     {
@@ -32,7 +34,7 @@ EXCLUDED_PARTS = frozenset(
 )
 
 
-def contains_forbidden(data: bytes) -> bool:
+def _contains_forbidden_raw(data: bytes) -> bool:
     lowered = data.lower()
     if len(lowered) < FORBIDDEN_LENGTH:
         return False
@@ -43,9 +45,25 @@ def contains_forbidden(data: bytes) -> bool:
     return False
 
 
+def contains_forbidden(data: bytes) -> bool:
+    if _contains_forbidden_raw(data):
+        return True
+    for match in HEX_RUN.finditer(data):
+        run = match.group()
+        for offset in (0, 1):
+            encoded = run[offset:]
+            if len(encoded) % 2:
+                encoded = encoded[:-1]
+            if len(encoded) < FORBIDDEN_LENGTH * 2:
+                continue
+            if _contains_forbidden_raw(bytes.fromhex(encoded.decode("ascii"))):
+                return True
+    return False
+
+
 def tracked_files(repo_root: Path) -> list[Path]:
     result = subprocess.run(
-        ["git", "ls-files", "-z"],
+        ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
         cwd=repo_root,
         check=True,
         capture_output=True,
@@ -100,6 +118,14 @@ def scan_file(path: Path) -> list[str]:
         return [f"{path} (unreadable: {error})"]
     if contains_forbidden(data):
         violations.append(f"{path} (content)")
+    try:
+        printable = subprocess.run(
+            ["strings", "-a", str(path)], check=False, capture_output=True
+        ).stdout
+        if contains_forbidden(printable) and f"{path} (content)" not in violations:
+            violations.append(f"{path} (strings)")
+    except OSError:
+        pass
     if path.name.lower().endswith(ARCHIVE_SUFFIXES):
         try:
             violations.extend(archive_violations(path))

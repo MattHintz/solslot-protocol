@@ -30,8 +30,9 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." &> /dev/null && pwd)"
+PORTAL_ROOT="${SOLSLOT_PORTAL_ROOT:-$REPO_ROOT/../solslot-portal}"
 PUZZLES_DIR="$REPO_ROOT/solslot_puzzles"
-DEST_DIR="$REPO_ROOT/../solslot-portal/src/app/services/mint-proposal-v2"
+DEST_DIR="$PORTAL_ROOT/src/app/services/mint-proposal-v2"
 
 mkdir -p "$DEST_DIR"
 
@@ -93,7 +94,7 @@ HEADER
 }
 
 dump_one \
-  "smart_deed_inner" \
+  "smart_deed_inner_v2" \
   "SMART_DEED_INNER_PUZZLE_HEX" \
   "smart-deed-inner" \
   "post-purchase deed inner puzzle (transitions the deed once a buyer co-spends an ephemeral purchase_payment coin)"

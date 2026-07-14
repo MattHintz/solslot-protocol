@@ -18,8 +18,9 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." &> /dev/null && pwd)"
+PORTAL_ROOT="${SOLSLOT_PORTAL_ROOT:-$REPO_ROOT/../solslot-portal}"
 SOURCE="$REPO_ROOT/solslot_puzzles/mint_proposal_inner_v2.clsp.hex"
-DEST="$REPO_ROOT/../solslot-portal/src/app/services/mint-proposal-v2/mint-proposal-v2.puzzle-hex.ts"
+DEST="$PORTAL_ROOT/src/app/services/mint-proposal-v2/mint-proposal-v2.puzzle-hex.ts"
 
 if [[ ! -f "$SOURCE" ]]; then
   echo "ERROR: puzzle hex not found at $SOURCE" >&2

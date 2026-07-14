@@ -24,14 +24,20 @@ from chia.wallet.puzzles.singleton_top_layer_v1_1 import (
     SINGLETON_LAUNCHER_HASH,
     SINGLETON_MOD,
     SINGLETON_MOD_HASH,
+    solution_for_singleton,
 )
+from chia.wallet.lineage_proof import LineageProof
 from chia.wallet.trading.offer import OFFER_MOD_HASH
 from chia_rs.sized_bytes import bytes32
 from chia_rs.sized_ints import uint64
 
 from solslot_puzzles.collection_nav_registry_driver import (
     NAV_EVIDENCE_TAG,
+    CollectionNavRegistryState,
+    build_nav_read_evidence_spend,
+    collection_nav_root,
     collection_nav_registry_inner_mod_hash,
+    make_inner_puzzle,
     make_inner_puzzle_hash,
 )
 from solslot_puzzles.pool_economics_v2 import (
@@ -74,7 +80,7 @@ STATE = PoolEconomicState(
     total_nav_locked_mojos=1_000_000_000,
     deed_count=10,
     total_pool_token_supply=800_000_000,
-    treasury_reserve_tokens=200_000_000,
+    treasury_reserve_tokens=100_000_000,
 )
 
 POOL_ACTIVE = 1
@@ -121,6 +127,68 @@ def nav_registry_puzzle_hash(nav_root: bytes32, registry_version: int) -> bytes3
         nav_root=nav_root,
     )
     return singleton_full_puzzle_hash(NAV_REGISTRY_LAUNCHER_ID, inner_hash)
+
+
+NAV_REGISTRY_SINGLETON_STRUCT = Program.to(
+    (SINGLETON_MOD_HASH, (NAV_REGISTRY_LAUNCHER_ID, SINGLETON_LAUNCHER_HASH))
+)
+
+
+def nav_read_evidence(
+    *,
+    nav_value_mojos: int,
+    parent_byte: int,
+    lineage_parent_byte: int,
+) -> tuple[CollectionNavEvidence, dict[str, Any]]:
+    entries = [(COLLECTION_ID, nav_value_mojos)]
+    nav_root = collection_nav_root(entries)
+    current = CollectionNavRegistryState(
+        self_mod_hash=NAV_REGISTRY_MOD_HASH,
+        gov_pubkey=NAV_REGISTRY_GOV_PUBKEY,
+        collection_nav_root=nav_root,
+        registry_version=MIN_NAV_REGISTRY_VERSION,
+    )
+    inner = make_inner_puzzle(
+        NAV_REGISTRY_GOV_PUBKEY,
+        MIN_NAV_REGISTRY_VERSION,
+        nav_root,
+    )
+    full = SINGLETON_MOD.curry(NAV_REGISTRY_SINGLETON_STRUCT, inner)
+    coin = Coin(b32(parent_byte), bytes32(full.get_tree_hash()), uint64(1))
+    artifacts = build_nav_read_evidence_spend(
+        current=current,
+        collection_id_canon=COLLECTION_ID,
+        current_entries=entries,
+        my_amount=1,
+    )
+    solution = solution_for_singleton(
+        LineageProof(
+            parent_name=b32(lineage_parent_byte),
+            inner_puzzle_hash=bytes32(inner.get_tree_hash()),
+            amount=uint64(1),
+        ),
+        uint64(1),
+        artifacts.inner_solution,
+    )
+    evidence = CollectionNavEvidence(
+        registry_coin_id=bytes32(coin.name()),
+        registry_puzzle_hash=bytes32(full.get_tree_hash()),
+        collection_id_canon=COLLECTION_ID,
+        nav_value_mojos=nav_value_mojos,
+        collection_nav_root=nav_root,
+        registry_version=MIN_NAV_REGISTRY_VERSION,
+    )
+    spend = {
+        "coin": {
+            "parent_coin_info": _hex(coin.parent_coin_info),
+            "puzzle_hash": _hex(coin.puzzle_hash),
+            "amount": int(coin.amount),
+            "coin_id": _hex(coin.name()),
+        },
+        "puzzle_reveal": "0x" + bytes(full).hex(),
+        "solution": "0x" + bytes(solution).hex(),
+    }
+    return evidence, spend
 
 
 def _pool_token_tail_hash() -> bytes32:
@@ -194,22 +262,16 @@ POOL_LINEAGE_PROOF = [
     POOL_AMOUNT,
 ]
 
-NAV_EVIDENCE = CollectionNavEvidence(
-    registry_coin_id=b32(0xC1),
-    registry_puzzle_hash=nav_registry_puzzle_hash(b32(0xC3), 7),
-    collection_id_canon=COLLECTION_ID,
+NAV_EVIDENCE, NAV_EVIDENCE_COIN_SPEND = nav_read_evidence(
     nav_value_mojos=1_000_000_000,
-    collection_nav_root=b32(0xC3),
-    registry_version=7,
+    parent_byte=0xC1,
+    lineage_parent_byte=0xC2,
 )
 
-ACQUISITION_NAV_EVIDENCE = CollectionNavEvidence(
-    registry_coin_id=b32(0xC1),
-    registry_puzzle_hash=nav_registry_puzzle_hash(b32(0xC3), 7),
-    collection_id_canon=COLLECTION_ID,
+ACQUISITION_NAV_EVIDENCE, ACQUISITION_NAV_EVIDENCE_COIN_SPEND = nav_read_evidence(
     nav_value_mojos=400_000_000,
-    collection_nav_root=b32(0xC3),
-    registry_version=7,
+    parent_byte=0xC4,
+    lineage_parent_byte=0xC5,
 )
 
 
@@ -386,6 +448,7 @@ def build_fixture() -> dict[str, Any]:
         nav_evidence=ACQUISITION_NAV_EVIDENCE,
         seller_puzhash=SELLER,
         seller_token_price=200_000_000,
+        mint_token_coin_id=TOKEN_COIN_ID,
     )
     swap_params = [
         DEED_ID,
@@ -439,7 +502,7 @@ def build_fixture() -> dict[str, Any]:
         ACQUISITION_NAV_EVIDENCE.registry_puzzle_hash,
         SELLER,
         200_000_000,
-        None,
+        TOKEN_COIN_ID,
     ]
 
     return {
@@ -483,7 +546,9 @@ def build_fixture() -> dict[str, Any]:
             "collection_id_canon": _hex(COLLECTION_ID),
             "token_coin_id": _hex(TOKEN_COIN_ID),
             "nav_evidence": _nav_evidence_dict(NAV_EVIDENCE),
+            "nav_evidence_coin_spend": NAV_EVIDENCE_COIN_SPEND,
             "acquisition_nav_evidence": _nav_evidence_dict(ACQUISITION_NAV_EVIDENCE),
+            "acquisition_nav_evidence_coin_spend": ACQUISITION_NAV_EVIDENCE_COIN_SPEND,
         },
         "specific_deed_swap": {
             "inputs": {

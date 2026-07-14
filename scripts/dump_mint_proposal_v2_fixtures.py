@@ -17,6 +17,7 @@ The fixture is also exported by the regression test in
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -307,10 +308,12 @@ def build_fixture() -> dict[str, Any]:
 
 def fixture_destination() -> Path:
     """Resolve the canonical destination inside the portal repo."""
-    repo_root = Path(__file__).resolve().parents[2]
+    protocol_root = Path(__file__).resolve().parents[1]
+    portal_root = Path(
+        os.environ.get("SOLSLOT_PORTAL_ROOT", protocol_root.parent / "solslot-portal")
+    )
     return (
-        repo_root
-        / "solslot-portal"
+        portal_root
         / "src"
         / "app"
         / "services"
