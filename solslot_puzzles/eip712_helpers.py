@@ -149,6 +149,7 @@ def eip712_hash_to_sign(
 
 
 _EIP712_MEMBER_PUZZLE_CACHE: Optional[Program] = None
+_EIP712_MEMBER_PUZZLE_BYTES_CACHE: Optional[bytes] = None
 
 
 def _eip712_member_puzzle() -> Program:
@@ -163,7 +164,7 @@ def _eip712_member_puzzle() -> Program:
     naming once the upstream PR lands and we can vendor the canonical
     bytecode at a stable path.
     """
-    global _EIP712_MEMBER_PUZZLE_CACHE
+    global _EIP712_MEMBER_PUZZLE_CACHE, _EIP712_MEMBER_PUZZLE_BYTES_CACHE
     if _EIP712_MEMBER_PUZZLE_CACHE is None:
         # Lazy import to avoid touching clvm tooling at module load
         # time; matches the test fixture's loading pattern.
@@ -174,7 +175,17 @@ def _eip712_member_puzzle() -> Program:
             package_or_requirement="solslot_puzzles",
             recompile=True,
         )
+        _EIP712_MEMBER_PUZZLE_BYTES_CACHE = bytes(_EIP712_MEMBER_PUZZLE_CACHE)
     return _EIP712_MEMBER_PUZZLE_CACHE
+
+
+def _eip712_member_puzzle_bytes() -> bytes:
+    """Return serialized module bytes safe to deserialize on any thread."""
+    global _EIP712_MEMBER_PUZZLE_BYTES_CACHE
+    if _EIP712_MEMBER_PUZZLE_BYTES_CACHE is None:
+        _eip712_member_puzzle()
+    assert _EIP712_MEMBER_PUZZLE_BYTES_CACHE is not None
+    return _EIP712_MEMBER_PUZZLE_BYTES_CACHE
 
 
 def _atom_treehash(atom: bytes) -> bytes32:
@@ -354,6 +365,41 @@ def compute_eip712_member_leaf_hash(
     return _pair_th(a_kw_th, quoted_then_cv_then_nil)
 
 
+def make_eip712_member_puzzle(
+    *,
+    secp256k1_pubkey: bytes,
+    prefix_and_domain_separator: bytes,
+    type_hash: bytes32 | None = None,
+) -> Program:
+    """Build the canonical CHIP-0037 EIP-712 MIPS member puzzle.
+
+    Genesis planning needs both the member tree hash stored in the durable
+    admin roster and the actual reveal used by the top-level CHIP-0043
+    quorum.  Keeping both constructions here prevents the ceremony planner
+    from reproducing the curry order independently.
+    """
+    if len(secp256k1_pubkey) != 33:
+        raise ValueError(
+            "secp256k1_pubkey must be 33 bytes (compressed), got "
+            f"{len(secp256k1_pubkey)}"
+        )
+    if len(prefix_and_domain_separator) != 34:
+        raise ValueError(
+            "prefix_and_domain_separator must be 34 bytes, got "
+            f"{len(prefix_and_domain_separator)}"
+        )
+    if prefix_and_domain_separator[:2] != b"\x19\x01":
+        raise ValueError("prefix_and_domain_separator must start with 0x1901")
+    resolved_type_hash = type_hash if type_hash is not None else eip712_type_hash()
+    if len(resolved_type_hash) != 32:
+        raise ValueError(f"type_hash must be 32 bytes, got {len(resolved_type_hash)}")
+    return Program.from_bytes(_eip712_member_puzzle_bytes()).curry(
+        prefix_and_domain_separator,
+        resolved_type_hash,
+        secp256k1_pubkey,
+    )
+
+
 __all__ = [
     "MAINNET_GENESIS_CHALLENGE",
     "TESTNET11_GENESIS_CHALLENGE",
@@ -364,4 +410,5 @@ __all__ = [
     "eip712_prefix_and_domain_separator",
     "eip712_hash_to_sign",
     "compute_eip712_member_leaf_hash",
+    "make_eip712_member_puzzle",
 ]

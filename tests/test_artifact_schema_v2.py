@@ -6,80 +6,56 @@ import pytest
 from chia_rs.sized_bytes import bytes32
 
 from solslot_puzzles.artifact_schema_v2 import (
-    CeremonyCoordinates,
     artifact_hash,
+    artifact_signing_typed_data,
     build_public_artifact,
     verify_public_artifact,
 )
-from solslot_puzzles.protocol_deployment import ProtocolDeploymentParams, ProtocolDeploymentPlan
-from tests.test_protocol_deployment import (
-    DID_GENESIS,
-    GOV_GENESIS,
-    POOL_GENESIS,
-    SGT_GENESIS,
-    _FakeFaucet,
-    trusted_v2_kwargs,
-)
+from tests.test_genesis_ceremony import ADMIN_KEYS, ceremony_plan, funding_coins
+from tests.test_protocol_deployment import _FakeFaucet
 
 
-SOURCE_SHAS = {
-    "protocol": "1" * 40,
-    "evm": "2" * 40,
-    "api": "3" * 40,
-    "customerWeb": "4" * 40,
-    "adminPortal": "5" * 40,
-}
-EVM_ADDRESSES = {
-    "forwarder": "0x" + "11" * 20,
-    "verifierAdapter": "0x" + "22" * 20,
-    "attestationEmitter": "0x" + "33" * 20,
-}
+def signatures(*slots: int) -> list[dict[str, object]]:
+    return [
+        {
+            "adminIndex": slot,
+            "compressedPubkey": "0x" + ADMIN_KEYS[slot].hex(),
+            "signature": "0x" + (bytes([slot + 1]) * 65).hex(),
+        }
+        for slot in slots
+    ]
 
 
-def ceremony() -> CeremonyCoordinates:
-    return CeremonyCoordinates(
-        nav_registry_launcher_id=bytes32(b"\x91" * 32),
-        protocol_config_launcher_id=bytes32(b"\x92" * 32),
-        admin_authority_launcher_id=bytes32(b"\x93" * 32),
-        vault_version_registry_launcher_id=bytes32(b"\x94" * 32),
-        bridge_policy_hash=bytes32(b"\x95" * 32),
-    )
-
-
-def plan() -> ProtocolDeploymentPlan:
+def artifact(*, signed_slots: tuple[int, ...] = (0, 2)) -> dict:
     faucet = _FakeFaucet()
-    return ProtocolDeploymentPlan(
-        network="testnet11",
-        params=ProtocolDeploymentParams(),
-        faucet_inner_puzhash=faucet.address_puzzle_hash,
-        sgt_genesis_coin_id=SGT_GENESIS,
-        pool_genesis_coin_id=POOL_GENESIS,
-        did_genesis_coin_id=DID_GENESIS,
-        gov_genesis_coin_id=GOV_GENESIS,
-        **trusted_v2_kwargs(),
-    )
-
-
-def artifact() -> dict:
+    plan = ceremony_plan(faucet, funding_coins(faucet))
     return build_public_artifact(
-        plan=plan(),
-        ceremony=ceremony(),
-        source_shas=SOURCE_SHAS,
-        evm_chain_id=84532,
-        evm_addresses=EVM_ADDRESSES,
-        retired_coordinates=["0x" + "aa" * 32],
-        build_timestamp="2026-07-12T00:00:00+00:00",
+        plan=plan,
+        spend_bundle_id=bytes32(b"\x81" * 32),
+        confirmed_block_index=1234,
+        build_timestamp="2026-07-14T00:00:00+00:00",
+        signatures=signatures(*signed_slots),
     )
 
 
-def test_artifact_has_required_public_v2_surface() -> None:
+def accept_test_signature(
+    _payload: dict, _index: int, _pubkey: bytes, _signature: bytes
+) -> bool:
+    return True
+
+
+def test_artifact_has_complete_signed_v2_surface() -> None:
     value = artifact()
     assert value["schemaVersion"] == 2
     assert value["protocolVersion"] == "solslot-v2"
+    assert value["network"] == "testnet11"
+    assert value["evmChainId"] == 11155111
     assert value["sgtGenesisCoinId"].startswith("0x")
     assert value["sgtTailHash"] == value["puzzleHashes"]["sgtTailHash"]
-    assert value["launcherIds"]["vaultVersionRegistry"].startswith("0x")
-    verify_public_artifact(value)
+    assert value["adminAuthority"]["threshold"] == 2
+    assert len(value["validatorSet"]["pubkeys"]) == 3
+    assert len(value["bridgePolicy"]["bridgeCoinIds"]) == 32
+    verify_public_artifact(value, signature_verifier=accept_test_signature)
 
 
 def test_artifact_hash_is_canonical_and_tamper_evident() -> None:
@@ -87,36 +63,48 @@ def test_artifact_hash_is_canonical_and_tamper_evident() -> None:
     assert value["artifactHash"] == artifact_hash(value)
     tampered = copy.deepcopy(value)
     tampered["network"] = "mainnet"
-    with pytest.raises(ValueError, match="artifactHash"):
-        verify_public_artifact(tampered)
+    with pytest.raises(ValueError, match="network|artifactHash"):
+        verify_public_artifact(tampered, signature_verifier=accept_test_signature)
 
 
-def test_missing_source_or_zero_coordinate_fails_closed() -> None:
-    sources = dict(SOURCE_SHAS)
-    del sources["api"]
-    with pytest.raises(ValueError, match="sourceShas"):
-        build_public_artifact(
-            plan=plan(),
-            ceremony=ceremony(),
-            source_shas=sources,
-            evm_chain_id=84532,
-            evm_addresses=EVM_ADDRESSES,
-            retired_coordinates=[],
-        )
+def test_artifact_requires_two_distinct_roster_signatures() -> None:
+    unsigned = artifact(signed_slots=())
+    with pytest.raises(ValueError, match="two administrator signatures"):
+        verify_public_artifact(unsigned, signature_verifier=accept_test_signature)
 
-    bad = CeremonyCoordinates(
-        nav_registry_launcher_id=bytes32.zeros,
-        protocol_config_launcher_id=bytes32(b"\x92" * 32),
-        admin_authority_launcher_id=bytes32(b"\x93" * 32),
-        vault_version_registry_launcher_id=bytes32(b"\x94" * 32),
-        bridge_policy_hash=bytes32(b"\x95" * 32),
-    )
-    with pytest.raises(ValueError, match="nonzero"):
-        build_public_artifact(
-            plan=plan(),
-            ceremony=bad,
-            source_shas=SOURCE_SHAS,
-            evm_chain_id=84532,
-            evm_addresses=EVM_ADDRESSES,
-            retired_coordinates=[],
-        )
+    one = artifact(signed_slots=(1,))
+    with pytest.raises(ValueError, match="two administrator signatures"):
+        verify_public_artifact(one, signature_verifier=accept_test_signature)
+
+    duplicate = artifact(signed_slots=(1, 1))
+    with pytest.raises(ValueError, match="distinct roster slots"):
+        verify_public_artifact(duplicate, signature_verifier=accept_test_signature)
+
+
+def test_artifact_rejects_wrong_roster_key_and_invalid_signature() -> None:
+    wrong_key = artifact()
+    wrong_key["signatures"][0]["compressedPubkey"] = "0x02" + "44" * 32
+    with pytest.raises(ValueError, match="does not match roster"):
+        verify_public_artifact(wrong_key, signature_verifier=accept_test_signature)
+
+    with pytest.raises(ValueError, match="invalid"):
+        verify_public_artifact(artifact(), signature_verifier=lambda *_args: False)
+
+
+def test_artifact_signing_payload_binds_ceremony_and_plan() -> None:
+    value = artifact()
+    typed_data = artifact_signing_typed_data(value)
+    assert typed_data["domain"] == {
+        "name": "Solslot Protocol",
+        "version": "2",
+        "chainId": 11155111,
+    }
+    assert typed_data["primaryType"] == "SolslotGenesisArtifact"
+    assert typed_data["message"]["artifactHash"] == value["artifactHash"]
+    assert typed_data["message"]["ceremonyId"] == value["ceremony"]["ceremonyId"]
+    assert typed_data["message"]["planHash"] == value["ceremony"]["planHash"]
+
+
+def test_signature_verifier_is_mandatory() -> None:
+    with pytest.raises(ValueError, match="signature verifier"):
+        verify_public_artifact(artifact())

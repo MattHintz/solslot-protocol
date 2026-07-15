@@ -19,34 +19,6 @@ from solslot_puzzles.zkpassport_attestation import (
 )
 
 
-# ---------------------------------------------------------------------------
-# Testnet11 validator configuration (1-of-1, single operator validator node).
-# These constants are derived once and pinned here so the protocol, API, and
-# portal all reference the same authoritative values.
-#
-# To regenerate for a new validator keypair:
-#   seed  = secrets.token_bytes(32)
-#   sk    = AugSchemeMPL.key_gen(seed)
-#   pk    = sk.get_g1()
-#   hash  = make_bridge_policy_hash([bytes(pk)], threshold=1)
-#
-# This deterministic key is a test vector only. The clean genesis ceremony
-# must generate a fresh key and publish its resulting policy hash.
-# ---------------------------------------------------------------------------
-
-TESTNET11_ZKPASSPORT_VALIDATOR_PUBKEY_HEX: str = (
-    "a8f9b0c1f992c49210fc726fc610885b966f84747126753659c6c3f8ae5bf3ba"
-    "f5b6e1a399fc8a749daf45dd74efac4c"
-)
-TESTNET11_ZKPASSPORT_VALIDATOR_PUBKEY: bytes = bytes.fromhex(
-    TESTNET11_ZKPASSPORT_VALIDATOR_PUBKEY_HEX
-)
-TESTNET11_ZKPASSPORT_VALIDATOR_THRESHOLD: int = 1
-
-TESTNET11_ZKPASSPORT_BRIDGE_POLICY_HASH: bytes32 = bytes32.fromhex(
-    "75e9cc22c2b717e4216b7d1fec34c14903b83598b308ecc4517bbbd8d17a9a2a"
-)
-
 _ZKPASSPORT_BRIDGE_MOD: Program | None = None
 
 
@@ -65,6 +37,36 @@ def make_bridge_puzzle(validator_pubkeys: Sequence[bytes], threshold: int) -> Pr
 
 def make_bridge_policy_hash(validator_pubkeys: Sequence[bytes], threshold: int) -> bytes32:
     return bytes32(make_bridge_puzzle(validator_pubkeys, threshold).get_tree_hash())
+
+
+@dataclass(frozen=True)
+class ValidatorSet:
+    """Ordered public validator set committed into the bridge puzzle."""
+
+    pubkeys: tuple[bytes, ...]
+    threshold: int
+
+    def __post_init__(self) -> None:
+        normalized = tuple(bytes(pubkey) for pubkey in self.pubkeys)
+        _validate_pubkeys(normalized, "validator_set.pubkeys")
+        _validate_threshold(self.threshold, len(normalized))
+        object.__setattr__(self, "pubkeys", normalized)
+
+    @property
+    def policy_hash(self) -> bytes32:
+        return make_bridge_policy_hash(self.pubkeys, self.threshold)
+
+
+def require_genesis_validator_set(
+    validator_pubkeys: Sequence[bytes],
+    threshold: int,
+) -> ValidatorSet:
+    """Validate the fixed 2-of-3 quorum required by a fresh V2 genesis."""
+
+    validator_set = ValidatorSet(tuple(validator_pubkeys), threshold)
+    if len(validator_set.pubkeys) != 3 or validator_set.threshold != 2:
+        raise ValueError("fresh V2 genesis requires exactly three validators at threshold two")
+    return validator_set
 
 
 @dataclass(frozen=True)
@@ -283,14 +285,12 @@ def _uint_to_bytes32(value: int) -> bytes:
 __all__ = [
     "BridgeSpendArtifacts",
     "BridgeVaultEnrollmentBundle",
-    "TESTNET11_ZKPASSPORT_BRIDGE_POLICY_HASH",
-    "TESTNET11_ZKPASSPORT_VALIDATOR_PUBKEY",
-    "TESTNET11_ZKPASSPORT_VALIDATOR_PUBKEY_HEX",
-    "TESTNET11_ZKPASSPORT_VALIDATOR_THRESHOLD",
+    "ValidatorSet",
     "build_bridge_and_vault_update_identity_bundle",
     "build_bridge_spend",
     "make_bridge_policy_hash",
     "make_bridge_puzzle",
+    "require_genesis_validator_set",
     "solution_for_bridge_spend",
     "zkpassport_bridge_mod",
 ]

@@ -55,8 +55,9 @@ defined and which tests should fail on drift.
   `solslot_evm/test/SolslotZkPassportAttestationEmitter.test.js` pins the
   constructor, `verifyAndEmit` tuple, `validatorMessageFields` tuple, and
   `VaultAttestationVerified` event names/types/indexed flags.
-- EVM deployment requires non-zero verifier and ERC-2771 trusted forwarder
-  addresses plus a non-zero bridge policy hash; constructor tests enforce this.
+- EVM deployment requires non-zero verifier, ERC-2771 trusted forwarder, and
+  dedicated direct-relayer addresses plus a non-zero bridge policy hash;
+  constructor and schema-drift tests enforce this exact order.
 - Validator message fields are exactly:
   `policyVersion`, `vaultLauncherId`, `attestationRoot`, `bridgePolicyHash`,
   `bridgeCoinId`, `bridgeMessage`, `attestationLeafHash`, `scopedNullifier`,

@@ -1,30 +1,180 @@
-# Solslot V2 Genesis Runbook
+# Solslot V2 Testnet Genesis Runbook
 
-## Preconditions
+## Safety Boundary
 
-- All release worktrees are clean and pinned to reviewed commit SHAs.
-- Namespace, test, secret-scan, and artifact-reproducibility gates pass.
-- Staging write endpoints are disabled.
-- Fresh EVM contracts are deployed and their addresses are reviewed.
-- A new ceremony output directory exists and contains no prior state.
+This runbook does not authorize a ceremony. Alpha writes, credential
+enrollment, offers, and minting remain disabled until the independent review
+and pre-broadcast gate pass against five frozen release commits.
 
-## Ceremony Order
+The current deployment is retired. Never reuse its contracts, launchers,
+vaults, proofs, bridge coins, manifests, or browser state. A failed or
+ambiguous V2 ceremony is abandoned rather than repaired or rebroadcast.
 
-1. Rotate bootstrap, admin, JWT, validator, relayer, faucet, deployer, SSH, and CI secrets.
-2. Derive the bridge policy from the fresh EVM deployment and validator set.
-3. Run the Chia deployment dry-run and review every launcher, module hash, and destination.
-4. Launch SGT, pool, DID, governance, NAV registry, protocol config, admin authority, and vault-version registry.
-5. Bind first-admin authority and finalize bootstrap once.
-6. Write the lock manifest last.
-7. Build the schema V2 public artifact with all five source SHAs.
-8. Sign the artifact, generate SHA256 sums, and archive public and private evidence separately.
-9. Atomically deploy API, customer web, and admin portal against that artifact hash.
-10. Run EVM and BLS vault creation plus zkPassport-to-Chia confirmation smoke tests.
+## Required Roles
+
+- Three genesis administrators using distinct EIP-712-capable EVM wallets.
+- Three validator identities on separately controlled signer hosts.
+- Two validator signatures required for every credential stamp.
+- Two administrator signatures required for the deterministic plan.
+- Two administrator signatures required for the public artifact.
+- Independent reviewers for protocol, EVM, credential bridge, and ceremony
+  orchestration.
+
+The API coordinator holds no validator private key. Invitation fragments and
+administrator signing happen on each administrator's own computer.
+
+## Freeze The Release
+
+1. Commit every reviewed change in `solslot-protocol`, `solslot-evm`,
+   `solslot-api`, `solslot`, and `solslot-portal`.
+2. Require clean worktrees and record all five full commit SHAs.
+3. Run complete tests, schema drift, namespace, secret, package, and
+   reproducibility gates from those exact commits.
+4. Obtain the four independent approvals and their evidence hashes.
+5. Rotate API, admin, JWT, validator, relayer, faucet, deployer, SSH, CI, and
+   database secrets after the release is frozen.
+6. Deploy fresh reviewed Sepolia contracts and wait for 12 confirmations.
+7. Confirm all three validator signer hosts are healthy over the private
+   mTLS/WireGuard network.
+8. Select nine distinct, confirmed, unspent Chia funding coins and a new,
+   empty ceremony output directory.
+
+Do not construct a plan from a dirty checkout or before secret rotation and
+the fresh EVM deployment are complete.
+
+## Build The Plan
+
+The admin portal drives the endpoints below under `/admin/genesis`. Preserve
+the JSON response from every state transition in the private ceremony archive.
+
+1. `POST /drafts` with the five frozen source SHAs.
+2. `POST /{ceremonyId}/invitations/{slot}` for slots 1, 2, and 3.
+3. Each administrator calls `/invitations/prepare`, signs
+   `SolslotGenesisAdminEnrollment`, then calls `/invitations/accept`.
+4. `POST /{ceremonyId}/roster/freeze` only after all three slots are enrolled.
+5. `POST /{ceremonyId}/plan` with the fresh EVM addresses, three validator
+   keys, nine funding coin IDs, trusted destinations, and retired coordinates.
+6. Two administrators independently prepare, review, and submit
+   `SolslotGenesisPlan` signatures.
+7. Export the resulting ceremony state after it reaches `plan_approved`.
+
+The deterministic plan covers SGT plus seven singleton launchers: pool, DID,
+governance, NAV registry, protocol config, admin authority, and vault-version
+registry. It also commits to 32 unique one-mojo bridge parents and bridge coins
+with a low-water mark of eight.
+
+## Pre-Broadcast Gate
+
+Call `POST /admin/genesis/{ceremonyId}/preflight`. The API re-reads all funding
+coins, reconstructs the exact plan and atomic spend bundle, runs the consensus
+simulation, checks four-lane approval evidence, verifies the EVM deployment
+and validator health, and refuses a non-empty output directory.
+
+Save that response as `preflight.json`, then run the independent offline gate:
+
+```bash
+cd solslot-protocol
+.venv/bin/python scripts/testnet_genesis_preflight.py pre-broadcast \
+  --ceremony-state /secure/ceremony/state-plan-approved.json \
+  --preflight-evidence /secure/ceremony/preflight.json \
+  --audit-approval /secure/ceremony/audit-approval.json \
+  --output-dir /secure/ceremony/output/<ceremony-id>
+```
+
+Repository paths default to the five sibling canonical repositories. Use the
+explicit `--protocol-repo`, `--evm-repo`, `--api-repo`,
+`--customer-web-repo`, and `--admin-portal-repo` options only when validating
+clean checkouts elsewhere.
+
+Both preflights must report ready immediately before broadcast. Any changed
+input coin, expired plan, changed source SHA, dirty worktree, missing reviewer,
+unhealthy validator, EVM mismatch, or output file invalidates the plan and its
+signatures.
+
+## Broadcast And Finalize
+
+1. `POST /admin/genesis/{ceremonyId}/broadcast` exactly once.
+2. If the response is rejected, missing, timed out, or ambiguous, mark the
+   ceremony abandoned. Never retry the same ceremony.
+3. Poll `POST /admin/genesis/{ceremonyId}/confirmation` until every predicted
+   output is current and the bundle has three Chia testnet11 confirmations.
+4. `POST /admin/genesis/{ceremonyId}/artifact` to construct the canonical
+   schema V2 public artifact.
+5. Two administrators independently prepare, review, and submit
+   `SolslotGenesisArtifact` signatures.
+6. `POST /admin/genesis/{ceremonyId}/finalize` once. This verifies the signed
+   artifact, writes private evidence and SHA256 sums, publishes the artifact,
+   and writes the read-only bootstrap lock last.
+
+Do not manually edit an artifact, lock, checksum file, or ceremony database.
+
+## Deploy Consumers
+
+Deploy the API, customer web, and admin portal atomically from the artifact's
+exact source SHAs. Each release must report the same artifact hash. Keep all
+three write flags false:
+
+```json
+{
+  "schemaVersion": 2,
+  "protocolVersion": "solslot-v2",
+  "network": "testnet11",
+  "artifactHash": "0x...",
+  "writeLocks": {
+    "alphaWritesEnabled": false,
+    "mintingEnabled": false,
+    "ceremonyModeEnabled": false
+  },
+  "consumers": {
+    "api": {"reachable": true, "artifactHash": "0x...", "sourceSha": "..."},
+    "customerWeb": {"reachable": true, "artifactHash": "0x...", "sourceSha": "..."},
+    "adminPortal": {"reachable": true, "artifactHash": "0x...", "sourceSha": "..."}
+  }
+}
+```
+
+Capture those live results as `release-attestation.json` and run:
+
+```bash
+cd solslot-protocol
+.venv/bin/python scripts/testnet_genesis_preflight.py post-genesis \
+  --ceremony-state /secure/ceremony/state-locked.json \
+  --public-artifact /secure/ceremony/public_artifact.json \
+  --bootstrap-lock /secure/ceremony/bootstrap_lock.json \
+  --evidence-dir /secure/ceremony/output/<ceremony-id> \
+  --release-attestation /secure/ceremony/release-attestation.json
+```
+
+The post-genesis gate verifies canonical artifact content, 2-of-3 signature
+binding, locked ceremony state, three-confirmation policy, retired-coordinate
+separation, checksummed evidence, clean source SHAs, consumer pins, and write
+locks. Signature recovery and live chain confirmation are enforced by the API
+state transitions before `locked`; this offline gate independently detects
+evidence or release drift.
+
+## Live Smoke Gate
+
+After post-genesis preflight passes:
+
+1. Create one fresh EVM vault and one fresh BLS vault.
+2. Complete the full zkPassport to Sepolia event to 2-of-3 validator to Chia
+   `SPEND_UPDATE_IDENTITY` path for each vault.
+3. Clear browser storage, reconnect, and prove both receipts recover from the
+   current unspent Chia singleton coin plus the API index.
+4. Verify one validator cannot stamp, any valid two can, and replayed events,
+   nullifiers, bridge coins, owner actions, and stale messages fail.
+5. Verify Beta ignores Alpha sessions and exposes no protocol vault or proof
+   state.
+6. Verify retired coordinates fail through the API, both portals, and crafted
+   offer files.
+
+Minting and listings remain disabled after this smoke. The first SmartDeed mint
+is a separate admin-and-committee launch gate.
 
 ## Abort Rules
 
-Any mismatch, failed push, stale state file, reused bridge coin, missing signature,
-or dirty worktree aborts the ceremony. Do not repair a partial ceremony in place.
-Start again with fresh coordinates and a new output directory.
-
-Minting stays disabled until independent review and live smoke evidence are signed off.
+Abort on any mismatch, failed push, ambiguous response, dirty worktree,
+signature discrepancy, stale input, reused bridge coin, missing checksum,
+unexpected on-chain spend, or consumer pin mismatch. Preserve all evidence,
+mark the ceremony abandoned, rotate affected one-time material, and start with
+fresh coordinates and a new output directory.

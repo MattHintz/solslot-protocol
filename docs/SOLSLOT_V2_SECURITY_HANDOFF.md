@@ -26,6 +26,9 @@ checksummed V1 evidence archive.
 3. API, EVM, customer web, and admin portal report the same source SHAs and artifact hash.
 4. Independent review closes all open findings against the frozen commits.
 5. Secrets are rotated after the release commits are frozen.
-6. Ceremony dry-run and preflight pass from a new, empty artifact directory.
+6. The API live preflight and offline `pre-broadcast` gate pass from a new,
+   empty artifact directory.
+7. The locked artifact, checksum archive, consumer release pins, and write
+   locks pass the offline `post-genesis` gate.
 
 No gate may be waived for Alpha.

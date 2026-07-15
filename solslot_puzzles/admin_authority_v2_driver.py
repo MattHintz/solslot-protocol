@@ -29,10 +29,18 @@ from chia.wallet.puzzles.singleton_top_layer_v1_1 import (
     SINGLETON_LAUNCHER_HASH,
     SINGLETON_MOD_HASH,
 )
+from chia.wallet.puzzles.custody.custody_architecture import MofN, PuzzleWithRestrictions
+from chia_puzzles_py import programs as chia_puzzle_programs
 from chia_rs.sized_bytes import bytes32
 from chia_rs.sized_ints import uint64
 
 from solslot_puzzles import load_puzzle
+from solslot_puzzles.eip712_helpers import (
+    compute_eip712_member_leaf_hash,
+    eip712_prefix_and_domain_separator,
+    genesis_challenge_for_network,
+    make_eip712_member_puzzle,
+)
 
 # Standard chia singleton constants pulled in for the launch flow.
 SINGLETON_AMOUNT = uint64(1)
@@ -155,6 +163,113 @@ class AdminRosterUpdatePreview:
 class AdminRosterUpdateSpend:
     preview: AdminRosterUpdatePreview
     solution: Program
+
+
+@dataclass(frozen=True)
+class _ProgramMember:
+    """Adapter that lets a canonical Program participate in CHIP-0043."""
+
+    program: Program
+
+    def memo(self, nonce: int) -> Program:
+        return Program.to([bytes32(self.program.get_tree_hash())])
+
+    def puzzle(self, nonce: int) -> Program:
+        return self.program
+
+    def puzzle_hash(self, nonce: int) -> bytes32:
+        return bytes32(self.program.get_tree_hash())
+
+
+@dataclass(frozen=True)
+class GenesisAdminQuorum:
+    """Canonical three-slot, two-signature genesis authority."""
+
+    admins: tuple[AdminRecord, AdminRecord, AdminRecord]
+    threshold: int
+    mips_reveal: Program
+    mips_root_hash: bytes32
+    admins_hash: bytes32
+    compressed_pubkeys: tuple[bytes, bytes, bytes]
+    member_puzzle_hashes: tuple[bytes32, bytes32, bytes32]
+
+
+def build_genesis_eip712_admin_quorum(
+    *,
+    network: str,
+    compressed_pubkeys: Sequence[bytes],
+) -> GenesisAdminQuorum:
+    """Derive the only admin authority accepted by a fresh V2 ceremony.
+
+    The ceremony never accepts an operator-supplied ``MIPS_ROOT_HASH``.  It
+    receives exactly three compressed secp256k1 keys and deterministically
+    builds three EIP-712 members plus the CHIP-0043 2-of-3 reveal.
+    """
+    pubkeys = tuple(bytes(value) for value in compressed_pubkeys)
+    if len(pubkeys) != 3:
+        raise ValueError("fresh V2 genesis requires exactly three admin public keys")
+    if any(len(value) != 33 for value in pubkeys):
+        raise ValueError("every genesis admin public key must be 33-byte compressed secp256k1")
+    if len(set(pubkeys)) != 3:
+        raise ValueError("genesis admin public keys must be distinct")
+
+    prefix = eip712_prefix_and_domain_separator(
+        genesis_challenge_for_network(network)
+    )
+    member_puzzles = tuple(
+        make_eip712_member_puzzle(
+            secp256k1_pubkey=pubkey,
+            prefix_and_domain_separator=prefix,
+        )
+        for pubkey in pubkeys
+    )
+    member_hashes = tuple(
+        compute_eip712_member_leaf_hash(
+            secp256k1_pubkey=pubkey,
+            prefix_and_domain_separator=prefix,
+        )
+        for pubkey in pubkeys
+    )
+    for member, member_hash in zip(member_puzzles, member_hashes, strict=True):
+        if bytes32(member.get_tree_hash()) != member_hash:
+            raise ValueError("EIP-712 member reveal does not match its committed hash")
+
+    admins = tuple(
+        AdminRecord(admin_idx=index, leaves=(member_hash,), m_within=1)
+        for index, member_hash in enumerate(member_hashes)
+    )
+    threshold = admin_supermajority_threshold(len(admins))
+    if threshold != 2:
+        raise ValueError("fresh V2 genesis admin threshold must be two")
+
+    quorum = MofN(
+        m=threshold,
+        members=[
+            PuzzleWithRestrictions(
+                nonce=index + 1,
+                restrictions=[],
+                puzzle=_ProgramMember(member),
+            )
+            for index, member in enumerate(member_puzzles)
+        ],
+    )
+    # Chia's custody driver keeps MofN_MOD as a module-level Program. Program
+    # LazyNodes are thread-affine, so calling ``quorum.puzzle`` from an API
+    # event-loop thread can panic when the custody module was imported on the
+    # process main thread. Rehydrate the canonical bytecode on the caller's
+    # thread and curry the exact same threshold/root instead.
+    mips_reveal = Program.from_bytes(chia_puzzle_programs.M_OF_N).curry(
+        threshold, quorum._merkle_tree.calculate_root()
+    )
+    return GenesisAdminQuorum(
+        admins=admins,  # type: ignore[arg-type]
+        threshold=threshold,
+        mips_reveal=mips_reveal,
+        mips_root_hash=bytes32(mips_reveal.get_tree_hash()),
+        admins_hash=compute_admins_hash(admins),
+        compressed_pubkeys=pubkeys,  # type: ignore[arg-type]
+        member_puzzle_hashes=member_hashes,  # type: ignore[arg-type]
+    )
 
 
 def compute_admins_hash(admins: Sequence[AdminRecord]) -> bytes32:

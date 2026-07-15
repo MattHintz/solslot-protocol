@@ -206,6 +206,10 @@
       {
         "name": "trustedForwarder_",
         "type": "address"
+      },
+      {
+        "name": "trustedDirectRelayer_",
+        "type": "address"
       }
     ]
   },
