@@ -31,16 +31,18 @@ administrator signing happen on each administrator's own computer.
 3. Run complete tests, schema drift, namespace, secret, package, and
    reproducibility gates from those exact commits.
 4. Obtain the four independent approvals and their evidence hashes.
-5. Rotate API, admin, JWT, validator, relayer, faucet, deployer, SSH, CI, and
-   database secrets after the release is frozen.
+5. Complete the RC2 credential carryover record. Revoke and replace only the
+   provider credential exposed in public history; retain secure reusable
+   credentials, reuse signer 0, and generate signer 1/2, WireGuard, mTLS,
+   invitation, and one-time ceremony material.
 6. Deploy fresh reviewed Sepolia contracts and wait for 12 confirmations.
 7. Confirm all three validator signer hosts are healthy over the private
    mTLS/WireGuard network.
 8. Select nine distinct, confirmed, unspent Chia funding coins and a new,
    empty ceremony output directory.
 
-Do not construct a plan from a dirty checkout or before secret rotation and
-the fresh EVM deployment are complete.
+Do not construct a plan from a dirty checkout or before the credential
+carryover checkpoint and fresh EVM deployment are complete.
 
 ## Build The Plan
 
