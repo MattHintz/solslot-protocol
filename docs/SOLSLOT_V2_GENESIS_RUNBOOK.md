@@ -84,9 +84,16 @@ non-empty output directory. The internal test class generates its review
 record from those live checks and the two recorded plan signatures; no
 independent-approval file is fabricated.
 
-Save that response as `preflight.json`, then run the independent offline gate:
+Save that response as `preflight.json`, extract the exact review record returned
+by the API, then run the independent offline gate:
 
 ```bash
+mkdir -p /secure/ceremony
+jq -e '.ready == true and (.reviewApproval | type == "object")' \
+  /secure/ceremony/preflight.json >/dev/null
+jq -S '.reviewApproval' /secure/ceremony/preflight.json \
+  > /secure/ceremony/audit-approval.json
+
 cd solslot-protocol
 .venv/bin/python scripts/testnet_genesis_preflight.py pre-broadcast \
   --ceremony-state /secure/ceremony/state-plan-approved.json \

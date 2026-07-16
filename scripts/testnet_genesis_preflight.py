@@ -608,6 +608,13 @@ def check_pre_broadcast(
     )
     if spend_count is None:
         findings.append(Finding("error", "API preflight evidence has no simulated spends"))
+    if preflight.get("reviewApproval") != approval:
+        findings.append(
+            Finding(
+                "error",
+                "review approval differs from the canonical API preflight record",
+            )
+        )
     if preflight.get("auditApprovalHash") != canonical_hash(approval):
         findings.append(Finding("error", "audit approval hash differs from API preflight evidence"))
     if plan is not None and spend_bundle_id is not None:

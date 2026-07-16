@@ -189,6 +189,7 @@ def _ceremony_plan() -> tuple[dict, dict, dict, dict]:
         "spendBundleId": spend_bundle_id,
         "spendCount": 42,
         "auditApprovalHash": preflight.canonical_hash(approval),
+        "reviewApproval": copy.deepcopy(approval),
     }
     return record, plan, approval, api_evidence
 
@@ -313,6 +314,7 @@ def test_pre_broadcast_accepts_internal_engineering_testnet_review(tmp_path: Pat
         },
     )
     api_evidence["auditApprovalHash"] = preflight.canonical_hash(approval)
+    api_evidence["reviewApproval"] = copy.deepcopy(approval)
 
     findings: list[preflight.Finding] = []
     preflight.check_pre_broadcast(
@@ -327,6 +329,7 @@ def test_pre_broadcast_accepts_internal_engineering_testnet_review(tmp_path: Pat
 
     approval["testOnly"] = False
     api_evidence["auditApprovalHash"] = preflight.canonical_hash(approval)
+    api_evidence["reviewApproval"] = copy.deepcopy(approval)
     rejected: list[preflight.Finding] = []
     preflight.check_pre_broadcast(
         record,
@@ -337,6 +340,23 @@ def test_pre_broadcast_accepts_internal_engineering_testnet_review(tmp_path: Pat
         now=1_900_000_000,
     )
     assert any("test-only" in item.message for item in rejected)
+
+
+def test_pre_broadcast_rejects_review_record_not_returned_by_api(tmp_path: Path) -> None:
+    record, _plan, approval, api_evidence = _ceremony_plan()
+    api_evidence["reviewApproval"]["ceremonyId"] = _hex(999)
+
+    findings: list[preflight.Finding] = []
+    preflight.check_pre_broadcast(
+        record,
+        api_evidence,
+        approval,
+        tmp_path / "new-output",
+        findings,
+        now=1_900_000_000,
+    )
+
+    assert any("canonical API preflight record" in item.message for item in findings)
 
 
 def test_pre_broadcast_rejects_expiry_and_lost_quorum(tmp_path: Path) -> None:
