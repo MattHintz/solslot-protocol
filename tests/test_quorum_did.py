@@ -26,8 +26,11 @@ PROTOCOL_PREFIX = b"\x53"
 
 
 def curry_quorum_did() -> Program:
-    """Curry quorum_did_inner with governance singleton struct."""
-    return QUORUM_DID_MOD.curry(GOV_SINGLETON_STRUCT)
+    """Curry quorum_did_inner with its module hash and governance struct."""
+    return QUORUM_DID_MOD.curry(
+        bytes32(QUORUM_DID_MOD.get_tree_hash()),
+        GOV_SINGLETON_STRUCT,
+    )
 
 
 class TestQuorumDidInner:
@@ -38,31 +41,37 @@ class TestQuorumDidInner:
         singleton_full_puzzle_hash = bytes32(b"\xcc" * 32)
         gov_inner_puzhash = bytes32(b"\xdd" * 32)
 
-        sol = Program.to([singleton_full_puzzle_hash, gov_inner_puzhash])
+        sol = Program.to([1, singleton_full_puzzle_hash, gov_inner_puzhash])
         result = curried.run(sol)
         conditions = result.as_python()
 
-        # 2 conditions: RECEIVE_MESSAGE, CREATE_PUZZLE_ANNOUNCEMENT
-        assert len(conditions) == 2
+        # The DID persists, receives governance authority, and announces the deed.
+        assert len(conditions) == 4
+
+        assert conditions[0][0] == bytes([51])  # CREATE_COIN
+        assert conditions[0][1] == curried.get_tree_hash()
+        assert conditions[0][2] == bytes([1])
 
         # RECEIVE_MESSAGE 0x10 (from governance)
-        assert conditions[0][0] == bytes([67])  # RECEIVE_MESSAGE
-        assert conditions[0][1] == bytes([0x10])  # mode: sender commits puzzle_hash
-        assert conditions[0][2][:1] == PROTOCOL_PREFIX
+        assert conditions[1][0] == bytes([67])  # RECEIVE_MESSAGE
+        assert conditions[1][1] == bytes([0x10])  # mode: sender commits puzzle_hash
+        assert conditions[1][2][:1] == PROTOCOL_PREFIX
 
         # CREATE_PUZZLE_ANNOUNCEMENT (the announcement the launcher asserts)
-        assert conditions[1][0] == bytes([62])  # CREATE_PUZZLE_ANNOUNCEMENT
-        assert conditions[1][1] == singleton_full_puzzle_hash
+        assert conditions[2][0] == bytes([62])  # CREATE_PUZZLE_ANNOUNCEMENT
+        assert conditions[2][1] == singleton_full_puzzle_hash
+        assert conditions[3][0] == bytes([73])  # ASSERT_MY_AMOUNT
+        assert conditions[3][1] == bytes([1])
 
     def test_invalid_singleton_hash_fails(self):
         curried = curry_quorum_did()
         # Non-32-byte input should fail validation
-        sol = Program.to([b"\xcc" * 16, bytes32(b"\xdd" * 32)])
+        sol = Program.to([1, b"\xcc" * 16, bytes32(b"\xdd" * 32)])
         with pytest.raises(ValueError):
             curried.run(sol)
 
     def test_invalid_gov_inner_puzhash_fails(self):
         curried = curry_quorum_did()
-        sol = Program.to([bytes32(b"\xcc" * 32), b"\xdd" * 16])
+        sol = Program.to([1, bytes32(b"\xcc" * 32), b"\xdd" * 16])
         with pytest.raises(ValueError):
             curried.run(sol)

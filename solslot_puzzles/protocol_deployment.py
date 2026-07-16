@@ -47,13 +47,16 @@ from typing import Any
 
 from chia.types.blockchain_format.coin import Coin
 from chia.types.blockchain_format.program import Program
-from chia.types.coin_spend import make_spend
+from chia.types.coin_spend import CoinSpend, make_spend
+from chia.wallet.lineage_proof import LineageProof
 from chia.wallet.cat_wallet.cat_utils import CAT_MOD_HASH
 from chia.wallet.puzzles.load_clvm import load_clvm
 from chia.wallet.puzzles.singleton_top_layer_v1_1 import (
     SINGLETON_LAUNCHER,
     SINGLETON_LAUNCHER_HASH,
     SINGLETON_MOD_HASH,
+    puzzle_for_singleton,
+    solution_for_singleton,
 )
 from chia.wallet.trading.offer import OFFER_MOD_HASH
 from chia.wallet.util.curry_and_treehash import (
@@ -271,8 +274,47 @@ def pool_inner_puzzle(
 
 
 def quorum_did_inner_puzzle(tracker_launcher_id: bytes32) -> Program:
-    """Curry quorum_did_inner with the tracker singleton struct."""
-    return _quorum_did_mod().curry(singleton_struct(tracker_launcher_id))
+    """Curry the persistent quorum DID with its module and tracker struct."""
+    mod = _quorum_did_mod()
+    return mod.curry(bytes32(mod.get_tree_hash()), singleton_struct(tracker_launcher_id))
+
+
+def build_quorum_did_mint_coin_spend(
+    *,
+    did_coin: Coin,
+    did_inner_puzzle: Program,
+    did_launcher_id: bytes32,
+    lineage_proof: LineageProof,
+    deed_full_puzzle_hash: bytes32,
+    governance_inner_puzzle_hash: bytes32,
+) -> CoinSpend:
+    """Build the persistent DID co-spend for one governance-approved mint."""
+    for value, name in (
+        (did_launcher_id, "did_launcher_id"),
+        (deed_full_puzzle_hash, "deed_full_puzzle_hash"),
+        (governance_inner_puzzle_hash, "governance_inner_puzzle_hash"),
+    ):
+        if len(value) != 32:
+            raise ValueError(f"{name} must be 32 bytes")
+    full_puzzle = puzzle_for_singleton(did_launcher_id, did_inner_puzzle)
+    if bytes32(full_puzzle.get_tree_hash()) != did_coin.puzzle_hash:
+        raise ValueError("DID coin does not match supplied inner puzzle")
+    inner_solution = Program.to(
+        [
+            did_coin.amount,
+            deed_full_puzzle_hash,
+            governance_inner_puzzle_hash,
+        ]
+    )
+    return make_spend(
+        did_coin,
+        full_puzzle,
+        solution_for_singleton(
+            lineage_proof,
+            uint64(did_coin.amount),
+            inner_solution,
+        ),
+    )
 
 
 def sgt_free_inner_puzzle_for_owner(
@@ -375,6 +417,7 @@ class ProtocolDeploymentPlan:
     pool_token_tail_hash: bytes32 = field(init=False)
     pool_inner_mod_hash: bytes32 = field(init=False)
     p2_pool_mod_hash: bytes32 = field(init=False)
+    p2_vault_mod_hash: bytes32 = field(init=False)
     smart_deed_inner_mod_hash: bytes32 = field(init=False)
     governance_singleton_struct_hash: bytes32 = field(init=False)
     pool_inner_puzhash: bytes32 = field(init=False)
@@ -432,6 +475,7 @@ class ProtocolDeploymentPlan:
         )
         self.pool_inner_mod_hash = bytes32(_pool_inner_mod().get_tree_hash())
         self.p2_pool_mod_hash = _p2_pool_v2_mod_hash()
+        self.p2_vault_mod_hash = _p2_vault_mod_hash()
         self.smart_deed_inner_mod_hash = _smart_deed_inner_v2_mod_hash()
         self.governance_singleton_struct_hash = bytes32(
             singleton_struct(self.tracker_launcher_id).get_tree_hash()
@@ -741,7 +785,8 @@ def plan_from_manifest_dict(data: dict[str, Any]) -> ProtocolDeploymentPlan:
         "pool_launcher_id", "did_launcher_id", "tracker_launcher_id",
         "sgt_tail_hash", "sgt_full_puzhash",
         "pool_token_tail_hash", "pool_inner_puzhash", "pool_full_puzhash",
-        "pool_inner_mod_hash", "p2_pool_mod_hash", "smart_deed_inner_mod_hash",
+        "pool_inner_mod_hash", "p2_pool_mod_hash", "p2_vault_mod_hash",
+        "smart_deed_inner_mod_hash",
         "governance_singleton_struct_hash",
         "did_inner_puzhash", "did_full_puzhash",
         "tracker_inner_puzhash", "tracker_full_puzhash",
@@ -797,7 +842,8 @@ def load_manifest_dict(path: Path) -> dict[str, Any]:
         "pool_launcher_id", "did_launcher_id", "tracker_launcher_id",
         "sgt_tail_hash", "sgt_full_puzhash",
         "pool_token_tail_hash", "pool_inner_puzhash", "pool_full_puzhash",
-        "pool_inner_mod_hash", "p2_pool_mod_hash", "smart_deed_inner_mod_hash",
+        "pool_inner_mod_hash", "p2_pool_mod_hash", "p2_vault_mod_hash",
+        "smart_deed_inner_mod_hash",
         "governance_singleton_struct_hash",
         "did_inner_puzhash", "did_full_puzhash",
         "tracker_inner_puzhash", "tracker_full_puzhash",
@@ -850,6 +896,7 @@ __all__ = [
     "pool_token_tail_hash",
     "pool_inner_puzzle",
     "quorum_did_inner_puzzle",
+    "build_quorum_did_mint_coin_spend",
     "sgt_free_inner_puzzle_for_owner",
     "cat2_puzzle_hash_for_sgt",
     "plan_to_manifest_dict",

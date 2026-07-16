@@ -7,8 +7,10 @@ import json
 from datetime import datetime, timezone
 from typing import Any, Callable, Mapping, Sequence
 
+from chia.types.blockchain_format.program import Program
 from chia_rs.sized_bytes import bytes32
 
+from solslot_puzzles import property_registry_driver as property_registry
 from solslot_puzzles.genesis_ceremony import (
     GENESIS_ADMIN_THRESHOLD,
     GENESIS_EVM_CHAIN_ID,
@@ -16,12 +18,20 @@ from solslot_puzzles.genesis_ceremony import (
     GenesisCeremonyPlan,
     verify_genesis_ceremony_plan,
 )
-from solslot_puzzles.protocol_deployment import PROTOCOL_VERSION
+from solslot_puzzles.protocol_deployment import PROTOCOL_VERSION, singleton_struct
 
 
 SCHEMA_VERSION = 2
 REQUIRED_CHIA_CONFIRMATIONS = 3
 ARTIFACT_SIGNATURE_TYPE = "SolslotGenesisArtifact"
+INDEPENDENT_REVIEW_CLASS = "independent-release-review"
+INTERNAL_ENGINEERING_TESTNET_REVIEW_CLASS = "internal-engineering-testnet"
+REVIEW_CLASSES = frozenset(
+    {
+        INDEPENDENT_REVIEW_CLASS,
+        INTERNAL_ENGINEERING_TESTNET_REVIEW_CLASS,
+    }
+)
 REQUIRED_SOURCE_REFS = (
     "protocol",
     "evm",
@@ -42,6 +52,7 @@ REQUIRED_LAUNCHER_IDS = (
     "protocolConfig",
     "adminAuthority",
     "vaultVersionRegistry",
+    "propertyRegistry",
 )
 
 ArtifactSignatureVerifier = Callable[[Mapping[str, Any], int, bytes, bytes], bool]
@@ -79,6 +90,17 @@ def _source_ref(value: str, field: str) -> str:
     return normalized
 
 
+def _program(value: object, field: str) -> tuple[str, Program]:
+    normalized = str(value).lower()
+    if not normalized.startswith("0x") or len(normalized) <= 2:
+        raise ValueError(f"{field} must be a nonempty 0x-prefixed CLVM program")
+    try:
+        raw = bytes.fromhex(normalized[2:])
+        return normalized, Program.from_bytes(raw)
+    except ValueError as exc:
+        raise ValueError(f"{field} must be valid serialized CLVM") from exc
+
+
 def canonical_json(payload: Mapping[str, Any]) -> bytes:
     return json.dumps(
         payload,
@@ -104,6 +126,7 @@ def build_public_artifact(
     confirmed_block_index: int,
     build_timestamp: str | None = None,
     signatures: Sequence[Mapping[str, Any]] = (),
+    review_class: str = INDEPENDENT_REVIEW_CLASS,
 ) -> dict[str, Any]:
     """Build the artifact signed by two members of the frozen admin roster."""
     verify_genesis_ceremony_plan(plan)
@@ -115,6 +138,9 @@ def build_public_artifact(
         datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
     except ValueError as exc:
         raise ValueError("buildTimestamp must be ISO-8601") from exc
+    if review_class not in REVIEW_CLASSES:
+        raise ValueError("unsupported genesis review class")
+    internal_test = review_class == INTERNAL_ENGINEERING_TESTNET_REVIEW_CLASS
 
     base = plan.base_protocol
     payload: dict[str, Any] = {
@@ -122,6 +148,9 @@ def build_public_artifact(
         "protocolVersion": PROTOCOL_VERSION,
         "network": plan.network,
         "evmChainId": plan.evm_chain_id,
+        "reviewClass": review_class,
+        "testOnly": internal_test,
+        "auditStatus": "unaudited" if internal_test else "independently-reviewed",
         "buildTimestamp": timestamp,
         "ceremony": {
             "ceremonyId": _hex32(plan.ceremony_id, "ceremonyId"),
@@ -143,6 +172,7 @@ def build_public_artifact(
                 base.smart_deed_inner_mod_hash, "smartDeedInnerModHash"
             ),
             "p2PoolModHash": _hex32(base.p2_pool_mod_hash, "p2PoolModHash"),
+            "p2VaultModHash": _hex32(base.p2_vault_mod_hash, "p2VaultModHash"),
             "didInnerPuzzleHash": _hex32(base.did_inner_puzhash, "didInnerPuzzleHash"),
             "didFullPuzzleHash": _hex32(base.did_full_puzhash, "didFullPuzzleHash"),
             "governanceInnerPuzzleHash": _hex32(
@@ -181,6 +211,18 @@ def build_public_artifact(
                 plan.vault_version_registry.full_puzzle_hash,
                 "vaultVersionRegistryFullPuzzleHash",
             ),
+            "propertyRegistryInnerModHash": _hex32(
+                property_registry.property_registry_inner_mod_hash(),
+                "propertyRegistryInnerModHash",
+            ),
+            "propertyRegistryInnerPuzzleHash": _hex32(
+                plan.property_registry.inner_puzzle_hash,
+                "propertyRegistryInnerPuzzleHash",
+            ),
+            "propertyRegistryFullPuzzleHash": _hex32(
+                plan.property_registry.full_puzzle_hash,
+                "propertyRegistryFullPuzzleHash",
+            ),
             "sgtTailHash": _hex32(base.sgt_tail_hash, "sgtTailHash"),
         },
         "launcherIds": {
@@ -200,6 +242,10 @@ def build_public_artifact(
                 plan.vault_version_registry.launcher_id,
                 "vaultVersionRegistryLauncherId",
             ),
+            "propertyRegistry": _hex32(
+                plan.property_registry.launcher_id,
+                "propertyRegistryLauncherId",
+            ),
         },
         "sgtGenesisCoinId": _hex32(base.sgt_genesis_coin_id, "sgtGenesisCoinId"),
         "sgtTailHash": _hex32(base.sgt_tail_hash, "sgtTailHash"),
@@ -209,6 +255,27 @@ def build_public_artifact(
                 "governanceSingletonStructHash",
             ),
             "launcherId": _hex32(base.tracker_launcher_id, "governanceLauncherId"),
+            "serialized": "0x" + bytes(singleton_struct(base.tracker_launcher_id)).hex(),
+        },
+        "protocolDid": {
+            "launcherId": _hex32(base.did_launcher_id, "didLauncherId"),
+            "singletonStruct": "0x" + bytes(singleton_struct(base.did_launcher_id)).hex(),
+            "innerPuzzleHash": _hex32(base.did_inner_puzhash, "didInnerPuzzleHash"),
+            "fullPuzzleHash": _hex32(base.did_full_puzhash, "didFullPuzzleHash"),
+        },
+        "propertyRegistry": {
+            "launcherId": _hex32(
+                plan.property_registry.launcher_id, "propertyRegistryLauncherId"
+            ),
+            "governanceBlsPubkey": _hex_value(
+                base.trusted_nav_registry_gov_pubkey,
+                "propertyRegistryGovernanceBlsPubkey",
+                length=48,
+            ),
+            "currentPuzzleHash": _hex32(
+                plan.property_registry.full_puzzle_hash,
+                "propertyRegistryFullPuzzleHash",
+            ),
         },
         "protocolParameters": {
             "smartDeedPuzzleVersion": base.smart_deed_puzzle_version,
@@ -228,6 +295,7 @@ def build_public_artifact(
             "protocolConfig": plan.protocol_config_version,
             "adminAuthority": plan.admin_authority_version,
             "vault": plan.vault_version,
+            "propertyRegistry": plan.property_registry_version,
         },
         "adminAuthority": {
             "threshold": plan.admin_quorum.threshold,
@@ -324,6 +392,14 @@ def _verify_artifact_content(payload: Mapping[str, Any]) -> None:
         raise ValueError("artifact network is not testnet11")
     if payload.get("evmChainId") != GENESIS_EVM_CHAIN_ID:
         raise ValueError("artifact EVM chain is not Sepolia")
+    review_class = payload.get("reviewClass")
+    if review_class not in REVIEW_CLASSES:
+        raise ValueError("artifact reviewClass is unsupported")
+    if review_class == INTERNAL_ENGINEERING_TESTNET_REVIEW_CLASS:
+        if payload.get("testOnly") is not True or payload.get("auditStatus") != "unaudited":
+            raise ValueError("internal engineering artifact must be test-only and unaudited")
+    elif payload.get("testOnly") is not False or payload.get("auditStatus") != "independently-reviewed":
+        raise ValueError("independently reviewed artifact metadata is invalid")
     if payload.get("artifactHash") != artifact_hash(payload):
         raise ValueError("artifactHash does not match canonical payload")
 
@@ -339,6 +415,68 @@ def _verify_artifact_content(payload: Mapping[str, Any]) -> None:
     launcher_values = [_hex32(str(launchers[key]), key) for key in REQUIRED_LAUNCHER_IDS]
     if len(set(launcher_values)) != len(launcher_values):
         raise ValueError("artifact launcher IDs must be distinct")
+
+    puzzles = payload.get("puzzleHashes")
+    if not isinstance(puzzles, Mapping):
+        raise ValueError("artifact puzzle hashes are missing")
+    for key in (
+        "didInnerPuzzleHash",
+        "didFullPuzzleHash",
+        "governanceFullPuzzleHash",
+        "propertyRegistryFullPuzzleHash",
+        "p2PoolModHash",
+        "p2VaultModHash",
+    ):
+        _hex32(str(puzzles.get(key, "")), key)
+
+    did = payload.get("protocolDid")
+    if not isinstance(did, Mapping):
+        raise ValueError("artifact protocol DID material is missing")
+    if (
+        did.get("launcherId") != launchers["did"]
+        or did.get("innerPuzzleHash") != puzzles["didInnerPuzzleHash"]
+        or did.get("fullPuzzleHash") != puzzles["didFullPuzzleHash"]
+    ):
+        raise ValueError("artifact protocol DID material is inconsistent")
+    did_struct_hex, did_struct = _program(
+        did.get("singletonStruct"), "protocolDid.singletonStruct"
+    )
+    expected_did_struct = singleton_struct(
+        bytes32.fromhex(str(launchers["did"]).removeprefix("0x"))
+    )
+    if did_struct_hex != "0x" + bytes(expected_did_struct).hex() or did_struct != expected_did_struct:
+        raise ValueError("artifact protocol DID singleton struct is invalid")
+
+    governance = payload.get("governanceStruct")
+    if not isinstance(governance, Mapping) or governance.get("launcherId") != launchers["governance"]:
+        raise ValueError("artifact governance singleton material is missing")
+    governance_hex, governance_program = _program(
+        governance.get("serialized"), "governanceStruct.serialized"
+    )
+    expected_governance = singleton_struct(
+        bytes32.fromhex(str(launchers["governance"]).removeprefix("0x"))
+    )
+    if (
+        governance_hex != "0x" + bytes(expected_governance).hex()
+        or governance_program != expected_governance
+        or governance.get("treeHash")
+        != _hex32(expected_governance.get_tree_hash(), "governanceStruct.treeHash")
+    ):
+        raise ValueError("artifact governance singleton struct is invalid")
+
+    registry = payload.get("propertyRegistry")
+    if not isinstance(registry, Mapping):
+        raise ValueError("artifact property registry material is missing")
+    if (
+        registry.get("launcherId") != launchers["propertyRegistry"]
+        or registry.get("currentPuzzleHash") != puzzles["propertyRegistryFullPuzzleHash"]
+    ):
+        raise ValueError("artifact property registry material is inconsistent")
+    _hex_value(
+        str(registry.get("governanceBlsPubkey", "")),
+        "propertyRegistry.governanceBlsPubkey",
+        length=48,
+    )
 
     retired = payload.get("retiredCoordinates")
     if not isinstance(retired, list) or not retired:
@@ -460,6 +598,9 @@ __all__ = [
     "SCHEMA_VERSION",
     "REQUIRED_CHIA_CONFIRMATIONS",
     "ARTIFACT_SIGNATURE_TYPE",
+    "INDEPENDENT_REVIEW_CLASS",
+    "INTERNAL_ENGINEERING_TESTNET_REVIEW_CLASS",
+    "REVIEW_CLASSES",
     "ArtifactSignatureVerifier",
     "canonical_json",
     "artifact_hash",

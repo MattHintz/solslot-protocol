@@ -562,6 +562,8 @@ def build_mint_publish_artifacts(
     # Protocol deployment-derived context.
     protocol_did_singleton_struct: Program,
     protocol_did_puzhash: bytes32,
+    protocol_did_inner_puzhash: bytes32,
+    governance_singleton_struct: Program,
     p2_pool_mod_hash: bytes32,
     p2_vault_mod_hash: bytes32,
     property_registry_puzzle_hash: bytes32,
@@ -588,6 +590,7 @@ def build_mint_publish_artifacts(
         (deed_launcher_parent_coin_name, "deed_launcher_parent_coin_name"),
         (proposal_launcher_parent_coin_name, "proposal_launcher_parent_coin_name"),
         (protocol_did_puzhash, "protocol_did_puzhash"),
+        (protocol_did_inner_puzhash, "protocol_did_inner_puzhash"),
         (property_registry_puzzle_hash, "property_registry_puzzle_hash"),
     ):
         if len(ph) != 32:
@@ -659,6 +662,11 @@ def build_mint_publish_artifacts(
         owner_member_hash=owner_member_hash,
         gov_member_hash=gov_member_hash,
         proposal_data_hash=proposal_data_hash,
+        governance_singleton_struct=governance_singleton_struct,
+        governance_proposal_hash=proposal_hash,
+        deed_launcher_id=deed_launcher_id,
+        did_inner_puzzle_hash=protocol_did_inner_puzhash,
+        deed_full_puzzle_hash=deed_full_puzhash,
         proposal_state=STATE_DRAFT,
         state_version=0,
     )

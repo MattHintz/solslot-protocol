@@ -39,6 +39,7 @@ LAUNCHER_NAMES = (
     "protocolConfig",
     "adminAuthority",
     "vaultVersionRegistry",
+    "propertyRegistry",
 )
 FUNDING_NAMES = (
     "sgt",
@@ -58,6 +59,8 @@ AUDIT_LANES = (
     "credentialBridge",
     "ceremonyOrchestrator",
 )
+INDEPENDENT_REVIEW_CLASS = "independent-release-review"
+INTERNAL_ENGINEERING_TESTNET_REVIEW_CLASS = "internal-engineering-testnet"
 CONSUMERS = ("api", "customerWeb", "adminPortal")
 GIT_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 HEX_RE = re.compile(r"^0x[0-9a-f]+$")
@@ -95,7 +98,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
     before = phases.add_parser(
         "pre-broadcast",
-        help="Verify frozen commits, quorum, simulation, and approval evidence.",
+        help="Verify frozen commits, quorum, simulation, and selected review evidence.",
     )
     _add_common_arguments(before)
     before.add_argument("--preflight-evidence", type=Path, required=True)
@@ -483,6 +486,11 @@ def _validate_audit_approval(
 ) -> None:
     draft = record.get("draft")
     draft_sources = draft.get("sourceShas") if isinstance(draft, Mapping) else None
+    review_class = (
+        draft.get("reviewClass", INDEPENDENT_REVIEW_CLASS)
+        if isinstance(draft, Mapping)
+        else INDEPENDENT_REVIEW_CLASS
+    )
     expected = {
         "schemaVersion": 2,
         "ceremonyId": record.get("ceremony_id"),
@@ -493,17 +501,59 @@ def _validate_audit_approval(
     for key, value in expected.items():
         if approval.get(key) != value:
             findings.append(Finding("error", f"audit approval {key} does not match ceremony"))
-    lanes = approval.get("approvals")
-    if not isinstance(lanes, list) or {item.get("lane") for item in lanes if isinstance(item, Mapping)} != set(AUDIT_LANES):
-        findings.append(Finding("error", "all four independent audit lanes must be present"))
+    if review_class == INTERNAL_ENGINEERING_TESTNET_REVIEW_CLASS:
+        if (
+            approval.get("reviewClass") != review_class
+            or approval.get("testOnly") is not True
+            or approval.get("auditStatus") != "unaudited"
+        ):
+            findings.append(
+                Finding(
+                    "error",
+                    "internal engineering approval must be test-only and unaudited",
+                )
+            )
+        administrator_review = _require_mapping(
+            approval.get("administratorReview"),
+            "internal administrator review",
+            findings,
+        )
+        if administrator_review:
+            roster = administrator_review.get("roster")
+            slots = administrator_review.get("planSignerSlots")
+            state_signers = {
+                int(item.get("slot", 0))
+                for item in record.get("plan_signatures", [])
+                if isinstance(item, Mapping)
+            }
+            if (
+                administrator_review.get("threshold") != 2
+                or not isinstance(roster, list)
+                or len(roster) != 3
+                or not isinstance(slots, list)
+                or len(set(slots)) < 2
+                or not set(slots).issubset(state_signers)
+            ):
+                findings.append(
+                    Finding(
+                        "error",
+                        "internal review does not prove three admins and two plan signers",
+                    )
+                )
+    elif review_class == INDEPENDENT_REVIEW_CLASS:
+        lanes = approval.get("approvals")
+        if not isinstance(lanes, list) or {item.get("lane") for item in lanes if isinstance(item, Mapping)} != set(AUDIT_LANES):
+            findings.append(Finding("error", "all four independent audit lanes must be present"))
+        else:
+            for lane in lanes:
+                if not isinstance(lane, Mapping):
+                    findings.append(Finding("error", "audit lane entry must be an object"))
+                    continue
+                if lane.get("approved") is not True or not str(lane.get("reviewer", "")).strip():
+                    findings.append(Finding("error", f"audit lane {lane.get('lane')} is not approved"))
+                _require_hex(lane.get("evidenceHash"), 32, "audit evidence hash", findings)
     else:
-        for lane in lanes:
-            if not isinstance(lane, Mapping):
-                findings.append(Finding("error", "audit lane entry must be an object"))
-                continue
-            if lane.get("approved") is not True or not str(lane.get("reviewer", "")).strip():
-                findings.append(Finding("error", f"audit lane {lane.get('lane')} is not approved"))
-            _require_hex(lane.get("evidenceHash"), 32, "audit evidence hash", findings)
+        findings.append(Finding("error", "ceremony review class is unsupported"))
     deployments = _require_mapping(approval.get("evmContracts"), "audit EVM deployments", findings)
     plan_addresses = plan.get("evmAddresses", {})
     if deployments:
@@ -575,6 +625,15 @@ def _validate_artifact(
         findings.append(Finding("error", "public artifact is not schema/protocol V2"))
     if artifact.get("network") != "testnet11" or artifact.get("evmChainId") != 11155111:
         findings.append(Finding("error", "public artifact is not testnet11/Sepolia"))
+    review_class = artifact.get("reviewClass")
+    if review_class == INTERNAL_ENGINEERING_TESTNET_REVIEW_CLASS:
+        if artifact.get("testOnly") is not True or artifact.get("auditStatus") != "unaudited":
+            findings.append(Finding("error", "internal artifact is not marked test-only and unaudited"))
+    elif review_class == INDEPENDENT_REVIEW_CLASS:
+        if artifact.get("testOnly") is not False or artifact.get("auditStatus") != "independently-reviewed":
+            findings.append(Finding("error", "independent artifact review metadata is invalid"))
+    else:
+        findings.append(Finding("error", "public artifact review class is unsupported"))
     expected_hash = artifact_hash(artifact)
     if artifact.get("artifactHash") != expected_hash:
         findings.append(Finding("error", "public artifact hash does not match canonical content"))
@@ -778,6 +837,9 @@ def check_post_genesis(
     lock_expected = {
         "schemaVersion": 2,
         "protocolVersion": "solslot-v2",
+        "reviewClass": artifact.get("reviewClass"),
+        "testOnly": artifact.get("testOnly"),
+        "auditStatus": artifact.get("auditStatus"),
         "ceremonyId": record.get("ceremony_id"),
         "planHash": record.get("plan_hash"),
         "artifactHash": artifact.get("artifactHash"),
@@ -841,7 +903,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     record = load_json(args.ceremony_state, findings, "ceremony state")
     if args.phase == "pre-broadcast":
         preflight = load_json(args.preflight_evidence, findings, "API preflight evidence")
-        approval = load_json(args.audit_approval, findings, "independent audit approval")
+        approval = load_json(args.audit_approval, findings, "genesis review approval")
         if record is not None and preflight is not None and approval is not None:
             check_pre_broadcast(
                 record,

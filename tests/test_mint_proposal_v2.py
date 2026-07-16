@@ -16,6 +16,10 @@ from __future__ import annotations
 import pytest
 from chia.types.blockchain_format.program import Program
 from chia.wallet.puzzles.load_clvm import load_clvm
+from chia.wallet.puzzles.singleton_top_layer_v1_1 import (
+    SINGLETON_LAUNCHER_HASH,
+    SINGLETON_MOD_HASH,
+)
 from chia_rs.sized_bytes import bytes32
 
 from solslot_puzzles.mint_proposal_v2_driver import (
@@ -44,7 +48,7 @@ from solslot_puzzles.mint_proposal_v2_driver import (
 # Pinned mod hash for the V2 puzzle.  Update both here AND in the
 # portal's TS port if the .clsp source changes intentionally.
 PINNED_V2_MOD_HASH = bytes32.fromhex(
-    "a21505befe18b82a51a5644a184aad514b86a1c7e86fce04594e83bf376329d6"
+    "bb1379bc24f0a02ca27de58e2200ae4cd1fc1e58d53a49d1119600108741d37e"
 )
 
 # Sample proposal data.
@@ -60,6 +64,36 @@ SENTINEL_OWNER_HASH = bytes32(b"\xAA" * 32)
 SENTINEL_GOV_HASH = bytes32(b"\xBB" * 32)
 SENTINEL_OTHER_HASH = bytes32(b"\xCC" * 32)
 SINGLETON_AMOUNT = 1
+GOVERNANCE_LAUNCHER_ID = bytes32(b"\xD1" * 32)
+GOVERNANCE_SINGLETON_STRUCT = Program.to(
+    (SINGLETON_MOD_HASH, (GOVERNANCE_LAUNCHER_ID, SINGLETON_LAUNCHER_HASH))
+)
+GOVERNANCE_PROPOSAL_HASH = bytes32(b"\xD2" * 32)
+DEED_LAUNCHER_ID = bytes32(b"\xD3" * 32)
+DID_INNER_PUZZLE_HASH = bytes32(b"\xD4" * 32)
+DEED_FULL_PUZZLE_HASH = bytes32(b"\xD5" * 32)
+
+_driver_make_inner_puzzle = make_inner_puzzle
+_driver_make_inner_puzzle_hash = make_inner_puzzle_hash
+
+
+def make_inner_puzzle(**kwargs) -> Program:
+    """Apply the immutable execution context shared by these unit fixtures."""
+    kwargs.setdefault("governance_singleton_struct", GOVERNANCE_SINGLETON_STRUCT)
+    kwargs.setdefault("governance_proposal_hash", GOVERNANCE_PROPOSAL_HASH)
+    kwargs.setdefault("deed_launcher_id", DEED_LAUNCHER_ID)
+    kwargs.setdefault("did_inner_puzzle_hash", DID_INNER_PUZZLE_HASH)
+    kwargs.setdefault("deed_full_puzzle_hash", DEED_FULL_PUZZLE_HASH)
+    return _driver_make_inner_puzzle(**kwargs)
+
+
+def make_inner_puzzle_hash(**kwargs) -> bytes32:
+    kwargs.setdefault("governance_singleton_struct", GOVERNANCE_SINGLETON_STRUCT)
+    kwargs.setdefault("governance_proposal_hash", GOVERNANCE_PROPOSAL_HASH)
+    kwargs.setdefault("deed_launcher_id", DEED_LAUNCHER_ID)
+    kwargs.setdefault("did_inner_puzzle_hash", DID_INNER_PUZZLE_HASH)
+    kwargs.setdefault("deed_full_puzzle_hash", DEED_FULL_PUZZLE_HASH)
+    return _driver_make_inner_puzzle_hash(**kwargs)
 
 
 # \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
@@ -235,6 +269,11 @@ def _draft_state(
             royalty_bps=ROYALTY_BPS,
             quorum_threshold=QUORUM_THRESHOLD,
         ),
+        governance_singleton_struct=GOVERNANCE_SINGLETON_STRUCT,
+        governance_proposal_hash=GOVERNANCE_PROPOSAL_HASH,
+        deed_launcher_id=DEED_LAUNCHER_ID,
+        did_inner_puzzle_hash=DID_INNER_PUZZLE_HASH,
+        deed_full_puzzle_hash=DEED_FULL_PUZZLE_HASH,
         proposal_state=STATE_DRAFT,
         state_version=state_version,
     )

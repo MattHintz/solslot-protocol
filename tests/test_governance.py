@@ -35,7 +35,7 @@ from solslot_puzzles.sgt_driver import (
     TRK_PROPOSE,
     TRK_VOTE,
     bill_freeze,
-    bill_mint,
+    bill_mint as build_mint_bill,
     bill_settle,
     bill_vault_version,
     cat_sgt_free_puzzle_hash,
@@ -93,12 +93,18 @@ SGT_TOTAL_SUPPLY = 1_000_000
 MIN_PROPOSAL_STAKE = 10_000  # 1% of supply, anti-spam
 
 VOTER_INNER_PUZHASH = bytes32(b"\x77" * 32)
+PROPERTY_ID = bytes32(b"\x71" * 32)
+PROPERTY_REGISTRY_PUZHASH = bytes32(b"\x72" * 32)
 
 # Tracker self identity at the time of a spend
 TRACKER_AMOUNT = 1
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
+def mint_bill(deed_full_puzhash: bytes32) -> Program:
+    return build_mint_bill(deed_full_puzhash, PROPERTY_ID, PROPERTY_REGISTRY_PUZHASH)
+
+
 def _curry_tracker(
     proposal_hash: int = 0,
     bill_op: int = 0,
@@ -224,7 +230,7 @@ class TestPropose:
         - DOES NOT assert any DID PROP announcement (legacy gate removed in fix C-1)
         """
         deed_full_ph = bytes32(b"\x33" * 32)
-        bill = bill_mint(deed_full_ph)
+        bill = mint_bill(deed_full_ph)
         proposal_hash = proposal_hash_from_bill(bill)
         first_vote = 600_000  # 60% of 1M = above quorum, also ≫ MIN_PROPOSAL_STAKE
         # Pick a future deadline.
@@ -266,7 +272,7 @@ class TestPropose:
         """Tracker has an active proposal → PROPOSE must fail."""
         curried = _curry_tracker(
             proposal_hash=bytes32(b"\xee" * 32),
-            bill_op=bill_mint(bytes32(b"\x33" * 32)),
+            bill_op=mint_bill(bytes32(b"\x33" * 32)),
             vote_tally=100,
             voting_deadline=2_000_000_000,
         )
@@ -274,7 +280,7 @@ class TestPropose:
         sol = Program.to([
             my_id, my_ph, TRACKER_AMOUNT,
             TRK_PROPOSE,
-            [bytes32(b"\xff" * 32), bill_mint(bytes32(b"\x44" * 32)),
+            [bytes32(b"\xff" * 32), mint_bill(bytes32(b"\x44" * 32)),
              VOTER_INNER_PUZHASH, 100, 2_100_000_000],
         ])
         with pytest.raises(PuzzleError):
@@ -284,7 +290,7 @@ class TestPropose:
         """proposal_hash must equal sha256tree(bill_op)."""
         curried = _curry_tracker()
         my_id, my_ph = _tracker_my_id_and_ph(curried)
-        bill = bill_mint(bytes32(b"\x33" * 32))
+        bill = mint_bill(bytes32(b"\x33" * 32))
         wrong_hash = bytes32(b"\xab" * 32)
         sol = Program.to([
             my_id, my_ph, TRACKER_AMOUNT,
@@ -298,7 +304,7 @@ class TestPropose:
         """Zero stake fails the MIN_PROPOSAL_STAKE check."""
         curried = _curry_tracker()
         my_id, my_ph = _tracker_my_id_and_ph(curried)
-        bill = bill_mint(bytes32(b"\x33" * 32))
+        bill = mint_bill(bytes32(b"\x33" * 32))
         ph = proposal_hash_from_bill(bill)
         sol = Program.to([
             my_id, my_ph, TRACKER_AMOUNT,
@@ -312,7 +318,7 @@ class TestPropose:
         """Stake just below MIN_PROPOSAL_STAKE fails (anti-spam)."""
         curried = _curry_tracker()
         my_id, my_ph = _tracker_my_id_and_ph(curried)
-        bill = bill_mint(bytes32(b"\x33" * 32))
+        bill = mint_bill(bytes32(b"\x33" * 32))
         ph = proposal_hash_from_bill(bill)
         sol = Program.to([
             my_id, my_ph, TRACKER_AMOUNT,
@@ -326,7 +332,7 @@ class TestPropose:
         """Stake exactly at MIN_PROPOSAL_STAKE is accepted (boundary inclusive)."""
         curried = _curry_tracker()
         my_id, my_ph = _tracker_my_id_and_ph(curried)
-        bill = bill_mint(bytes32(b"\x33" * 32))
+        bill = mint_bill(bytes32(b"\x33" * 32))
         ph = proposal_hash_from_bill(bill)
         sol = Program.to([
             my_id, my_ph, TRACKER_AMOUNT,
@@ -353,7 +359,7 @@ class TestPropose:
 # ─────────────────────────────────────────────────────────────────────────────
 class TestVote:
     def test_vote_increments_tally_and_emits_lock_assertion(self):
-        bill = bill_mint(bytes32(b"\x33" * 32))
+        bill = mint_bill(bytes32(b"\x33" * 32))
         proposal_hash = proposal_hash_from_bill(bill)
         deadline = 2_000_000_000
         existing_tally = 100_000
@@ -400,7 +406,7 @@ class TestVote:
             curried.run(sol)
 
     def test_vote_rejected_with_zero_amount(self):
-        bill = bill_mint(bytes32(b"\x33" * 32))
+        bill = mint_bill(bytes32(b"\x33" * 32))
         curried = _curry_tracker(
             proposal_hash=proposal_hash_from_bill(bill),
             bill_op=bill,
@@ -429,7 +435,7 @@ class TestExecute:
         - reset state to IDLE and emit EXEC release announcement
         """
         deed_full_ph = bytes32(b"\x33" * 32)
-        bill = bill_mint(deed_full_ph)
+        bill = mint_bill(deed_full_ph)
         proposal_hash = proposal_hash_from_bill(bill)
         deadline = 2_000_000_000
         # Quorum reached: 600_000 SGT > 50% of 1M
@@ -476,17 +482,23 @@ class TestExecute:
         expected_did_announce_id = bytes32(
             hashlib.sha256(DID_PUZHASH + deed_full_ph).digest()
         )
+        expected_registry_announce_id = bytes32(
+            hashlib.sha256(
+                PROPERTY_REGISTRY_PUZHASH + b"\x53" + PROPERTY_ID
+            ).digest()
+        )
         asserts = [c for c in conds if _atom_int(c[0]) == ASSERT_PUZZLE_ANNOUNCEMENT]
-        assert len(asserts) == 1, (
-            f"MINT EXECUTE must assert DID's deed announcement; got {len(asserts)} asserts"
+        assert len(asserts) == 2, (
+            "MINT EXECUTE must assert both DID and property-registry announcements; "
+            f"got {len(asserts)} asserts"
         )
-        assert _atom_bytes(asserts[0][1]) == expected_did_announce_id, (
-            "MINT assertion must match the DID's announcement id "
-            "(same one the launcher asserts)."
-        )
+        assert {_atom_bytes(condition[1]) for condition in asserts} == {
+            expected_did_announce_id,
+            expected_registry_announce_id,
+        }
 
     def test_execute_rejects_below_quorum(self):
-        bill = bill_mint(bytes32(b"\x33" * 32))
+        bill = mint_bill(bytes32(b"\x33" * 32))
         # 49% — below 50% quorum
         curried = _curry_tracker(
             proposal_hash=proposal_hash_from_bill(bill),
@@ -575,7 +587,7 @@ class TestExecute:
 # ─────────────────────────────────────────────────────────────────────────────
 class TestExpire:
     def test_expire_clears_failed_proposal(self):
-        bill = bill_mint(bytes32(b"\x33" * 32))
+        bill = mint_bill(bytes32(b"\x33" * 32))
         # Below quorum
         curried = _curry_tracker(
             proposal_hash=proposal_hash_from_bill(bill),
@@ -599,7 +611,7 @@ class TestExpire:
         assert CREATE_PUZZLE_ANNOUNCEMENT in codes  # EXEC announcement so SGTs can release
 
     def test_expire_rejected_when_quorum_reached(self):
-        bill = bill_mint(bytes32(b"\x33" * 32))
+        bill = mint_bill(bytes32(b"\x33" * 32))
         curried = _curry_tracker(
             proposal_hash=proposal_hash_from_bill(bill),
             bill_op=bill,
@@ -642,7 +654,7 @@ class TestDispatch:
         """The CREATE_COIN destination on PROPOSE must equal the next tracker
         inner puzhash computed via Python's curry helper — ensures puzzle and
         driver use the same state-encoding."""
-        bill = bill_mint(bytes32(b"\x33" * 32))
+        bill = mint_bill(bytes32(b"\x33" * 32))
         ph = proposal_hash_from_bill(bill)
         deadline = 2_000_000_000
 

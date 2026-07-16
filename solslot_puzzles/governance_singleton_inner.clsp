@@ -312,7 +312,7 @@
     )
 
     ;; Dispatch a bill operation to its target contract.  Returns a LIST of
-    ;; conditions (one or two) so callers can splice with merge-lists.
+    ;; conditions so callers can splice with merge-lists.
     ;;
     ;; All SEND_MESSAGE conditions use mode 0x10 (sender-puzzle, receiver-none)
     ;; matching the DID's RECEIVE_MESSAGE 0x10 in quorum_did_inner.clsp and the
@@ -328,13 +328,19 @@
     ;; to skip the announcement, gov would fail, preventing rogue mints.
     (defun dispatch_bill (bill_op did_ph)
         (if (= (f bill_op) BILL_MINT)
-            ;; MINT: SEND to DID + ASSERT DID announces the deed full ph.
+            ;; MINT: SEND to DID, ASSERT DID announces the deed full ph, and
+            ;; require the committed property registry state to register the
+            ;; committed property id in this same atomic bundle.
             (list
                 (list SEND_MESSAGE 0x10
                     (concat PROTOCOL_PREFIX
                         (sha256tree (list DID_MINT_TAG (f (r bill_op))))))
                 (list ASSERT_PUZZLE_ANNOUNCEMENT
-                    (sha256 did_ph (f (r bill_op)))))
+                    (sha256 did_ph (f (r bill_op))))
+                (list ASSERT_PUZZLE_ANNOUNCEMENT
+                    (sha256
+                        (f (r (r (r bill_op))))
+                        (concat PROTOCOL_PREFIX (f (r (r bill_op)))))))
             (if (= (f bill_op) BILL_FREEZE)
                 ;; FREEZE: pool's RECEIVE_MESSAGE 0x10 + sender check via
                 ;; curried gov struct enforces routing.

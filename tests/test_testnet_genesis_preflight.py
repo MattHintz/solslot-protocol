@@ -123,6 +123,7 @@ def _ceremony_plan() -> tuple[dict, dict, dict, dict]:
             "schemaVersion": 2,
             "network": "testnet11",
             "evmChainId": 11155111,
+            "reviewClass": "independent-release-review",
             "sourceShas": sources,
         },
         "roster_hash": roster_hash,
@@ -199,6 +200,9 @@ def _public_artifact(record: dict, plan: dict) -> dict:
         "protocolVersion": "solslot-v2",
         "network": "testnet11",
         "evmChainId": 11155111,
+        "reviewClass": "independent-release-review",
+        "testOnly": False,
+        "auditStatus": "independently-reviewed",
         "buildTimestamp": "2026-07-14T00:00:00+00:00",
         "ceremony": {
             "ceremonyId": record["ceremony_id"],
@@ -287,6 +291,54 @@ def test_pre_broadcast_accepts_complete_frozen_evidence(tmp_path: Path) -> None:
     assert findings == []
 
 
+def test_pre_broadcast_accepts_internal_engineering_testnet_review(tmp_path: Path) -> None:
+    record, plan, approval, api_evidence = _ceremony_plan()
+    record["draft"]["reviewClass"] = "internal-engineering-testnet"
+    approval.pop("approvals")
+    approval.update(
+        reviewClass="internal-engineering-testnet",
+        auditStatus="unaudited",
+        testOnly=True,
+        administratorReview={
+            "threshold": 2,
+            "roster": [
+                {
+                    "slot": item["slot"],
+                    "wallet": item["wallet_address"],
+                    "compressedPubkey": item["compressed_pubkey"],
+                }
+                for item in record["invitations"]
+            ],
+            "planSignerSlots": [1, 3],
+        },
+    )
+    api_evidence["auditApprovalHash"] = preflight.canonical_hash(approval)
+
+    findings: list[preflight.Finding] = []
+    preflight.check_pre_broadcast(
+        record,
+        api_evidence,
+        approval,
+        tmp_path / "new-output",
+        findings,
+        now=1_900_000_000,
+    )
+    assert findings == []
+
+    approval["testOnly"] = False
+    api_evidence["auditApprovalHash"] = preflight.canonical_hash(approval)
+    rejected: list[preflight.Finding] = []
+    preflight.check_pre_broadcast(
+        record,
+        api_evidence,
+        approval,
+        tmp_path / "new-output",
+        rejected,
+        now=1_900_000_000,
+    )
+    assert any("test-only" in item.message for item in rejected)
+
+
 def test_pre_broadcast_rejects_expiry_and_lost_quorum(tmp_path: Path) -> None:
     record, _plan, approval, api_evidence = _ceremony_plan()
     record["plan_signatures"] = record["plan_signatures"][:1]
@@ -327,6 +379,9 @@ def test_post_genesis_accepts_locked_checksummed_release(tmp_path: Path) -> None
     lock = {
         "schemaVersion": 2,
         "protocolVersion": "solslot-v2",
+        "reviewClass": artifact["reviewClass"],
+        "testOnly": artifact["testOnly"],
+        "auditStatus": artifact["auditStatus"],
         "ceremonyId": record["ceremony_id"],
         "planHash": record["plan_hash"],
         "artifactHash": artifact["artifactHash"],

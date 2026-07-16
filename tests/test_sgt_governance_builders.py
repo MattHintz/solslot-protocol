@@ -200,7 +200,11 @@ class TestBuildSgtLockCoinSpend:
     CoinSpend that emits the canonical LOCK announcement and conserves
     CAT2 supply (single-coin full-amount lock)."""
 
-    bill = bill_mint(bytes32(b"\x33" * 32))
+    bill = bill_mint(
+        bytes32(b"\x33" * 32),
+        bytes32(b"\x71" * 32),
+        bytes32(b"\x72" * 32),
+    )
     proposal_hash = proposal_hash_from_bill(bill)
     vote_amount = 600_000
     deadline = 2_000_000_000
@@ -341,7 +345,11 @@ class TestBuildTrackerVoteCoinSpend:
     CoinSpend that recreates the tracker singleton with increased tally
     and asserts the canonical LOCK announcement id of the voter."""
 
-    bill = bill_mint(bytes32(b"\x44" * 32))
+    bill = bill_mint(
+        bytes32(b"\x44" * 32),
+        bytes32(b"\x71" * 32),
+        bytes32(b"\x72" * 32),
+    )
     proposal_hash = proposal_hash_from_bill(bill)
     initial_tally = 200_000
     additional_vote = 400_000
@@ -494,7 +502,11 @@ class TestLockVotePairing:
     pairing the bundle would be rejected by the mempool."""
 
     def test_lock_emits_id_that_tracker_asserts(self):
-        bill = bill_mint(bytes32(b"\x55" * 32))
+        bill = bill_mint(
+            bytes32(b"\x55" * 32),
+            bytes32(b"\x71" * 32),
+            bytes32(b"\x72" * 32),
+        )
         proposal_hash = proposal_hash_from_bill(bill)
         vote_amount = 250_000
         deadline = 1_900_000_000

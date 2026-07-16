@@ -12,17 +12,21 @@
 ;;;      which is the announcement the launcher asserts
 ;;;
 ;;; Curried parameters:
+;;;   SELF_MOD_HASH         — tree hash of this module for self-reconstruction
 ;;;   GOV_SINGLETON_STRUCT — governance singleton struct for puzzle hash computation
 ;;;
 ;;; Solution:
+;;;   my_amount                  — current singleton amount (must be preserved)
 ;;;   singleton_full_puzzle_hash — the full puzzle hash of the deed singleton to mint
 ;;;   gov_inner_puzhash — current governance inner puzzle hash (for sender verification)
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (mod
     (
+        SELF_MOD_HASH
         GOV_SINGLETON_STRUCT
         ;; --- solution ---
+        my_amount
         singleton_full_puzzle_hash
         gov_inner_puzhash
     )
@@ -32,13 +36,20 @@
     (include utility_macros.clib)
 
     (assert
+        (is-size-b32 SELF_MOD_HASH)
         (is-size-b32 singleton_full_puzzle_hash)
         (is-size-b32 gov_inner_puzhash)
         (list
+            (list CREATE_COIN
+                (curry_hashes SELF_MOD_HASH
+                    (sha256 1 SELF_MOD_HASH)
+                    (sha256tree GOV_SINGLETON_STRUCT))
+                my_amount)
             (list RECEIVE_MESSAGE 0x10
                 (concat PROTOCOL_PREFIX (sha256tree (list 0x4d494e54 singleton_full_puzzle_hash)))
                 (calculate_full_puzzle_hash GOV_SINGLETON_STRUCT gov_inner_puzhash))
             (list CREATE_PUZZLE_ANNOUNCEMENT singleton_full_puzzle_hash)
+            (list ASSERT_MY_AMOUNT my_amount)
         )
     )
 )

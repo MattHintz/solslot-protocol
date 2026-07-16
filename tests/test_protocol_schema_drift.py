@@ -54,7 +54,7 @@ def test_mint_publish_metadata_wire_shape_matches_api_and_portal() -> None:
         api / "solslot_api" / "mint_publish_validation.py",
         "PublishProposalMetadata",
     )
-    api_request_fields = _python_class_annotations(
+    api_request_target = _python_alias_target(
         api / "solslot_api" / "mint_endpoints.py",
         "PublishProposalMetadataRequest",
     )
@@ -74,7 +74,7 @@ def test_mint_publish_metadata_wire_shape_matches_api_and_portal() -> None:
     )
 
     assert api_validation_fields == expected
-    assert api_request_fields == expected
+    assert api_request_target == "PublishProposalMetadata"
     assert portal_wire_fields == expected
     assert runner_payload_fields == expected
 
@@ -212,6 +212,18 @@ def _python_literal_assignment(path: Path, name: str) -> Any:
         if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.target.id == name:
             return ast.literal_eval(node.value)
     raise AssertionError(f"{name} assignment not found in {path}")
+
+
+def _python_alias_target(path: Path, name: str) -> str:
+    tree = _python_tree(path)
+    for node in tree.body:
+        if (
+            isinstance(node, ast.Assign)
+            and any(isinstance(target, ast.Name) and target.id == name for target in node.targets)
+            and isinstance(node.value, ast.Name)
+        ):
+            return node.value.id
+    raise AssertionError(f"{name} alias not found in {path}")
 
 
 def _api_field_to_env_pairs(path: Path) -> list[tuple[str, str]]:

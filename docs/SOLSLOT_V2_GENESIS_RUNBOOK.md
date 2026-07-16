@@ -2,9 +2,16 @@
 
 ## Safety Boundary
 
-This runbook does not authorize a ceremony. Alpha writes, credential
-enrollment, offers, and minting remain disabled until the independent review
-and pre-broadcast gate pass against five frozen release commits.
+This runbook does not authorize a production or mainnet ceremony. Alpha
+writes, credential enrollment, offers, and minting remain disabled until the
+selected review class and pre-broadcast gate pass against five frozen release
+commits.
+
+`internal-engineering-testnet` is the disposable test path. It is accepted
+only on testnet11, requires three distinct administrator wallets and normal
+2-of-3 plan/artifact signatures, and marks the signed artifact `testOnly: true`
+and `auditStatus: "unaudited"`. It does not satisfy an independently reviewed
+release or permit mainnet.
 
 The current deployment is retired. Never reuse its contracts, launchers,
 vaults, proofs, bridge coins, manifests, or browser state. A failed or
@@ -17,8 +24,8 @@ ambiguous V2 ceremony is abandoned rather than repaired or rebroadcast.
 - Two validator signatures required for every credential stamp.
 - Two administrator signatures required for the deterministic plan.
 - Two administrator signatures required for the public artifact.
-- Independent reviewers for protocol, EVM, credential bridge, and ceremony
-  orchestration.
+- Four independent review lanes for `independent-release-review`, or the three
+  enrolled administrator engineers for `internal-engineering-testnet`.
 
 The API coordinator holds no validator private key. Invitation fragments and
 administrator signing happen on each administrator's own computer.
@@ -30,7 +37,9 @@ administrator signing happen on each administrator's own computer.
 2. Require clean worktrees and record all five full commit SHAs.
 3. Run complete tests, schema drift, namespace, secret, package, and
    reproducibility gates from those exact commits.
-4. Obtain the four independent approvals and their evidence hashes.
+4. Select the review class. For the disposable internal test, record
+   `internal-engineering-testnet`; for a reviewed release, obtain all four
+   independent approvals and evidence hashes.
 5. Complete the RC2 credential carryover record. Revoke and replace only the
    provider credential exposed in public history; retain secure reusable
    credentials, reuse signer 0, and generate signer 1/2, WireGuard, mTLS,
@@ -49,7 +58,7 @@ carryover checkpoint and fresh EVM deployment are complete.
 The admin portal drives the endpoints below under `/admin/genesis`. Preserve
 the JSON response from every state transition in the private ceremony archive.
 
-1. `POST /drafts` with the five frozen source SHAs.
+1. `POST /drafts` with the five frozen source SHAs and explicit `reviewClass`.
 2. `POST /{ceremonyId}/invitations/{slot}` for slots 1, 2, and 3.
 3. Each administrator calls `/invitations/prepare`, signs
    `SolslotGenesisAdminEnrollment`, then calls `/invitations/accept`.
@@ -60,17 +69,20 @@ the JSON response from every state transition in the private ceremony archive.
    `SolslotGenesisPlan` signatures.
 7. Export the resulting ceremony state after it reaches `plan_approved`.
 
-The deterministic plan covers SGT plus seven singleton launchers: pool, DID,
+The deterministic plan covers SGT plus eight singleton launchers: pool, DID,
 governance, NAV registry, protocol config, admin authority, and vault-version
-registry. It also commits to 32 unique one-mojo bridge parents and bridge coins
-with a low-water mark of eight.
+registry, plus the empty property registry. It also commits to 32 unique
+one-mojo bridge parents and bridge coins with a low-water mark of eight.
 
 ## Pre-Broadcast Gate
 
 Call `POST /admin/genesis/{ceremonyId}/preflight`. The API re-reads all funding
 coins, reconstructs the exact plan and atomic spend bundle, runs the consensus
-simulation, checks four-lane approval evidence, verifies the EVM deployment
-and validator health, and refuses a non-empty output directory.
+simulation, verifies the selected review evidence, checks the EVM deployment
+live at 12 confirmations, probes all validators over mTLS, and refuses a
+non-empty output directory. The internal test class generates its review
+record from those live checks and the two recorded plan signatures; no
+independent-approval file is fabricated.
 
 Save that response as `preflight.json`, then run the independent offline gate:
 
@@ -170,8 +182,11 @@ After post-genesis preflight passes:
 6. Verify retired coordinates fail through the API, both portals, and crafted
    offer files.
 
-Minting and listings remain disabled after this smoke. The first SmartDeed mint
-is a separate admin-and-committee launch gate.
+For the disposable engineering test only, enable minting after both vault
+stamps recover successfully and run one synthetic SmartDeed through publish,
+vote, five-spend execution, offer acceptance, pool/deposit, and redemption.
+Disable minting again after the evidence is captured. Valued assets and
+mainnet remain prohibited.
 
 ## Abort Rules
 

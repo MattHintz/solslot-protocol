@@ -101,7 +101,11 @@ MIN_PROPOSAL_STAKE = 10_000
 IDENTITY_INNER = Program.to(1)
 IDENTITY_HASH = bytes32(IDENTITY_INNER.get_tree_hash())
 
-BILL = bill_mint(bytes32(b"\x33" * 32))
+BILL = bill_mint(
+    bytes32(b"\x33" * 32),
+    bytes32(b"\x71" * 32),
+    bytes32(b"\x72" * 32),
+)
 PROPOSAL_HASH = proposal_hash_from_bill(BILL)
 DEADLINE = 2_000_000_000
 VOTE_AMOUNT = 250_000

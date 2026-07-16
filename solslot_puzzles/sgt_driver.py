@@ -294,8 +294,8 @@ def _require_b32(value: bytes | bytes32, name: str) -> bytes32:
 
 def bill_mint(
     deed_full_puzzle_hash: bytes32,
-    property_id_canon: bytes32 | None = None,
-    property_registry_puzzle_hash: bytes32 | None = None,
+    property_id_canon: bytes32,
+    property_registry_puzzle_hash: bytes32,
 ) -> Program:
     """MINT bill: approve spawning a deed and bind its property registry context.
 
@@ -305,18 +305,11 @@ def bill_mint(
     the two extra slots are part of ``sha256tree(bill)`` so voters and the API
     bind the proposal to the A4 property-registry record that the portal used.
 
-    If ``property_id_canon`` / ``property_registry_puzzle_hash`` are omitted,
-    the helper returns the legacy two-field ``(M deed_full_puzzle_hash)`` bill
-    for older tests/helpers that only need a syntactically valid MINT dispatch.
-    New publish code should pass both explicitly.
+    All three values are mandatory.  A shorter legacy bill cannot satisfy the
+    registry announcement asserted by the governance puzzle and is rejected
+    before a spend is built.
     """
     deed_full_puzzle_hash = _require_b32(deed_full_puzzle_hash, "deed_full_puzzle_hash")
-    if property_id_canon is None and property_registry_puzzle_hash is None:
-        return Program.to((BILL_MINT, (deed_full_puzzle_hash, 0)))
-    if property_id_canon is None or property_registry_puzzle_hash is None:
-        raise ValueError(
-            "property_id_canon and property_registry_puzzle_hash must be passed together"
-        )
     property_id_canon = _require_b32(
         property_id_canon, "property_id_canon"
     )

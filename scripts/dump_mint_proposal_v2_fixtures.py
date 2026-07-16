@@ -21,6 +21,11 @@ import os
 from pathlib import Path
 from typing import Any
 
+from chia.types.blockchain_format.program import Program
+from chia.wallet.puzzles.singleton_top_layer_v1_1 import (
+    SINGLETON_LAUNCHER_HASH,
+    SINGLETON_MOD_HASH,
+)
 from chia_rs.sized_bytes import bytes32
 
 from solslot_puzzles.mint_proposal_v2_driver import (
@@ -66,6 +71,30 @@ def build_fixture() -> dict[str, Any]:
     # cross-curve TS bug is obvious.
     OWNER_HASH = bytes32(b"\xAA" * 32)
     GOV_HASH = bytes32(b"\xBB" * 32)
+    GOVERNANCE_STRUCT = Program.to(
+        (
+            SINGLETON_MOD_HASH,
+            (bytes32(b"\xBC" * 32), SINGLETON_LAUNCHER_HASH),
+        )
+    )
+    GOVERNANCE_PROPOSAL_HASH = bytes32(b"\xBD" * 32)
+    DEED_LAUNCHER_ID = bytes32(b"\xBE" * 32)
+    DID_INNER_PUZZLE_HASH = bytes32(b"\xBF" * 32)
+    DEED_FULL_PUZZLE_HASH = bytes32(b"\xC0" * 32)
+    immutable_input = {
+        "governance_singleton_struct_hex": _hex(bytes(GOVERNANCE_STRUCT)),
+        "governance_proposal_hash": _hex(GOVERNANCE_PROPOSAL_HASH),
+        "deed_launcher_id": _hex(DEED_LAUNCHER_ID),
+        "did_inner_puzzle_hash": _hex(DID_INNER_PUZZLE_HASH),
+        "deed_full_puzzle_hash": _hex(DEED_FULL_PUZZLE_HASH),
+    }
+    immutable_args = {
+        "governance_singleton_struct": GOVERNANCE_STRUCT,
+        "governance_proposal_hash": GOVERNANCE_PROPOSAL_HASH,
+        "deed_launcher_id": DEED_LAUNCHER_ID,
+        "did_inner_puzzle_hash": DID_INNER_PUZZLE_HASH,
+        "deed_full_puzzle_hash": DEED_FULL_PUZZLE_HASH,
+    }
     COLLECTION_A = bytes32(b"\x12" * 32)
     COLLECTION_B = bytes32(b"\x23" * 32)
     PROP_HASH_A = compute_proposal_data_hash(
@@ -232,6 +261,7 @@ def build_fixture() -> dict[str, Any]:
                     "owner_member_hash": _hex(OWNER_HASH),
                     "gov_member_hash": _hex(GOV_HASH),
                     "proposal_data_hash": _hex(PROP_HASH_A),
+                    **immutable_input,
                     "proposal_state": STATE_DRAFT,
                     "state_version": 0,
                 },
@@ -240,6 +270,7 @@ def build_fixture() -> dict[str, Any]:
                         owner_member_hash=OWNER_HASH,
                         gov_member_hash=GOV_HASH,
                         proposal_data_hash=PROP_HASH_A,
+                        **immutable_args,
                         proposal_state=STATE_DRAFT,
                         state_version=0,
                     )
@@ -250,6 +281,7 @@ def build_fixture() -> dict[str, Any]:
                     "owner_member_hash": _hex(OWNER_HASH),
                     "gov_member_hash": _hex(GOV_HASH),
                     "proposal_data_hash": _hex(PROP_HASH_A),
+                    **immutable_input,
                     "proposal_state": STATE_APPROVED,
                     "state_version": 1,
                 },
@@ -258,6 +290,7 @@ def build_fixture() -> dict[str, Any]:
                         owner_member_hash=OWNER_HASH,
                         gov_member_hash=GOV_HASH,
                         proposal_data_hash=PROP_HASH_A,
+                        **immutable_args,
                         proposal_state=STATE_APPROVED,
                         state_version=1,
                     )
@@ -268,6 +301,7 @@ def build_fixture() -> dict[str, Any]:
                     "owner_member_hash": _hex(OWNER_HASH),
                     "gov_member_hash": _hex(GOV_HASH),
                     "proposal_data_hash": _hex(PROP_HASH_A),
+                    **immutable_input,
                     "proposal_state": STATE_CANCELLED,
                     "state_version": 1,
                 },
@@ -276,6 +310,7 @@ def build_fixture() -> dict[str, Any]:
                         owner_member_hash=OWNER_HASH,
                         gov_member_hash=GOV_HASH,
                         proposal_data_hash=PROP_HASH_A,
+                        **immutable_args,
                         proposal_state=STATE_CANCELLED,
                         state_version=1,
                     )
@@ -289,6 +324,7 @@ def build_fixture() -> dict[str, Any]:
                     "owner_member_hash": _hex(OWNER_HASH),
                     "gov_member_hash": _hex(GOV_HASH),
                     "proposal_data_hash": _hex(PROP_HASH_B),
+                    **immutable_input,
                     "proposal_state": STATE_DRAFT,
                     "state_version": 0,
                 },
@@ -297,6 +333,7 @@ def build_fixture() -> dict[str, Any]:
                         owner_member_hash=OWNER_HASH,
                         gov_member_hash=GOV_HASH,
                         proposal_data_hash=PROP_HASH_B,
+                        **immutable_args,
                         proposal_state=STATE_DRAFT,
                         state_version=0,
                     )

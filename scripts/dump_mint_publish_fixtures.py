@@ -29,17 +29,19 @@ Usage::
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
 from chia.types.blockchain_format.coin import Coin
 from chia.types.blockchain_format.program import Program
-from chia.types.coin_spend import CoinSpend
+from chia.types.coin_spend import CoinSpend, make_spend
 from chia.wallet.cat_wallet.cat_utils import CAT_MOD
 from chia.wallet.lineage_proof import LineageProof
 from chia.wallet.puzzles.singleton_top_layer_v1_1 import (
     SINGLETON_LAUNCHER_HASH,
     SINGLETON_MOD_HASH,
+    lineage_proof_for_coinsol,
     puzzle_for_singleton,
 )
 from chia_rs.sized_bytes import bytes32
@@ -47,9 +49,11 @@ from chia_rs.sized_ints import uint64
 
 from solslot_puzzles.mint_proposal_v2_driver import (
     STATE_DRAFT,
+    build_execute_coin_spend as build_proposal_execute_coin_spend,
     compute_proposal_data_hash,
     make_inner_puzzle,
 )
+from solslot_puzzles import load_puzzle
 from solslot_puzzles.mint_publish_driver import (
     BILL_MINT_TAG,
     SINGLETON_AMOUNT,
@@ -70,6 +74,10 @@ from solslot_puzzles.property_registry_driver import (
     build_registration_coin_spend,
     make_inner_puzzle as make_property_registry_inner_puzzle,
     registered_ids_root,
+)
+from solslot_puzzles.protocol_deployment import (
+    build_quorum_did_mint_coin_spend,
+    quorum_did_inner_puzzle,
 )
 
 
@@ -104,6 +112,7 @@ PROPERTY_ID = bytes32(b"\xa1" * 32)
 COLLECTION_ID = bytes32(b"\xa8" * 32)
 ROYALTY_PUZHASH = bytes32(b"\xa2" * 32)
 PROTOCOL_DID_PUZHASH = bytes32(b"\xa3" * 32)
+PROTOCOL_DID_INNER_PUZHASH = bytes32(b"\xa9" * 32)
 P2_POOL_MOD_HASH = canonical_p2_pool_mod_hash()
 P2_VAULT_MOD_HASH = bytes32(b"\xa5" * 32)
 PROPERTY_REGISTRY_PUZZLE_HASH = bytes32(b"\xa7" * 32)
@@ -111,6 +120,10 @@ OWNER_MEMBER_HASH = bytes32(b"\xa6" * 32)
 GOV_MEMBER_HASH = bytes32(b"\x00" * 32)  # placeholder zeros per Phase 4 alpha
 DEED_LAUNCHER_PARENT = bytes32(b"\xb1" * 32)
 PROPOSAL_LAUNCHER_PARENT = bytes32(b"\xb2" * 32)
+DID_LAUNCHER_ID = bytes32(b"\xc2" * 32)
+DID_COIN_PARENT = bytes32(b"\xc3" * 32)
+DID_LINEAGE_PARENT = bytes32(b"\xc4" * 32)
+DID_LINEAGE_INNER = bytes32(b"\xc5" * 32)
 
 PROTOCOL_DID_LAUNCHER_ID = bytes32(b"\xc1" * 32)
 PROTOCOL_DID_SINGLETON_STRUCT = Program.to(
@@ -215,6 +228,8 @@ def build_fixture() -> dict[str, Any]:
         proposal_launcher_parent_coin_name=PROPOSAL_LAUNCHER_PARENT,
         protocol_did_singleton_struct=PROTOCOL_DID_SINGLETON_STRUCT,
         protocol_did_puzhash=PROTOCOL_DID_PUZHASH,
+        protocol_did_inner_puzhash=PROTOCOL_DID_INNER_PUZHASH,
+        governance_singleton_struct=TRACKER_STRUCT,
         p2_pool_mod_hash=P2_POOL_MOD_HASH,
         p2_vault_mod_hash=P2_VAULT_MOD_HASH,
         property_registry_puzzle_hash=PROPERTY_REGISTRY_PUZZLE_HASH,
@@ -255,6 +270,8 @@ def build_fixture() -> dict[str, Any]:
             ),
             # Protocol deployment context.
             "protocol_did_puzhash": _hex(PROTOCOL_DID_PUZHASH),
+            "protocol_did_inner_puzhash": _hex(PROTOCOL_DID_INNER_PUZHASH),
+            "governance_singleton_struct_hex": _hex(bytes(TRACKER_STRUCT)),
             "p2_pool_mod_hash": _hex(P2_POOL_MOD_HASH),
             "p2_vault_mod_hash": _hex(P2_VAULT_MOD_HASH),
             "property_registry_puzzle_hash": _hex(PROPERTY_REGISTRY_PUZZLE_HASH),
@@ -316,6 +333,11 @@ def _build_spend_sections(artifacts: Any) -> dict[str, Any]:
         owner_member_hash=OWNER_MEMBER_HASH,
         gov_member_hash=GOV_MEMBER_HASH,
         proposal_data_hash=proposal_data_hash,
+        governance_singleton_struct=TRACKER_STRUCT,
+        governance_proposal_hash=artifacts.proposal_hash,
+        deed_launcher_id=artifacts.deed_launcher_id,
+        did_inner_puzzle_hash=PROTOCOL_DID_INNER_PUZHASH,
+        deed_full_puzzle_hash=artifacts.deed_full_puzhash,
         proposal_state=STATE_DRAFT,
         state_version=0,
     )
@@ -421,6 +443,70 @@ def _build_spend_sections(artifacts: Any) -> dict[str, Any]:
         registered_ids=registry_registered_ids,
     )
 
+    # ── 5. quorum-authorized execution co-spends ──
+    governance_inner_puzzle_hash = bytes32(tracker_inner.get_tree_hash())
+    proposal_lineage_proof = LineageProof(
+        parent_name=PROPOSAL_LAUNCHER_PARENT,
+        amount=uint64(1),
+    )
+    proposal_execute_coin = Coin(
+        artifacts.proposal_singleton_launcher_id,
+        bytes32(
+            puzzle_for_singleton(
+                artifacts.proposal_singleton_launcher_id, eve_inner
+            ).get_tree_hash()
+        ),
+        uint64(1),
+    )
+    proposal_execute_spend = build_proposal_execute_coin_spend(
+        proposal_coin=proposal_execute_coin,
+        proposal_inner_puzzle=eve_inner,
+        proposal_launcher_id=artifacts.proposal_singleton_launcher_id,
+        lineage_proof=proposal_lineage_proof,
+        governance_inner_puzzle_hash=governance_inner_puzzle_hash,
+    )
+    did_inner = quorum_did_inner_puzzle(TRACKER_LAUNCHER_ID)
+    did_coin = Coin(
+        DID_COIN_PARENT,
+        bytes32(puzzle_for_singleton(DID_LAUNCHER_ID, did_inner).get_tree_hash()),
+        uint64(1),
+    )
+    did_lineage_proof = LineageProof(
+        parent_name=DID_LINEAGE_PARENT,
+        inner_puzzle_hash=DID_LINEAGE_INNER,
+        amount=uint64(1),
+    )
+    did_execute_spend = build_quorum_did_mint_coin_spend(
+        did_coin=did_coin,
+        did_inner_puzzle=did_inner,
+        did_launcher_id=DID_LAUNCHER_ID,
+        lineage_proof=did_lineage_proof,
+        deed_full_puzzle_hash=artifacts.deed_full_puzhash,
+        governance_inner_puzzle_hash=governance_inner_puzzle_hash,
+    )
+    custom_deed_launcher = load_puzzle("singleton_launcher_with_did.clsp").curry(
+        PROTOCOL_DID_SINGLETON_STRUCT
+    )
+    deed_launcher_coin = Coin(
+        DEED_LAUNCHER_PARENT,
+        bytes32(custom_deed_launcher.get_tree_hash()),
+        uint64(1),
+    )
+    assert bytes32(deed_launcher_coin.name()) == artifacts.deed_launcher_id
+    deed_launcher_solution = Program.to(
+        [
+            PROTOCOL_DID_INNER_PUZHASH,
+            artifacts.deed_full_puzhash,
+            1,
+            [],
+        ]
+    )
+    deed_launcher_spend = make_spend(
+        deed_launcher_coin,
+        custom_deed_launcher,
+        deed_launcher_solution,
+    )
+
     return {
         "proposal_eve_launch": {
             "inputs": {
@@ -517,6 +603,62 @@ def _build_spend_sections(artifacts: Any) -> dict[str, Any]:
                 ),
             },
         },
+        "did_mint_execute": {
+            "inputs": {
+                "did_coin": _coin_dict(did_coin),
+                "lineage_proof": _lineage_proof_dict(did_lineage_proof),
+                "protocol_did_singleton_struct_hex": _hex(
+                    bytes(Program.to((SINGLETON_MOD_HASH, (DID_LAUNCHER_ID, SINGLETON_LAUNCHER_HASH))))
+                ),
+                "governance_singleton_struct_hex": _hex(bytes(TRACKER_STRUCT)),
+                "governance_inner_puzzle_hash": _hex(governance_inner_puzzle_hash),
+                "deed_full_puzzle_hash": _hex(artifacts.deed_full_puzhash),
+            },
+            "expected": {
+                "coin": _coin_dict(did_execute_spend.coin),
+                "puzzle_reveal_hex": _hex(bytes(did_execute_spend.puzzle_reveal)),
+                "solution_hex": _hex(bytes(did_execute_spend.solution)),
+                "coin_spend_hex": _hex(bytes(did_execute_spend)),
+            },
+        },
+        "proposal_mint_execute": {
+            "inputs": {
+                "proposal_coin": _coin_dict(proposal_execute_coin),
+                "lineage_proof": _lineage_proof_dict(proposal_lineage_proof),
+                "proposal_launcher_id": _hex(artifacts.proposal_singleton_launcher_id),
+                "owner_member_hash": _hex(OWNER_MEMBER_HASH),
+                "gov_member_hash": _hex(GOV_MEMBER_HASH),
+                "proposal_data_hash": _hex(proposal_data_hash),
+                "governance_singleton_struct_hex": _hex(bytes(TRACKER_STRUCT)),
+                "governance_proposal_hash": _hex(artifacts.proposal_hash),
+                "deed_launcher_id": _hex(artifacts.deed_launcher_id),
+                "did_inner_puzzle_hash": _hex(PROTOCOL_DID_INNER_PUZHASH),
+                "deed_full_puzzle_hash": _hex(artifacts.deed_full_puzhash),
+                "governance_inner_puzzle_hash": _hex(governance_inner_puzzle_hash),
+            },
+            "expected": {
+                "coin": _coin_dict(proposal_execute_spend.coin),
+                "puzzle_reveal_hex": _hex(bytes(proposal_execute_spend.puzzle_reveal)),
+                "solution_hex": _hex(bytes(proposal_execute_spend.solution)),
+                "coin_spend_hex": _hex(bytes(proposal_execute_spend)),
+            },
+        },
+        "deed_launcher_execute": {
+            "inputs": {
+                "deed_launcher_coin": _coin_dict(deed_launcher_coin),
+                "protocol_did_singleton_struct_hex": _hex(
+                    bytes(PROTOCOL_DID_SINGLETON_STRUCT)
+                ),
+                "did_inner_puzzle_hash": _hex(PROTOCOL_DID_INNER_PUZHASH),
+                "deed_full_puzzle_hash": _hex(artifacts.deed_full_puzhash),
+            },
+            "expected": {
+                "coin": _coin_dict(deed_launcher_spend.coin),
+                "puzzle_reveal_hex": _hex(bytes(deed_launcher_spend.puzzle_reveal)),
+                "solution_hex": _hex(bytes(deed_launcher_spend.solution)),
+                "coin_spend_hex": _hex(bytes(deed_launcher_spend)),
+            },
+        },
     }
 
 
@@ -529,12 +671,32 @@ def fixture_destination() -> Path:
     return _services_dir() / "mint-publish.fixtures.json"
 
 
+def portal_fixture_destination() -> Path:
+    protocol_root = Path(__file__).resolve().parents[1]
+    portal_root = Path(
+        os.environ.get("SOLSLOT_PORTAL_ROOT", protocol_root.parent / "solslot-portal")
+    )
+    return (
+        portal_root
+        / "src"
+        / "app"
+        / "services"
+        / "mint-proposal-v2"
+        / "mint-publish.fixtures.json"
+    )
+
+
 def main() -> None:
     fixture = build_fixture()
     dest = fixture_destination()
     dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_text(json.dumps(fixture, indent=2, sort_keys=False) + "\n")
+    rendered = json.dumps(fixture, indent=2, sort_keys=False) + "\n"
+    dest.write_text(rendered)
+    portal_dest = portal_fixture_destination()
+    portal_dest.parent.mkdir(parents=True, exist_ok=True)
+    portal_dest.write_text(rendered)
     print(f"wrote fixture to {dest}")
+    print(f"wrote portal fixture to {portal_dest}")
     print(
         f"  smart_deed_inner_puzhash={fixture['expected']['smart_deed_inner_puzhash']}\n"
         f"  eve_inner_puzhash={fixture['expected']['eve_inner_puzhash']}\n"

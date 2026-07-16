@@ -75,14 +75,15 @@ PUZZLE_FILENAMES = (
 # Set to None to skip verification (development mode).
 # Generate with: python -c "from solslot_puzzles import compute_puzzles_checksum; print(compute_puzzles_checksum())"
 FROZEN_CHECKSUM: Optional[str] = (
-    # 2026-07-12 Solslot V2 namespace freeze:
+    # 2026-07-16 disposable-genesis mint execution freeze:
     #   - announcement namespace 0x53;
     #   - SGT governance modules;
     #   - commitment-bound SmartDeed and p2_pool custody;
     #   - pool V3 with retired exits disabled and governance identity pinned;
     #   - Solslot V2 vault and credential domains;
+    #   - five-spend governance/DID/registry/proposal/deed mint execution;
     #   - no retired contract implementations in the canonical package.
-    "a3c9c42291e94475173d0c3431f82724ddcf08c28507e28b19173ce5eec0e358"
+    "70bf7c6d72e5ef838b776156a5700e4e07634f36c1e6430f598155d7026e7c7d"
 )
 
 # ── Cache ──

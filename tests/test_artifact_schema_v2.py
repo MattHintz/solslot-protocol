@@ -6,6 +6,7 @@ import pytest
 from chia_rs.sized_bytes import bytes32
 
 from solslot_puzzles.artifact_schema_v2 import (
+    INTERNAL_ENGINEERING_TESTNET_REVIEW_CLASS,
     artifact_hash,
     artifact_signing_typed_data,
     build_public_artifact,
@@ -38,6 +39,19 @@ def artifact(*, signed_slots: tuple[int, ...] = (0, 2)) -> dict:
     )
 
 
+def internal_test_artifact() -> dict:
+    faucet = _FakeFaucet()
+    plan = ceremony_plan(faucet, funding_coins(faucet))
+    return build_public_artifact(
+        plan=plan,
+        spend_bundle_id=bytes32(b"\x82" * 32),
+        confirmed_block_index=1234,
+        build_timestamp="2026-07-14T00:00:00+00:00",
+        signatures=signatures(0, 2),
+        review_class=INTERNAL_ENGINEERING_TESTNET_REVIEW_CLASS,
+    )
+
+
 def accept_test_signature(
     _payload: dict, _index: int, _pubkey: bytes, _signature: bytes
 ) -> bool:
@@ -50,12 +64,28 @@ def test_artifact_has_complete_signed_v2_surface() -> None:
     assert value["protocolVersion"] == "solslot-v2"
     assert value["network"] == "testnet11"
     assert value["evmChainId"] == 11155111
+    assert value["reviewClass"] == "independent-release-review"
+    assert value["testOnly"] is False
+    assert value["auditStatus"] == "independently-reviewed"
     assert value["sgtGenesisCoinId"].startswith("0x")
     assert value["sgtTailHash"] == value["puzzleHashes"]["sgtTailHash"]
     assert value["adminAuthority"]["threshold"] == 2
     assert len(value["validatorSet"]["pubkeys"]) == 3
     assert len(value["bridgePolicy"]["bridgeCoinIds"]) == 32
     verify_public_artifact(value, signature_verifier=accept_test_signature)
+
+
+def test_internal_engineering_artifact_is_explicitly_test_only_and_unaudited() -> None:
+    value = internal_test_artifact()
+    assert value["reviewClass"] == "internal-engineering-testnet"
+    assert value["testOnly"] is True
+    assert value["auditStatus"] == "unaudited"
+    verify_public_artifact(value, signature_verifier=accept_test_signature)
+
+    value["testOnly"] = False
+    value["artifactHash"] = artifact_hash(value)
+    with pytest.raises(ValueError, match="test-only"):
+        verify_public_artifact(value, signature_verifier=accept_test_signature)
 
 
 def test_artifact_hash_is_canonical_and_tamper_evident() -> None:

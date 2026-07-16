@@ -14,9 +14,13 @@
       "off_chain_metadata"
     ],
     "proposal_metadata_fields": [
+      "property_id",
+      "collection_id",
+      "asset_class_name",
       "property_id_canon",
       "collection_id_canon",
       "share_ppm",
+      "property_registry_coin_id",
       "property_registry_puzzle_hash",
       "par_value_mojos",
       "asset_class",
@@ -25,7 +29,8 @@
       "royalty_bps",
       "quorum_threshold",
       "owner_member_hash",
-      "gov_member_hash"
+      "gov_member_hash",
+      "voting_deadline"
     ],
     "protocol_context": [
       {

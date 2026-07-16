@@ -87,6 +87,7 @@ PROPERTY_ID = _b(0xA1)
 COLLECTION_ID = _b(0xA8)
 ROYALTY_PUZHASH = _b(0xA2)
 PROTOCOL_DID_PUZHASH = _b(0xA3)
+PROTOCOL_DID_INNER_PUZHASH = _b(0xA9)
 P2_POOL_MOD_HASH = canonical_p2_pool_mod_hash()
 P2_VAULT_MOD_HASH = _b(0xA5)
 PROPERTY_REGISTRY_PUZZLE_HASH = _b(0xA7)
@@ -98,6 +99,10 @@ PROPOSAL_LAUNCHER_PARENT = _b(0xB2)
 PROTOCOL_DID_LAUNCHER_ID = _b(0xC1)
 PROTOCOL_DID_SINGLETON_STRUCT = Program.to(
     (SINGLETON_MOD_HASH, (PROTOCOL_DID_LAUNCHER_ID, SINGLETON_LAUNCHER_HASH))
+)
+GOVERNANCE_LAUNCHER_ID = _b(0xC2)
+GOVERNANCE_SINGLETON_STRUCT = Program.to(
+    (SINGLETON_MOD_HASH, (GOVERNANCE_LAUNCHER_ID, SINGLETON_LAUNCHER_HASH))
 )
 
 PAR_VALUE = 250_000_000_000  # 250 XCH (mojos)
@@ -126,6 +131,8 @@ def _default_kwargs() -> dict:
         "proposal_launcher_parent_coin_name": PROPOSAL_LAUNCHER_PARENT,
         "protocol_did_singleton_struct": PROTOCOL_DID_SINGLETON_STRUCT,
         "protocol_did_puzhash": PROTOCOL_DID_PUZHASH,
+        "protocol_did_inner_puzhash": PROTOCOL_DID_INNER_PUZHASH,
+        "governance_singleton_struct": GOVERNANCE_SINGLETON_STRUCT,
         "p2_pool_mod_hash": P2_POOL_MOD_HASH,
         "p2_vault_mod_hash": P2_VAULT_MOD_HASH,
         "property_registry_puzzle_hash": PROPERTY_REGISTRY_PUZZLE_HASH,
@@ -609,6 +616,11 @@ class TestBuildMintPublishArtifacts:
             owner_member_hash=OWNER_MEMBER_HASH,
             gov_member_hash=GOV_MEMBER_HASH,
             proposal_data_hash=artifacts.proposal_data_hash,
+            governance_singleton_struct=GOVERNANCE_SINGLETON_STRUCT,
+            governance_proposal_hash=artifacts.proposal_hash,
+            deed_launcher_id=artifacts.deed_launcher_id,
+            did_inner_puzzle_hash=PROTOCOL_DID_INNER_PUZHASH,
+            deed_full_puzzle_hash=artifacts.deed_full_puzhash,
             proposal_state=STATE_DRAFT,
             state_version=0,
         )
@@ -699,12 +711,10 @@ class TestBuildMintPublishArtifacts:
         assert a.deed_full_puzhash != b.deed_full_puzhash
         assert a.proposal_hash != b.proposal_hash
 
-        # But it does NOT change Artifact A's launcher or eve.
+        # The Artifact A launcher id is independent, but its eve changes because
+        # the proposal now commits the exact deed launcher and deed output.
         assert a.proposal_singleton_launcher_id == b.proposal_singleton_launcher_id
-        # Artifact A's eve_inner_puzhash depends only on member hashes,
-        # proposal_data_hash, state, version — all of which are independent
-        # of deed launcher.
-        assert a.eve_inner_puzhash == b.eve_inner_puzhash
+        assert a.eve_inner_puzhash != b.eve_inner_puzhash
 
     def test_proposal_launcher_parent_change_only_affects_proposal_singleton(self):
         a = build_mint_publish_artifacts(**_default_kwargs())
@@ -787,7 +797,7 @@ class TestBuildMintPublishArtifacts:
                 "d775fb9d532798e7bb6b34dc063bc6654ef424311dafbf9b134d90897c86802d"
             ),
             "eve_inner_puzhash": (
-                "0c2931b61be08612a562a5165e786de126cadbb8c99d7c5ec73ed8824e99fb23"
+                "3ddf3fbfa3ed338db91d52ab8f31f155302f615f3d11618deee9b35d32225b7b"
             ),
             "deed_full_puzhash": (
                 "31b8d068651f77b3d9fbb06633c0680609d2801df952247d33f15e57cc552eac"
@@ -846,6 +856,11 @@ class TestArtifactsCrossDriver:
             owner_member_hash=OWNER_MEMBER_HASH,
             gov_member_hash=GOV_MEMBER_HASH,
             proposal_data_hash=pdh,
+            governance_singleton_struct=GOVERNANCE_SINGLETON_STRUCT,
+            governance_proposal_hash=artifacts.proposal_hash,
+            deed_launcher_id=artifacts.deed_launcher_id,
+            did_inner_puzzle_hash=PROTOCOL_DID_INNER_PUZHASH,
+            deed_full_puzzle_hash=artifacts.deed_full_puzhash,
             proposal_state=STATE_DRAFT,
             state_version=0,
         )
@@ -918,19 +933,16 @@ class TestBuildProposalEveLaunchSpend:
     def _eve_inner(self) -> Program:
         """Build the V2 mint-proposal inner curried for DRAFT eve state."""
         from solslot_puzzles.mint_proposal_v2_driver import make_inner_puzzle
-
-        pdh = compute_proposal_data_hash(
-            property_id_canon=PROPERTY_ID,
-            collection_id_canon=COLLECTION_ID,
-            share_ppm=SHARE_PPM,
-            par_value_mojos=PAR_VALUE,
-            royalty_bps=ROYALTY_BPS,
-            quorum_threshold=QUORUM_THRESHOLD,
-        )
+        artifacts = build_mint_publish_artifacts(**_default_kwargs())
         return make_inner_puzzle(
             owner_member_hash=OWNER_MEMBER_HASH,
             gov_member_hash=GOV_MEMBER_HASH,
-            proposal_data_hash=pdh,
+            proposal_data_hash=artifacts.proposal_data_hash,
+            governance_singleton_struct=GOVERNANCE_SINGLETON_STRUCT,
+            governance_proposal_hash=artifacts.proposal_hash,
+            deed_launcher_id=artifacts.deed_launcher_id,
+            did_inner_puzzle_hash=PROTOCOL_DID_INNER_PUZHASH,
+            deed_full_puzzle_hash=artifacts.deed_full_puzhash,
             proposal_state=STATE_DRAFT,
             state_version=0,
         )

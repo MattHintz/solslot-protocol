@@ -22,6 +22,7 @@ from chia_rs.sized_ints import uint64
 from solslot_puzzles import admin_authority_v2_driver as admin_authority
 from solslot_puzzles import collection_nav_registry_driver as nav_registry
 from solslot_puzzles import protocol_config_driver as protocol_config
+from solslot_puzzles import property_registry_driver as property_registry
 from solslot_puzzles import vault_version_registry_driver as vault_registry
 from solslot_puzzles.protocol_deployment import (
     PROTOCOL_VERSION,
@@ -205,6 +206,7 @@ class GenesisCeremonyPlan:
     protocol_config: SingletonSurface
     admin_authority: SingletonSurface
     vault_version_registry: SingletonSurface
+    property_registry: SingletonSurface
     admin_quorum: admin_authority.GenesisAdminQuorum
     validator_pubkeys: tuple[bytes, bytes, bytes]
     validator_threshold: int
@@ -218,6 +220,7 @@ class GenesisCeremonyPlan:
     protocol_config_version: int
     admin_authority_version: int
     vault_version: int
+    property_registry_version: int
     canonical_params_hash: bytes32
     plan_hash: bytes32
 
@@ -262,6 +265,7 @@ def _plan_payload(
             "protocolConfig": _hex(plan.protocol_config.launcher_id),
             "adminAuthority": _hex(plan.admin_authority.launcher_id),
             "vaultVersionRegistry": _hex(plan.vault_version_registry.launcher_id),
+            "propertyRegistry": _hex(plan.property_registry.launcher_id),
         },
         "puzzleHashes": {
             "poolInner": _hex(base.pool_inner_puzhash),
@@ -282,6 +286,12 @@ def _plan_payload(
             "vaultVersionRegistryFull": _hex(
                 plan.vault_version_registry.full_puzzle_hash
             ),
+            "propertyRegistryInner": _hex(
+                plan.property_registry.inner_puzzle_hash
+            ),
+            "propertyRegistryFull": _hex(
+                plan.property_registry.full_puzzle_hash
+            ),
             "sgtTail": _hex(base.sgt_tail_hash),
             "bridgePolicy": _hex(plan.bridge_batch.policy_hash),
         },
@@ -291,6 +301,7 @@ def _plan_payload(
             "protocolConfig": plan.protocol_config_version,
             "adminAuthority": plan.admin_authority_version,
             "vault": plan.vault_version,
+            "propertyRegistry": plan.property_registry_version,
         },
         "adminAuthority": {
             "threshold": plan.admin_quorum.threshold,
@@ -368,6 +379,7 @@ def build_genesis_ceremony_plan(
     protocol_config_version: int = 1,
     admin_authority_version: int = 1,
     vault_version: int = GENESIS_VAULT_VERSION,
+    property_registry_version: int = 0,
 ) -> GenesisCeremonyPlan:
     """Build a complete, immutable dry-run plan without touching a node."""
     if network != GENESIS_NETWORK:
@@ -399,6 +411,8 @@ def build_genesis_ceremony_plan(
         raise ValueError("config and authority versions must be at least one")
     if vault_version != GENESIS_VAULT_VERSION:
         raise ValueError(f"fresh V2 genesis requires vault version {GENESIS_VAULT_VERSION}")
+    if property_registry_version != 0:
+        raise ValueError("fresh V2 genesis requires an empty property registry")
 
     resolved_params = params or ProtocolDeploymentParams(
         min_nav_registry_version=nav_registry_version
@@ -494,6 +508,20 @@ def build_genesis_ceremony_plan(
         ),
     )
 
+    property_registry_launcher_id = _launcher_id(funding.bridge_batch)
+    property_registry_inner = property_registry.make_inner_puzzle_hash(
+        governance_bls_pubkey,
+        property_registry_version,
+        property_registry.EMPTY_REGISTERED_IDS_ROOT,
+    )
+    property_registry_surface = SingletonSurface(
+        launcher_id=property_registry_launcher_id,
+        inner_puzzle_hash=property_registry_inner,
+        full_puzzle_hash=singleton_full_puzzle_hash(
+            property_registry_launcher_id, property_registry_inner
+        ),
+    )
+
     bridge_parents = tuple(
         Coin(
             funding.bridge_batch,
@@ -521,6 +549,7 @@ def build_genesis_ceremony_plan(
         protocol_config=config_surface,
         admin_authority=admin_surface,
         vault_version_registry=vault_registry_surface,
+        property_registry=property_registry_surface,
         admin_quorum=admin_quorum,
         validator_pubkeys=validator_tuple,  # type: ignore[arg-type]
         validator_threshold=validator_set.threshold,
@@ -538,6 +567,7 @@ def build_genesis_ceremony_plan(
         protocol_config_version=protocol_config_version,
         admin_authority_version=admin_authority_version,
         vault_version=vault_version,
+        property_registry_version=property_registry_version,
         canonical_params_hash=canonical_params_hash,
         plan_hash=placeholder_hash,
     )
@@ -690,15 +720,22 @@ def build_genesis_ceremony_bundle(
         signatures.append(signature)
 
     bridge_total = sum(int(coin.amount) for coin in plan.bridge_batch.parent_coins)
-    if int(funding_coins.bridge_batch.amount) < bridge_total + fee_per_funding_spend:
+    property_registry_launcher_amount = 1
+    if int(funding_coins.bridge_batch.amount) < (
+        bridge_total + property_registry_launcher_amount + fee_per_funding_spend
+    ):
         raise ValueError("bridge batch funding coin is too small")
     batch_conditions = [
         Program.to([51, faucet.address_puzzle_hash, int(parent.amount)])
         for parent in plan.bridge_batch.parent_coins
     ]
+    batch_conditions.append(
+        Program.to([51, bytes32(SINGLETON_LAUNCHER_HASH), 1])
+    )
     bridge_change = (
         int(funding_coins.bridge_batch.amount)
         - bridge_total
+        - property_registry_launcher_amount
         - fee_per_funding_spend
     )
     if bridge_change:
@@ -714,6 +751,21 @@ def build_genesis_ceremony_bundle(
     )
     spends.append(batch_spend)
     signatures.append(batch_signature)
+
+    property_registry_launcher_coin = Coin(
+        funding_coins.bridge_batch.name(),
+        bytes32(SINGLETON_LAUNCHER_HASH),
+        uint64(1),
+    )
+    if bytes32(property_registry_launcher_coin.name()) != plan.property_registry.launcher_id:
+        raise ValueError("derived property registry launcher id does not match plan")
+    spends.append(
+        make_spend(
+            property_registry_launcher_coin,
+            SINGLETON_LAUNCHER,
+            Program.to([plan.property_registry.inner_puzzle_hash, 1, []]),
+        )
+    )
 
     for parent, bridge_coin in zip(
         plan.bridge_batch.parent_coins,
@@ -737,8 +789,8 @@ def build_genesis_ceremony_bundle(
         spends.append(parent_spend)
         signatures.append(signature)
 
-    if len(spends) != 48:
-        raise ValueError(f"ceremony bundle must contain 48 spends, got {len(spends)}")
+    if len(spends) != 49:
+        raise ValueError(f"ceremony bundle must contain 49 spends, got {len(spends)}")
     return GenesisCeremonyBundle(
         plan=plan,
         spend_bundle=SpendBundle(

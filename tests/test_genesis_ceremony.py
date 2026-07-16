@@ -99,7 +99,10 @@ def test_plan_derives_all_surfaces_and_bridge_lineage() -> None:
         "protocolConfig",
         "adminAuthority",
         "vaultVersionRegistry",
+        "propertyRegistry",
     }
+    assert plan.property_registry_version == 0
+    assert plan.property_registry.launcher_id != bytes32.zeros
 
 
 def test_plan_hash_binds_mutations() -> None:
@@ -120,7 +123,7 @@ def test_bundle_contains_all_ephemeral_spends() -> None:
         funding_coins=coins,
     )
 
-    assert len(built.spend_bundle.coin_spends) == 48
+    assert len(built.spend_bundle.coin_spends) == 49
     spent_ids = {spend.coin.name() for spend in built.spend_bundle.coin_spends}
     assert all(parent.name() in spent_ids for parent in plan.bridge_batch.parent_coins)
     assert bytes(built.spend_bundle.aggregated_signature) != bytes(96)

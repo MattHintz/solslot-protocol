@@ -41,6 +41,8 @@ write_module mint_proposal_inner_v2 MINT_PROPOSAL_INNER_V2_PUZZLE_HEX \
   src/app/services/mint-proposal-v2/mint-proposal-v2.puzzle-hex.ts
 write_module property_registry_inner PROPERTY_REGISTRY_INNER_PUZZLE_HEX \
   src/app/services/mint-proposal-v2/property-registry-inner.puzzle-hex.ts
+write_module quorum_did_inner QUORUM_DID_INNER_PUZZLE_HEX \
+  src/app/services/mint-proposal-v2/quorum-did-inner.puzzle-hex.ts
 write_module purchase_payment PURCHASE_PAYMENT_PUZZLE_HEX \
   src/app/services/mint-proposal-v2/purchase-payment.puzzle-hex.ts
 write_module singleton_launcher_with_did SINGLETON_LAUNCHER_WITH_DID_PUZZLE_HEX \

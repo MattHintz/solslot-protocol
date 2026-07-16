@@ -39,8 +39,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from chia.types.blockchain_format.coin import Coin
 from chia.types.blockchain_format.program import Program
+from chia.types.coin_spend import CoinSpend, make_spend
+from chia.wallet.lineage_proof import LineageProof
+from chia.wallet.puzzles.singleton_top_layer_v1_1 import (
+    puzzle_for_singleton,
+    solution_for_singleton,
+)
 from chia_rs.sized_bytes import bytes32
+from chia_rs.sized_ints import uint64
 
 from solslot_puzzles import load_puzzle
 
@@ -50,14 +58,17 @@ from solslot_puzzles import load_puzzle
 STATE_DRAFT = 1
 STATE_APPROVED = 2
 STATE_CANCELLED = 3
+STATE_EXECUTED = 4
 STATE_NAMES = {
     STATE_DRAFT: "DRAFT",
     STATE_APPROVED: "APPROVED",
     STATE_CANCELLED: "CANCELLED",
+    STATE_EXECUTED: "EXECUTED",
 }
 
 TRANSITION_APPROVE = 0x61  # 'a'
 TRANSITION_CANCEL = 0x63  # 'c'
+TRANSITION_EXECUTE = 0x78  # 'x'
 
 
 _MINT_PROPOSAL_INNER_V2_MOD: Program | None = None
@@ -75,7 +86,7 @@ def mint_proposal_inner_v2_mod_hash() -> bytes32:
     """Tree hash of the uncurried mod (curried into proposals as ``SELF_MOD_HASH``).
 
     Pinned value (validated by ``test_mint_proposal_v2.py``):
-        0x1d3838f04de2d8b864c0b96f7f14d7fc8ec6bd39940806e2fa4087b520138517
+        0xbb1379bc24f0a02ca27de58e2200ae4cd1fc1e58d53a49d1119600108741d37e
     """
     return bytes32(mint_proposal_inner_v2_mod().get_tree_hash())
 
@@ -158,9 +169,14 @@ def compute_binding_hash(
     (case + version) so two copy-paste-shaped sibling proposals can't
     share signatures.
     """
-    if transition_case not in (TRANSITION_APPROVE, TRANSITION_CANCEL):
+    if transition_case not in (
+        TRANSITION_APPROVE,
+        TRANSITION_CANCEL,
+        TRANSITION_EXECUTE,
+    ):
         raise ValueError(
-            f"transition_case must be 0x61 (APPROVE) or 0x63 (CANCEL), "
+            "transition_case must be 0x61 (APPROVE), 0x63 (CANCEL), "
+            "or 0x78 (EXECUTE), "
             f"got {hex(transition_case)}"
         )
     if new_state_version < 0:
@@ -206,6 +222,11 @@ def make_inner_puzzle(
     owner_member_hash: bytes32,
     gov_member_hash: bytes32,
     proposal_data_hash: bytes32,
+    governance_singleton_struct: Program,
+    governance_proposal_hash: bytes32,
+    deed_launcher_id: bytes32,
+    did_inner_puzzle_hash: bytes32,
+    deed_full_puzzle_hash: bytes32,
     proposal_state: int,
     state_version: int,
 ) -> Program:
@@ -214,7 +235,10 @@ def make_inner_puzzle(
     Currying order MUST match ``mint_proposal_inner_v2.clsp``:
 
         SELF_MOD_HASH, OWNER_MEMBER_HASH, GOV_MEMBER_HASH,
-        PROPOSAL_DATA_HASH, PROPOSAL_STATE, STATE_VERSION
+        PROPOSAL_DATA_HASH, GOVERNANCE_SINGLETON_STRUCT,
+        GOVERNANCE_PROPOSAL_HASH, DEED_LAUNCHER_ID,
+        DID_INNER_PUZZLE_HASH, DEED_FULL_PUZZLE_HASH,
+        PROPOSAL_STATE, STATE_VERSION
 
     Note the rename from V1: ``OWNER_PUBKEY`` (48-byte BLS) /
     ``GOV_PUBKEY`` (48-byte BLS) \u2192 ``OWNER_MEMBER_HASH`` (32-byte
@@ -235,6 +259,14 @@ def make_inner_puzzle(
         raise ValueError(
             f"proposal_data_hash must be 32 bytes, got {len(proposal_data_hash)}"
         )
+    for value, name in (
+        (governance_proposal_hash, "governance_proposal_hash"),
+        (deed_launcher_id, "deed_launcher_id"),
+        (did_inner_puzzle_hash, "did_inner_puzzle_hash"),
+        (deed_full_puzzle_hash, "deed_full_puzzle_hash"),
+    ):
+        if len(value) != 32:
+            raise ValueError(f"{name} must be 32 bytes, got {len(value)}")
     if proposal_state not in STATE_NAMES:
         raise ValueError(
             f"proposal_state must be one of {sorted(STATE_NAMES)}, got {proposal_state}"
@@ -248,6 +280,11 @@ def make_inner_puzzle(
         owner_member_hash,
         gov_member_hash,
         proposal_data_hash,
+        governance_singleton_struct,
+        governance_proposal_hash,
+        deed_launcher_id,
+        did_inner_puzzle_hash,
+        deed_full_puzzle_hash,
         proposal_state,
         state_version,
     )
@@ -258,6 +295,11 @@ def make_inner_puzzle_hash(
     owner_member_hash: bytes32,
     gov_member_hash: bytes32,
     proposal_data_hash: bytes32,
+    governance_singleton_struct: Program,
+    governance_proposal_hash: bytes32,
+    deed_launcher_id: bytes32,
+    did_inner_puzzle_hash: bytes32,
+    deed_full_puzzle_hash: bytes32,
     proposal_state: int,
     state_version: int,
 ) -> bytes32:
@@ -267,6 +309,11 @@ def make_inner_puzzle_hash(
             owner_member_hash=owner_member_hash,
             gov_member_hash=gov_member_hash,
             proposal_data_hash=proposal_data_hash,
+            governance_singleton_struct=governance_singleton_struct,
+            governance_proposal_hash=governance_proposal_hash,
+            deed_launcher_id=deed_launcher_id,
+            did_inner_puzzle_hash=did_inner_puzzle_hash,
+            deed_full_puzzle_hash=deed_full_puzzle_hash,
             proposal_state=proposal_state,
             state_version=state_version,
         ).get_tree_hash()
@@ -286,6 +333,11 @@ class MintProposalV2State:
     owner_member_hash: bytes32
     gov_member_hash: bytes32
     proposal_data_hash: bytes32
+    governance_singleton_struct: Program
+    governance_proposal_hash: bytes32
+    deed_launcher_id: bytes32
+    did_inner_puzzle_hash: bytes32
+    deed_full_puzzle_hash: bytes32
     proposal_state: int
     state_version: int
 
@@ -306,9 +358,17 @@ class MintProposalV2State:
         return self.proposal_state == STATE_CANCELLED
 
     @property
+    def is_executed(self) -> bool:
+        return self.proposal_state == STATE_EXECUTED
+
+    @property
     def is_terminal(self) -> bool:
         """True if no further V1-shaped transitions are possible from this state."""
-        return self.proposal_state in (STATE_APPROVED, STATE_CANCELLED)
+        return self.proposal_state in (
+            STATE_APPROVED,
+            STATE_CANCELLED,
+            STATE_EXECUTED,
+        )
 
 
 def parse_inner_puzzle(curried_inner_puzzle: Program) -> MintProposalV2State:
@@ -324,16 +384,21 @@ def parse_inner_puzzle(curried_inner_puzzle: Program) -> MintProposalV2State:
             f"{mint_proposal_inner_v2_mod_hash().hex()}"
         )
     args_list = list(args.as_iter())
-    if len(args_list) != 6:
+    if len(args_list) != 11:
         raise ValueError(
-            f"mint_proposal_inner_v2 expects 6 curried args, got {len(args_list)}"
+            f"mint_proposal_inner_v2 expects 11 curried args, got {len(args_list)}"
         )
     self_mod_hash = bytes32(args_list[0].as_atom())
     owner_member_hash = bytes32(args_list[1].as_atom())
     gov_member_hash = bytes32(args_list[2].as_atom())
     proposal_data_hash = bytes32(args_list[3].as_atom())
-    proposal_state = int(args_list[4].as_int())
-    state_version = int(args_list[5].as_int())
+    governance_singleton_struct = args_list[4]
+    governance_proposal_hash = bytes32(args_list[5].as_atom())
+    deed_launcher_id = bytes32(args_list[6].as_atom())
+    did_inner_puzzle_hash = bytes32(args_list[7].as_atom())
+    deed_full_puzzle_hash = bytes32(args_list[8].as_atom())
+    proposal_state = int(args_list[9].as_int())
+    state_version = int(args_list[10].as_int())
     if proposal_state not in STATE_NAMES:
         raise ValueError(
             f"unknown proposal_state {proposal_state} (valid: {sorted(STATE_NAMES)})"
@@ -343,6 +408,11 @@ def parse_inner_puzzle(curried_inner_puzzle: Program) -> MintProposalV2State:
         owner_member_hash=owner_member_hash,
         gov_member_hash=gov_member_hash,
         proposal_data_hash=proposal_data_hash,
+        governance_singleton_struct=governance_singleton_struct,
+        governance_proposal_hash=governance_proposal_hash,
+        deed_launcher_id=deed_launcher_id,
+        did_inner_puzzle_hash=did_inner_puzzle_hash,
+        deed_full_puzzle_hash=deed_full_puzzle_hash,
         proposal_state=proposal_state,
         state_version=state_version,
     )
@@ -419,6 +489,11 @@ def _build_transition(
         owner_member_hash=current.owner_member_hash,
         gov_member_hash=current.gov_member_hash,
         proposal_data_hash=current.proposal_data_hash,
+        governance_singleton_struct=current.governance_singleton_struct,
+        governance_proposal_hash=current.governance_proposal_hash,
+        deed_launcher_id=current.deed_launcher_id,
+        did_inner_puzzle_hash=current.did_inner_puzzle_hash,
+        deed_full_puzzle_hash=current.deed_full_puzzle_hash,
         proposal_state=new_state,
         state_version=new_state_version,
     )
@@ -477,6 +552,64 @@ def build_cancel_spend(
     )
 
 
+def build_execute_spend(
+    *,
+    current: MintProposalV2State,
+    new_state_version: int,
+    my_amount: int,
+) -> TransitionSpendArtifacts:
+    """Build the consensus-linked DRAFT -> EXECUTED transition."""
+    return _build_transition(
+        current=current,
+        transition_case=TRANSITION_EXECUTE,
+        new_state=STATE_EXECUTED,
+        new_state_version=new_state_version,
+        my_amount=my_amount,
+    )
+
+
+def build_execute_coin_spend(
+    *,
+    proposal_coin: Coin,
+    proposal_inner_puzzle: Program,
+    proposal_launcher_id: bytes32,
+    lineage_proof: LineageProof,
+    governance_inner_puzzle_hash: bytes32,
+    new_state_version: int = 1,
+) -> CoinSpend:
+    """Build the singleton-wrapped proposal EXECUTE co-spend.
+
+    The inner spend is signatureless but not permissionless in isolation: it
+    asserts the trusted governance EXEC announcement and exact deed-launcher
+    coin announcement committed into ``proposal_inner_puzzle``.
+    """
+    if len(governance_inner_puzzle_hash) != 32:
+        raise ValueError("governance_inner_puzzle_hash must be 32 bytes")
+    current = parse_inner_puzzle(proposal_inner_puzzle)
+    artifacts = build_execute_spend(
+        current=current,
+        new_state_version=new_state_version,
+        my_amount=int(proposal_coin.amount),
+    )
+    inner_solution = assemble_inner_solution(
+        artifacts=artifacts,
+        member_puzzle_reveal=Program.to(governance_inner_puzzle_hash),
+        member_solution_remainder=Program.to(0),
+    )
+    full_puzzle = puzzle_for_singleton(
+        proposal_launcher_id, proposal_inner_puzzle
+    )
+    if bytes32(full_puzzle.get_tree_hash()) != proposal_coin.puzzle_hash:
+        raise ValueError("proposal coin does not match supplied inner puzzle")
+    return make_spend(
+        proposal_coin,
+        full_puzzle,
+        solution_for_singleton(
+            lineage_proof, uint64(proposal_coin.amount), inner_solution
+        ),
+    )
+
+
 def assemble_inner_solution(
     *,
     artifacts: TransitionSpendArtifacts,
@@ -508,14 +641,18 @@ __all__ = [
     "STATE_APPROVED",
     "STATE_CANCELLED",
     "STATE_DRAFT",
+    "STATE_EXECUTED",
     "STATE_NAMES",
     "TRANSITION_APPROVE",
     "TRANSITION_CANCEL",
+    "TRANSITION_EXECUTE",
     "MintProposalV2State",
     "TransitionSpendArtifacts",
     "assemble_inner_solution",
     "build_approve_spend",
     "build_cancel_spend",
+    "build_execute_coin_spend",
+    "build_execute_spend",
     "compute_binding_hash",
     "compute_proposal_data_hash",
     "compute_transition_message",

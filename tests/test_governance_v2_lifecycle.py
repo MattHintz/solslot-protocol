@@ -33,7 +33,7 @@ from solslot_puzzles.sgt_driver import (
     TRK_EXECUTE,
     TRK_PROPOSE,
     bill_freeze,
-    bill_mint,
+    bill_mint as build_mint_bill,
     cat_sgt_free_puzzle_hash,
     sgt_free_inner_mod,
     sgt_free_inner_puzzle,
@@ -89,9 +89,15 @@ MIN_PROPOSAL_STAKE = 10_000  # 1% anti-spam stake
 # Identity puzzle: stable hash, returns its solution as conditions
 IDENTITY_INNER = Program.to(1)
 IDENTITY_HASH = bytes32(IDENTITY_INNER.get_tree_hash())
+PROPERTY_ID = bytes32(b"\x71" * 32)
+PROPERTY_REGISTRY_PUZHASH = bytes32(b"\x72" * 32)
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
+def mint_bill(deed_full_puzhash: bytes32) -> Program:
+    return build_mint_bill(deed_full_puzhash, PROPERTY_ID, PROPERTY_REGISTRY_PUZHASH)
+
+
 def _conds(prog: Program) -> list:
     return [list(item.as_iter()) for item in prog.as_iter()]
 
@@ -180,7 +186,7 @@ class TestLockProposeIntegration:
         """The SGT free coin emits a CREATE_PUZZLE_ANNOUNCEMENT on LOCK; the
         tracker's PROPOSE emits an ASSERT_PUZZLE_ANNOUNCEMENT.  Their
         announcement ids must match for the bundle to be valid."""
-        bill = bill_mint(bytes32(b"\x33" * 32))
+        bill = mint_bill(bytes32(b"\x33" * 32))
         proposal_hash = proposal_hash_from_bill(bill)
         first_vote = 600_000
         deadline = 2_000_000_000
@@ -260,7 +266,7 @@ class TestExecuteDIDIntegration:
           all commit-or-fail together.
         """
         deed_full_ph = bytes32(b"\x33" * 32)
-        bill = bill_mint(deed_full_ph)
+        bill = mint_bill(deed_full_ph)
         proposal_hash = proposal_hash_from_bill(bill)
         deadline = 2_000_000_000
 
@@ -286,8 +292,11 @@ class TestExecuteDIDIntegration:
         assert len(send) == 3, "mode 0x10 SEND has no var_args"
 
         # ── Side 2: DID's RECEIVE_MESSAGE (also mode 0x10) ───────────────
-        did_inner = QUORUM_DID_MOD.curry(TRACKER_STRUCT)
-        did_sol = Program.to([deed_full_ph, my_ph])
+        did_inner = QUORUM_DID_MOD.curry(
+            bytes32(QUORUM_DID_MOD.get_tree_hash()),
+            TRACKER_STRUCT,
+        )
+        did_sol = Program.to([1, deed_full_ph, my_ph])
         did_conds = _conds(did_inner.run(did_sol))
         recv = next(c for c in did_conds if _atom_int(c[0]) == RECEIVE_MESSAGE)
         recv_mode = _atom_int(recv[1])
@@ -364,7 +373,7 @@ class TestQuorumBoundary:
 
     def test_execute_at_exact_quorum_boundary_passes(self):
         """vote_tally * 10000 == quorum * total_supply → boundary is allowed."""
-        bill = bill_mint(bytes32(b"\x33" * 32))
+        bill = mint_bill(bytes32(b"\x33" * 32))
         # 50% of 1M = 500_000. quorum=5000 (50%). 500_000 * 10000 == 5000 * 1_000_000.
         proposal_hash = proposal_hash_from_bill(bill)  # noqa: F841 (sanity)
         curried = _curry_tracker(
@@ -380,7 +389,7 @@ class TestQuorumBoundary:
 
     def test_execute_one_below_quorum_fails(self):
         """vote_tally that's exactly 1 below the boundary must fail."""
-        bill = bill_mint(bytes32(b"\x33" * 32))
+        bill = mint_bill(bytes32(b"\x33" * 32))
         # 499_999 * 10000 = 4_999_990_000 < 5_000_000_000
         curried = _curry_tracker(
             proposal_hash=proposal_hash_from_bill(bill),

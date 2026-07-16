@@ -44,6 +44,9 @@ def test_fixture_top_level_schema_keys() -> None:
         "tracker_propose",
         "sgt_first_vote",
         "property_registry_registration",
+        "did_mint_execute",
+        "proposal_mint_execute",
+        "deed_launcher_execute",
     }
 
 
@@ -55,10 +58,30 @@ def test_spend_sections_have_inputs_and_expected() -> None:
         "tracker_propose",
         "sgt_first_vote",
         "property_registry_registration",
+        "did_mint_execute",
+        "proposal_mint_execute",
+        "deed_launcher_execute",
     ):
         assert set(fix[section].keys()) == {"inputs", "expected"}, (
             f"section {section!r} has unexpected keys: {set(fix[section].keys())}"
         )
+
+
+def test_execute_spend_sections_are_serialized_coin_spends() -> None:
+    fix = build_fixture()
+    for section in (
+        "did_mint_execute",
+        "proposal_mint_execute",
+        "deed_launcher_execute",
+    ):
+        expected = fix[section]["expected"]
+        assert set(expected) == {
+            "coin",
+            "puzzle_reveal_hex",
+            "solution_hex",
+            "coin_spend_hex",
+        }
+        assert expected["coin_spend_hex"].startswith("0x")
 
 
 def test_proposal_eve_launch_expected_keys() -> None:
@@ -163,6 +186,8 @@ def test_fixture_inputs_keys() -> None:
         "deed_launcher_parent_coin_name",
         "proposal_launcher_parent_coin_name",
         "protocol_did_puzhash",
+        "protocol_did_inner_puzhash",
+        "governance_singleton_struct_hex",
         "p2_pool_mod_hash",
         "p2_vault_mod_hash",
         "property_registry_puzzle_hash",
@@ -239,7 +264,7 @@ def test_fixture_matches_pinned_golden_vector() -> None:
         "0xd775fb9d532798e7bb6b34dc063bc6654ef424311dafbf9b134d90897c86802d"
     )
     assert expected["eve_inner_puzhash"] == (
-        "0x0c2931b61be08612a562a5165e786de126cadbb8c99d7c5ec73ed8824e99fb23"
+        "0xe0cbaaf433b56b7fc54a339b6a0b58b4b3ecb60bffd4ee956a7bb80442380b3c"
     )
     assert expected["deed_full_puzhash"] == (
         "0x31b8d068651f77b3d9fbb06633c0680609d2801df952247d33f15e57cc552eac"
