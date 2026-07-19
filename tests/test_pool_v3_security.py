@@ -66,6 +66,7 @@ CREATE_COIN_ANNOUNCEMENT = 60
 CREATE_PUZZLE_ANNOUNCEMENT = 62
 ASSERT_PUZZLE_ANNOUNCEMENT = 63
 RECEIVE_MESSAGE = 67
+SETTLEMENT_CLAIM_AUTH = 0x53434C4D
 
 
 def _atom_int(value: bytes | int) -> int:
@@ -181,8 +182,9 @@ def test_settlement_uses_curried_governance_and_binds_each_deed() -> None:
     deed_coin_id = bytes32(b"\x71" * 32)
     commitment = bytes32(b"\x72" * 32)
     destination = bytes32(b"\x73" * 32)
+    claim_target = bytes32(b"\x76" * 32)
     governance_inner_hash = bytes32(b"\x74" * 32)
-    releases = [[deed_coin_id, commitment, destination]]
+    releases = [[deed_coin_id, commitment, destination, claim_target]]
     conditions = pool.run(
         _solution(
             pool,
@@ -208,6 +210,16 @@ def test_settlement_uses_curried_governance_and_binds_each_deed() -> None:
         + bytes(Program.to([0x72, commitment, destination]).get_tree_hash())
     ).digest()
     assert [bytes([61]), expected_deed_announcement] in conditions
+    expected_claim_authorization = b"\x53" + bytes(
+        Program.to([
+            SETTLEMENT_CLAIM_AUTH,
+            deed_coin_id,
+            commitment,
+            destination,
+            claim_target,
+        ]).get_tree_hash()
+    )
+    assert [bytes([CREATE_COIN_ANNOUNCEMENT]), expected_claim_authorization] in conditions
 
 
 def test_smart_deed_deposit_curries_immutable_commitment_into_escrow() -> None:

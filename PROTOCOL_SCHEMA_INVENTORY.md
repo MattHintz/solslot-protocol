@@ -130,13 +130,16 @@ defined and which tests should fail on drift.
 - SETTLE bill schema is:
   `(S splitxch_root_hash total_amount num_deeds deed_releases_hash)`.
 - `deed_releases_hash = sha256tree(deed_releases)` where `deed_releases` is the
-  exact CLVM release list passed to the pool settlement spend.
+  exact CLVM release list passed to the pool settlement spend. Each release is
+  `(deed_coin_id deed_commitment burn_puzzle_hash payout_target_puzzle_hash)`.
 - Governance EXECUTE sends the pool message over:
   `(SETT splitxch_root_hash total_amount num_deeds deed_releases_hash)`.
 - Pool settlement spends recompute `sha256tree(deed_releases)` and require that
   hash in both the `RECEIVE_MESSAGE` condition and settlement batch
-  announcement. Reordering releases, changing a destination, or using the old
-  count-only message changes the required governance message.
+  announcement. Reordering releases, changing a burn destination or payout
+  target, or using the old count-only message changes the required governance
+  message. The pool also emits a coin announcement that authorizes each exact
+  payout target for `p2_deed_settlement` CLAIM.
 - Tests:
   `tests/test_governance.py::TestExecute::test_execute_settle_sends_message_to_pool`
   and `tests/test_pool.py::TestPoolSettlementBinding`.
@@ -157,7 +160,9 @@ defined and which tests should fail on drift.
 - Fixed:
   - SOR-1 / `p2_deed_settlement` burn destination binding:
     `p2_deed_settlement.clsp` hardcodes the canonical all-zero burn inner
-    puzzle hash instead of accepting it as a curried setup parameter.
+    puzzle hash instead of accepting it as a curried setup parameter, and CLAIM
+    now requires a pool coin announcement binding the governance-approved payout
+    target.
     Covered by `tests/test_p2_deed_settlement.py`.
   - Governance settlement release-set binding:
     SETTLE bills now carry `deed_releases_hash = sha256tree(deed_releases)`,

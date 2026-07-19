@@ -546,8 +546,18 @@ class TestExecute:
         """SETTLE EXECUTE: same pattern as FREEZE — mode 0x10, no extra asserts."""
         splitxch_root = bytes32(b"\xab" * 32)
         releases = [
-            (bytes32(b"\x11" * 32), bytes32(b"\x22" * 32)),
-            (bytes32(b"\x33" * 32), bytes32(b"\x44" * 32)),
+            [
+                bytes32(b"\x11" * 32),
+                bytes32(b"\x22" * 32),
+                bytes32(b"\x23" * 32),
+                bytes32(b"\x24" * 32),
+            ],
+            [
+                bytes32(b"\x33" * 32),
+                bytes32(b"\x44" * 32),
+                bytes32(b"\x45" * 32),
+                bytes32(b"\x46" * 32),
+            ],
         ]
         releases_hash = deed_releases_hash(releases)
         bill = bill_settle(splitxch_root, 1_000_000, len(releases), releases_hash)

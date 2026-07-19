@@ -326,6 +326,19 @@
                 (list pool_coin_id deed_coin_id deed_metadata_commitment p2_vault_hash)))
     )
 
+    (defconstant SETTLEMENT_CLAIM_AUTH 0x53434c4d)  ;; "SCLM"
+
+    (defun-inline settlement_claim_message
+        (deed_coin_id deed_metadata_commitment burn_puzhash target_puzzle_hash)
+        (concat PROTOCOL_PREFIX
+            (sha256tree
+                (list SETTLEMENT_CLAIM_AUTH
+                    deed_coin_id
+                    deed_metadata_commitment
+                    burn_puzhash
+                    target_puzzle_hash)))
+    )
+
     (defun-inline pool_v2_true_redemption_message
         (deed_id deed_metadata_commitment p2_vault_hash collection_id_canon share_ppm collection_nav_mojos nav_root nav_registry_version
          nav_registry_coin_id nav_registry_puzzle_hash deed_nav principal_tokens token_coin_id)
@@ -551,8 +564,8 @@
     ;; SPEND CASE 3 — SETTLEMENT (batch)
     ;; params = (splitxch_root_hash total_settlement_amount deed_releases gov_inner_puzhash)
     ;; deed_releases =
-    ;;   ((deed_coin_id_1 deed_commitment_1 next_ph_1)
-    ;;    (deed_coin_id_2 deed_commitment_2 next_ph_2) ...)
+    ;;   ((deed_coin_id_1 deed_commitment_1 burn_ph_1 target_ph_1)
+    ;;    (deed_coin_id_2 deed_commitment_2 burn_ph_2 target_ph_2) ...)
     ;; Batch settles entire collection: creates splitxch root coin (funded by
     ;; external deposit in same bundle), creates per-deed release announcements
     ;; so each p2_pool coin can be spent.  State → (POOL_ACTIVE, 0, 0).
@@ -563,6 +576,22 @@
     ;; Helper: count list length (verify deed_releases matches DEED_COUNT)
     (defun count_list (lst)
         (if lst (+ 1 (count_list (r lst))) 0)
+    )
+
+    (defun valid_settlement_release (release)
+        (and
+            (is-size-b32 (nth 0 release))
+            (is-size-b32 (nth 1 release))
+            (is-size-b32 (nth 2 release))
+            (is-size-b32 (nth 3 release)))
+    )
+
+    (defun valid_settlement_releases (releases)
+        (if releases
+            (and
+                (valid_settlement_release (f releases))
+                (valid_settlement_releases (r releases)))
+            1)
     )
 
     ;; Helper: pair every release with the exact deposited deed coin.  The
@@ -580,13 +609,20 @@
                         (nth 1 (f deed_releases))
                         (nth 2 (f deed_releases))))
                 (c
-                    (list ASSERT_COIN_ANNOUNCEMENT
-                        (sha256
+                    (list CREATE_COIN_ANNOUNCEMENT
+                        (settlement_claim_message
                             (nth 0 (f deed_releases))
-                            (deed_v3_redeem_message
-                                (nth 1 (f deed_releases))
-                                (nth 2 (f deed_releases)))))
-                    (build_release_and_tail my_id (r deed_releases) tail_conditions))
+                            (nth 1 (f deed_releases))
+                            (nth 2 (f deed_releases))
+                            (nth 3 (f deed_releases))))
+                    (c
+                        (list ASSERT_COIN_ANNOUNCEMENT
+                            (sha256
+                                (nth 0 (f deed_releases))
+                                (deed_v3_redeem_message
+                                    (nth 1 (f deed_releases))
+                                    (nth 2 (f deed_releases)))))
+                        (build_release_and_tail my_id (r deed_releases) tail_conditions)))
             )
             tail_conditions
         )
@@ -607,9 +643,10 @@
             (is-uint64 TREASURY_RESERVE_TOKENS)
             (gte TOTAL_POOL_TOKEN_SUPPLY TREASURY_RESERVE_TOKENS)
             (= (count_list deed_releases) DEED_COUNT)
+            (valid_settlement_releases deed_releases)
             ;; ── V1-CANON-019: reject duplicate deed_id in releases ───────
             ;; Without this guard, a settlement orchestrator could submit
-            ;; deed_releases = [(D1, ph1), (D1, ph1), (D2, ph2)] for a
+            ;; deed_releases = [(D1, C1, B1, T1), (D1, C1, B1, T1), ...] for a
             ;; 3-deed pool: length check passes, but the two D1 entries
             ;; produce byte-identical CREATE_PUZZLE_ANNOUNCEMENT bodies,
             ;; which Chia consensus deduplicates by announcement_id.

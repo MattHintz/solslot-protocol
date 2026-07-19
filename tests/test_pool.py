@@ -1263,8 +1263,18 @@ class TestPoolSettlementBinding:
     splitxch_root = bytes32(b"\xab" * 32)
     gov_inner_puzhash = bytes32(b"\xac" * 32)
     releases = [
-        [bytes32(b"\x21" * 32), bytes32(b"\x41" * 32), bytes32(b"\x31" * 32)],
-        [bytes32(b"\x22" * 32), bytes32(b"\x42" * 32), bytes32(b"\x32" * 32)],
+        [
+            bytes32(b"\x21" * 32),
+            bytes32(b"\x41" * 32),
+            bytes32(b"\x31" * 32),
+            bytes32(b"\x51" * 32),
+        ],
+        [
+            bytes32(b"\x22" * 32),
+            bytes32(b"\x42" * 32),
+            bytes32(b"\x32" * 32),
+            bytes32(b"\x52" * 32),
+        ],
     ]
 
     def run_settlement(self, releases=None):
@@ -1317,7 +1327,37 @@ class TestPoolSettlementBinding:
     def test_mutating_release_destination_changes_required_governance_message(self):
         mutated = [
             self.releases[0],
-            [self.releases[1][0], self.releases[1][1], bytes32(b"\xfe" * 32)],
+            [
+                self.releases[1][0],
+                self.releases[1][1],
+                bytes32(b"\xfe" * 32),
+                self.releases[1][3],
+            ],
+        ]
+        assert settlement_message(self.splitxch_root, 99_999, len(self.releases), mutated) != settlement_message(
+            self.splitxch_root,
+            99_999,
+            len(self.releases),
+            self.releases,
+        )
+        conditions = self.run_settlement(mutated)
+        receives = [c for c in conditions if atom_int(c[0]) == RECEIVE_MESSAGE]
+        assert receives[0][2] == settlement_message(
+            self.splitxch_root,
+            99_999,
+            len(self.releases),
+            mutated,
+        )
+
+    def test_mutating_release_target_changes_required_governance_message(self):
+        mutated = [
+            self.releases[0],
+            [
+                self.releases[1][0],
+                self.releases[1][1],
+                self.releases[1][2],
+                bytes32(b"\xfd" * 32),
+            ],
         ]
         assert settlement_message(self.splitxch_root, 99_999, len(self.releases), mutated) != settlement_message(
             self.splitxch_root,
