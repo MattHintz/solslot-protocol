@@ -807,9 +807,9 @@ class TestOperationalSpend:
     def test_rejects_version_downgrade(self, initial_state):
         """new_authority_version <= current AUTHORITY_VERSION must raise.
 
-        Replay protection (I-1): without monotonic version, a
-        previously-valid spend bundle could be replayed against a
-        future state.
+        Replay protection (I-1): without exact one-step version bumps,
+        a previously-valid spend bundle could be replayed against a
+        future state or a spend could jump to an unusable ceiling value.
         """
         sol = build_operational_solution(
             my_amount=SINGLETON_AMOUNT,
@@ -819,6 +819,23 @@ class TestOperationalSpend:
         )
         with pytest.raises(Exception):
             initial_state["inner"].run(sol)
+
+    def test_rejects_skipped_version_increment(self, initial_state):
+        """new_authority_version must advance exactly one step.
+
+        A caller must not be able to jump directly to a high uint64 value,
+        because that can leave no usable successor version for the next
+        authority spend.
+        """
+        for bad_version in (INITIAL_AUTHORITY_VERSION + 2, (1 << 64) - 1):
+            sol = build_operational_solution(
+                my_amount=SINGLETON_AMOUNT,
+                new_authority_version=bad_version,
+                mips_puzzle_reveal=initial_state["mips_reveal"],
+                mips_solution=Program.to(0),
+            )
+            with pytest.raises(Exception):
+                initial_state["inner"].run(sol)
 
     def test_rejects_zero_my_amount(self, initial_state):
         """my_amount must be a non-zero uint64. is-uint64 rejects 0

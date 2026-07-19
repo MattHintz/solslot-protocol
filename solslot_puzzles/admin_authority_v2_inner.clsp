@@ -57,7 +57,7 @@
 ;;;                                      sha256tree(()) (a known constant)
 ;;;                                      — the puzzle treats both nil and
 ;;;                                      that constant as valid "empty".
-;;;   AUTHORITY_VERSION                — uint64, strictly monotonic. Replay
+;;;   AUTHORITY_VERSION                — uint64, exact-increment replay
 ;;;                                      protection across ALL spend tags
 ;;;                                      (including OPERATIONAL — defence in
 ;;;                                      depth so a compromised key shows in
@@ -66,7 +66,7 @@
 ;;; Solution (common prefix):
 ;;;   spend_tag                        — single byte, see §4.1 of design.
 ;;;   my_amount                        — singleton coin amount (must be odd).
-;;;   new_authority_version            — strictly > AUTHORITY_VERSION.
+;;;   new_authority_version            — exactly AUTHORITY_VERSION + 1.
 ;;;   spend_args                       — list, type-specific (see below).
 ;;;
 ;;; Spend tags (C.2a implements 0x01 only; others raise):
@@ -1082,8 +1082,8 @@
     (is-size-b32 ADMINS_HASH)
     (is-size-b32 PENDING_KEY_OPS_HASH)
     (is-uint64 AUTHORITY_VERSION)
-    ;; I-1: monotonic version.
-    (> new_authority_version AUTHORITY_VERSION)
+    ;; I-1: exact one-step version bump.
+    (= new_authority_version (+ AUTHORITY_VERSION 1))
     ;; Dispatch on spend_tag. Each handler returns the full condition list
     ;; (its own conditions + the shim's wrapping conditions).
     (if (= spend_tag SPEND_OPERATIONAL)

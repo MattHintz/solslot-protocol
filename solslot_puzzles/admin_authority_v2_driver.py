@@ -368,8 +368,11 @@ def build_admin_slot_add_preview(
         raise ValueError("current_admins must contain at least one admin")
     if len(current_admins_tuple) >= max_admins:
         raise ValueError(f"admin roster already has max_admins ({max_admins})")
-    if new_authority_version <= current_authority_version:
-        raise ValueError("new_authority_version must be greater than current")
+    expected_authority_version = current_authority_version + 1
+    if new_authority_version != expected_authority_version:
+        raise ValueError(
+            "new_authority_version must equal current_authority_version + 1"
+        )
     if len(current_mips_root_hash) != 32:
         raise ValueError("current_mips_root_hash must be 32 bytes")
     if len(new_mips_root_hash) != 32:
@@ -711,7 +714,7 @@ def build_operational_solution(
 
     Args:
         my_amount: singleton coin amount (must be odd; identity assert).
-        new_authority_version: strictly > current AUTHORITY_VERSION.
+        new_authority_version: exactly current AUTHORITY_VERSION + 1.
         mips_puzzle_reveal: the MIPS m_of_n tree (or any puzzle whose
             tree-hash matches MIPS_ROOT_HASH). For testing this can be a
             trivial constant puzzle.
@@ -1128,7 +1131,7 @@ def build_key_add_propose_solution(
 
     Args:
         my_amount: singleton coin amount.
-        new_authority_version: strictly > current.
+        new_authority_version: exactly current + 1.
         current_admins: revealed full admins list whose sha256tree must
             match the curried ADMINS_HASH.
         current_pending_ops: revealed full pending-ops list whose

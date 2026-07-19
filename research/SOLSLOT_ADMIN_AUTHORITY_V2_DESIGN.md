@@ -230,7 +230,7 @@ The new state is:
 new_admins_list = append(current_admins_list, new_admin_record)
 new_admins_hash = sha256tree(new_admins_list)
 new_pending_key_ops_hash = PENDING_KEY_OPS_HASH
-new_authority_version > AUTHORITY_VERSION
+new_authority_version = AUTHORITY_VERSION + 1
 new_mips_root_hash = tree hash of supermajority MIPS over new_admins_list
 ```
 
@@ -256,7 +256,7 @@ Before implementing CLSP behavior, tests should pin these contracts:
 7. Empty admin leaf list is rejected.
 8. `m_within` outside `[1, len(leaves)]` is rejected.
 9. Roster updates past `MAX_ADMINS` are rejected.
-10. `new_authority_version <= AUTHORITY_VERSION` is rejected.
+10. `new_authority_version != AUTHORITY_VERSION + 1` is rejected.
 
 ## Operator Flow
 

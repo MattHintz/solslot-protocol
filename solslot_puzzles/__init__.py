@@ -75,7 +75,8 @@ PUZZLE_FILENAMES = (
 # Set to None to skip verification (development mode).
 # Generate with: python -c "from solslot_puzzles import compute_puzzles_checksum; print(compute_puzzles_checksum())"
 FROZEN_CHECKSUM: Optional[str] = (
-    # 2026-07-18 PA6 settlement target binding + PA13 SmartDeed pool-identity freeze:
+    # 2026-07-18 PA4 exact admin authority version increments +
+    # PA6 settlement target binding + PA13 SmartDeed pool-identity freeze:
     #   - announcement namespace 0x53;
     #   - SGT governance modules;
     #   - commitment-bound SmartDeed and p2_pool custody;
@@ -83,11 +84,13 @@ FROZEN_CHECKSUM: Optional[str] = (
     #     identity in curry, not spend solution;
     #   - settlement CLAIM requires both p2_pool_v2 burn proof and a
     #     pool coin announcement binding the governance-approved payout target;
+    #   - admin authority V2 requires every spend to advance AUTHORITY_VERSION
+    #     by exactly one step;
     #   - pool V3 with retired exits disabled and governance identity pinned;
     #   - Solslot V2 vault and credential domains;
     #   - five-spend governance/DID/registry/proposal/deed mint execution;
     #   - no retired contract implementations in the canonical package.
-    "b31ef27b0c5c86dd047db79d9d7ce9ffc7a911160360d0e02c366942f85e30f2"
+    "15b1f9972139dd9823f043e83741ce7d38eb9717d3e9abcccd6e6a4451c7ac19"
 )
 
 # ── Cache ──
