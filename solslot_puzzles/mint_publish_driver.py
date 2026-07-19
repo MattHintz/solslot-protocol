@@ -391,6 +391,8 @@ def compute_proposal_hash_for_mint(
     deed_full_puzhash: bytes32,
     property_id_canon: bytes32,
     property_registry_puzzle_hash: bytes32,
+    metadata_root: bytes32 | None = None,
+    metadata_anchor_id: bytes32 | None = None,
 ) -> bytes32:
     """The 32-byte governance-tracker ``PROPOSAL_HASH`` for a MINT bill.
 
@@ -412,9 +414,28 @@ def compute_proposal_hash_for_mint(
     ):
         if len(value) != 32:
             raise ValueError(f"{name} must be 32 bytes, got {len(value)}")
-    bill_op = Program.to(
-        [BILL_MINT_TAG, deed_full_puzhash, property_id_canon, property_registry_puzzle_hash]
-    )
+    if (metadata_root is None) != (metadata_anchor_id is None):
+        raise ValueError(
+            "metadata_root and metadata_anchor_id must be supplied together"
+        )
+    bill_fields: list[object] = [
+        BILL_MINT_TAG,
+        deed_full_puzhash,
+        property_id_canon,
+        property_registry_puzzle_hash,
+    ]
+    if metadata_root is not None and metadata_anchor_id is not None:
+        if len(metadata_root) != 32:
+            raise ValueError(
+                f"metadata_root must be 32 bytes, got {len(metadata_root)}"
+            )
+        if len(metadata_anchor_id) != 32:
+            raise ValueError(
+                "metadata_anchor_id must be 32 bytes, "
+                f"got {len(metadata_anchor_id)}"
+            )
+        bill_fields.extend((metadata_root, metadata_anchor_id))
+    bill_op = Program.to(bill_fields)
     return bytes32(bill_op.get_tree_hash())
 
 
@@ -587,6 +608,8 @@ def build_mint_publish_artifacts(
     p2_pool_mod_hash: bytes32,
     p2_vault_mod_hash: bytes32,
     property_registry_puzzle_hash: bytes32,
+    metadata_root: bytes32 | None = None,
+    metadata_anchor_id: bytes32 | None = None,
 ) -> MintPublishArtifacts:
     """Deterministically pin all publish-time artifacts for a mint proposal.
 
@@ -671,9 +694,31 @@ def build_mint_publish_artifacts(
     )
 
     # Step 4: governance tracker proposal_hash + bill_op program.
-    bill_op_program = Program.to(
-        [BILL_MINT_TAG, deed_full_puzhash, property_id_canon, property_registry_puzzle_hash]
+    if metadata_root is None and metadata_anchor_id is not None:
+        raise ValueError("metadata_anchor_id cannot be supplied without metadata_root")
+    resolved_metadata_anchor_id = (
+        metadata_anchor_id
+        if metadata_anchor_id is not None
+        else deed_launcher_id if metadata_root is not None else None
     )
+    bill_fields: list[object] = [
+        BILL_MINT_TAG,
+        deed_full_puzhash,
+        property_id_canon,
+        property_registry_puzzle_hash,
+    ]
+    if metadata_root is not None and resolved_metadata_anchor_id is not None:
+        if len(metadata_root) != 32:
+            raise ValueError(
+                f"metadata_root must be 32 bytes, got {len(metadata_root)}"
+            )
+        if len(resolved_metadata_anchor_id) != 32:
+            raise ValueError(
+                "metadata_anchor_id must be 32 bytes, "
+                f"got {len(resolved_metadata_anchor_id)}"
+            )
+        bill_fields.extend((metadata_root, resolved_metadata_anchor_id))
+    bill_op_program = Program.to(bill_fields)
     proposal_hash = bytes32(bill_op_program.get_tree_hash())
 
     # Step 5: Artifact A DRAFT eve inner puzzle hash + proposal data hash.
@@ -684,6 +729,8 @@ def build_mint_publish_artifacts(
         par_value_mojos=par_value_mojos,
         royalty_bps=royalty_bps,
         quorum_threshold=quorum_threshold,
+        metadata_root=metadata_root,
+        metadata_anchor_id=resolved_metadata_anchor_id,
     )
     eve_inner_puzhash = make_inner_puzzle_hash(
         owner_member_hash=owner_member_hash,

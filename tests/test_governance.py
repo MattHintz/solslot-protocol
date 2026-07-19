@@ -441,6 +441,40 @@ class TestVote:
 #                              EXECUTE tests
 # ─────────────────────────────────────────────────────────────────────────────
 class TestExecute:
+    def test_execute_extended_mint_bill_uses_unchanged_dispatch(self):
+        """Trailing metadata commitments are hashed but ignored by RC16 dispatch."""
+        deed_full_ph = bytes32(b"\x33" * 32)
+        bill = Program.to(
+            [
+                BILL_MINT,
+                deed_full_ph,
+                PROPERTY_ID,
+                PROPERTY_REGISTRY_PUZHASH,
+                bytes32(b"\x44" * 32),
+                bytes32(b"\x55" * 32),
+            ]
+        )
+        curried = _curry_tracker(
+            proposal_hash=proposal_hash_from_bill(bill),
+            bill_op=bill,
+            vote_tally=SGT_TOTAL_SUPPLY,
+            voting_deadline=2_000_000_000,
+        )
+        my_id, my_ph = _tracker_my_id_and_ph(curried)
+        out = curried.run(
+            Program.to([my_id, my_ph, TRACKER_AMOUNT, TRK_EXECUTE, 0])
+        )
+        conds = _conds_to_list(out)
+        sends = [c for c in conds if _atom_int(c[0]) == SEND_MESSAGE]
+        assertions = [
+            c for c in conds if _atom_int(c[0]) == ASSERT_PUZZLE_ANNOUNCEMENT
+        ]
+        assert len(sends) == 1
+        assert len(assertions) == 2
+        assert _atom_bytes(sends[0][2]) == b"\x53" + Program.to(
+            [b"MINT", deed_full_ph]
+        ).get_tree_hash()
+
     def test_execute_mint_sends_message_to_did(self):
         """MINT EXECUTE must:
         - SEND_MESSAGE with mode 0x10 (matches DID's RECEIVE_MESSAGE 0x10 per CHIP-25)

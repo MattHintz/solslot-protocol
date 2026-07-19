@@ -104,12 +104,19 @@ def compute_proposal_data_hash(
     par_value_mojos: int,
     royalty_bps: int,
     quorum_threshold: int,
+    metadata_root: bytes32 | None = None,
+    metadata_anchor_id: bytes32 | None = None,
 ) -> bytes32:
     """Deterministic 32-byte commitment over a proposal's immutable fields.
 
-    The V2 tuple is:
+    The legacy V2 tuple is:
       (property_id_canon, collection_id_canon, share_ppm,
        par_value_mojos, royalty_bps, quorum_threshold)
+
+    Chain-verifiable collection proposals append ``metadata_root`` and
+    ``metadata_anchor_id``.  Both must be supplied together.  Keeping the
+    parameters optional preserves every frozen RC16/legacy fixture while new
+    collection mints always take the extended path.
     """
     if len(property_id_canon) != 32:
         raise ValueError(
@@ -129,16 +136,30 @@ def compute_proposal_data_hash(
         raise ValueError(
             f"quorum_threshold must be \u2265 0, got {quorum_threshold}"
         )
-    program = Program.to(
-        [
-            property_id_canon,
-            collection_id_canon,
-            share_ppm,
-            par_value_mojos,
-            royalty_bps,
-            quorum_threshold,
-        ]
-    )
+    if (metadata_root is None) != (metadata_anchor_id is None):
+        raise ValueError(
+            "metadata_root and metadata_anchor_id must be supplied together"
+        )
+    fields: list[object] = [
+        property_id_canon,
+        collection_id_canon,
+        share_ppm,
+        par_value_mojos,
+        royalty_bps,
+        quorum_threshold,
+    ]
+    if metadata_root is not None and metadata_anchor_id is not None:
+        if len(metadata_root) != 32:
+            raise ValueError(
+                f"metadata_root must be 32 bytes, got {len(metadata_root)}"
+            )
+        if len(metadata_anchor_id) != 32:
+            raise ValueError(
+                "metadata_anchor_id must be 32 bytes, "
+                f"got {len(metadata_anchor_id)}"
+            )
+        fields.extend((metadata_root, metadata_anchor_id))
+    program = Program.to(fields)
     return bytes32(program.get_tree_hash())
 
 

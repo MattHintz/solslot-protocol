@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 3,
   "mint_publish": {
     "draft_fields": [
       "par_value",
@@ -30,7 +30,9 @@
       "quorum_threshold",
       "owner_member_hash",
       "gov_member_hash",
-      "voting_deadline"
+      "voting_deadline",
+      "metadata_root",
+      "metadata_anchor_id"
     ],
     "protocol_context": [
       {
