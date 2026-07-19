@@ -1,0 +1,13 @@
+aiosqlite==0.21.0
+chia-blockchain==2.7.2
+# Chia 2.7.2 requires this exact release. It is yanked upstream for
+# thread-safety concerns, but no compatible non-yanked build exists.
+# Solslot protocol tooling is single-process; keep this visible and pinned.
+zstd @ https://files.pythonhosted.org/packages/11/c4/db4807d6a68b4628c74fd379de7e3c67ec34f19a2a80ac246b3837cde6cb/zstd-1.5.7.3-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.manylinux_2_28_x86_64.whl
+eth-keys==0.7.0
+pip-audit==2.9.0
+pycryptodome==3.23.0
+# chia-puzzles-py 0.20.3 requires pytest <9. PYSEC-2026-1845 has no
+# compatible fixed release; protocol CI runs only trusted repository tests.
+pytest==8.4.2
+pytest-asyncio==1.3.0
