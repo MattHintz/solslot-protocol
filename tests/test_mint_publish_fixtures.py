@@ -188,6 +188,8 @@ def test_fixture_inputs_keys() -> None:
         "protocol_did_puzhash",
         "protocol_did_inner_puzhash",
         "governance_singleton_struct_hex",
+        "pool_singleton_launcher_id",
+        "pool_singleton_launcher_puzzle_hash",
         "p2_pool_mod_hash",
         "p2_vault_mod_hash",
         "property_registry_puzzle_hash",
@@ -261,16 +263,16 @@ def test_fixture_matches_pinned_golden_vector() -> None:
     expected = fix["expected"]
     # Pinned in tests/test_mint_publish_driver.py::TestBuildMintPublishArtifacts.
     assert expected["smart_deed_inner_puzhash"] == (
-        "0xd775fb9d532798e7bb6b34dc063bc6654ef424311dafbf9b134d90897c86802d"
+        "0x3824b62bf43f9b28c048c37b8e4ad639e429aaa093f03c368aa0271160e76312"
     )
     assert expected["eve_inner_puzhash"] == (
-        "0xe0cbaaf433b56b7fc54a339b6a0b58b4b3ecb60bffd4ee956a7bb80442380b3c"
+        "0x67261cfa75e56266d1f2467e0f1514a90e1f1f3b41df1b475c85dba28c185ac0"
     )
     assert expected["deed_full_puzhash"] == (
-        "0x31b8d068651f77b3d9fbb06633c0680609d2801df952247d33f15e57cc552eac"
+        "0x33e9253219cc245d805a017c1cbcbedbe58522c30091b9c3737a28c8292164e2"
     )
     assert expected["proposal_hash"] == (
-        "0xedf064e987a400b9b8f399702aa7ccb786b4f7721df58102f3d3e8e24e5f0019"
+        "0x07a29ec70d2092e7a713e18a5534ee10365e583c66ec893d0d1f77128dd0bb8e"
     )
     assert expected["deed_launcher_id"] == (
         "0x1310b78bf387ea58bb9365e261ff099a6971fd2ca5cc98e750b1d07e92e29b1d"

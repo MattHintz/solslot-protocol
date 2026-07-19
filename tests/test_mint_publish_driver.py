@@ -104,6 +104,8 @@ GOVERNANCE_LAUNCHER_ID = _b(0xC2)
 GOVERNANCE_SINGLETON_STRUCT = Program.to(
     (SINGLETON_MOD_HASH, (GOVERNANCE_LAUNCHER_ID, SINGLETON_LAUNCHER_HASH))
 )
+POOL_SINGLETON_LAUNCHER_ID = _b(0xC3)
+POOL_SINGLETON_LAUNCHER_PUZZLE_HASH = SINGLETON_LAUNCHER_HASH
 
 PAR_VALUE = 250_000_000_000  # 250 XCH (mojos)
 ASSET_CLASS = 1
@@ -133,6 +135,8 @@ def _default_kwargs() -> dict:
         "protocol_did_puzhash": PROTOCOL_DID_PUZHASH,
         "protocol_did_inner_puzhash": PROTOCOL_DID_INNER_PUZHASH,
         "governance_singleton_struct": GOVERNANCE_SINGLETON_STRUCT,
+        "pool_singleton_launcher_id": POOL_SINGLETON_LAUNCHER_ID,
+        "pool_singleton_launcher_puzzle_hash": POOL_SINGLETON_LAUNCHER_PUZZLE_HASH,
         "p2_pool_mod_hash": P2_POOL_MOD_HASH,
         "p2_vault_mod_hash": P2_VAULT_MOD_HASH,
         "property_registry_puzzle_hash": PROPERTY_REGISTRY_PUZZLE_HASH,
@@ -248,6 +252,8 @@ class TestSmartDeedInner:
             "jurisdiction": JURISDICTION,
             "royalty_puzhash": ROYALTY_PUZHASH,
             "royalty_bps": ROYALTY_BPS,
+            "pool_singleton_launcher_id": POOL_SINGLETON_LAUNCHER_ID,
+            "pool_singleton_launcher_puzzle_hash": POOL_SINGLETON_LAUNCHER_PUZZLE_HASH,
             "p2_pool_mod_hash": P2_POOL_MOD_HASH,
             "p2_vault_mod_hash": P2_VAULT_MOD_HASH,
         }
@@ -275,6 +281,12 @@ class TestSmartDeedInner:
             ("royalty_puzhash", b"\x00" * 16, "must be 32 bytes"),
             ("royalty_bps", -1, r"must be in \[0, 10000\]"),
             ("royalty_bps", 10_001, r"must be in \[0, 10000\]"),
+            ("pool_singleton_launcher_id", b"\x00" * 16, "must be 32 bytes"),
+            (
+                "pool_singleton_launcher_puzzle_hash",
+                b"\x00" * 16,
+                "must be 32 bytes",
+            ),
             ("p2_pool_mod_hash", b"\x00" * 16, "must be 32 bytes"),
             ("p2_vault_mod_hash", b"\x00" * 16, "must be 32 bytes"),
         ],
@@ -740,6 +752,12 @@ class TestBuildMintPublishArtifacts:
             ("deed_launcher_parent_coin_name", b"\xaa" * 16, "must be 32 bytes"),
             ("proposal_launcher_parent_coin_name", b"\xaa" * 16, "must be 32 bytes"),
             ("protocol_did_puzhash", b"\xaa" * 16, "must be 32 bytes"),
+            ("pool_singleton_launcher_id", b"\xaa" * 16, "must be 32 bytes"),
+            (
+                "pool_singleton_launcher_puzzle_hash",
+                b"\xaa" * 16,
+                "must be 32 bytes",
+            ),
             ("property_registry_puzzle_hash", b"\xaa" * 16, "must be 32 bytes"),
         ],
     )
@@ -791,19 +809,19 @@ class TestBuildMintPublishArtifacts:
         # current observed value in the assertion diff, copy the new
         # hex into the slot, and bump the freeze comment below.
         #
-        # Refrozen 2026-07-12 for the Solslot-only namespace and 0x53 prefix.
+        # Refrozen 2026-07-18 for PA13 pool identity binding in SmartDeed curry.
         pinned = {
             "smart_deed_inner_puzhash": (
-                "d775fb9d532798e7bb6b34dc063bc6654ef424311dafbf9b134d90897c86802d"
+                "dbadecca7eb32bc914c532a001058b3f82c205b6740883926c0ae3e471e74bf7"
             ),
             "eve_inner_puzhash": (
-                "3ddf3fbfa3ed338db91d52ab8f31f155302f615f3d11618deee9b35d32225b7b"
+                "ed1a797a1c7c0e709538aaf7245ed8fe7fa1f4919e07bcd8d5b9e004a53da6da"
             ),
             "deed_full_puzhash": (
-                "31b8d068651f77b3d9fbb06633c0680609d2801df952247d33f15e57cc552eac"
+                "e20e153e294df3e2f4d81d7f924aa162ea52e97e992b90c8531a9dca5aed32d3"
             ),
             "proposal_hash": (
-                "edf064e987a400b9b8f399702aa7ccb786b4f7721df58102f3d3e8e24e5f0019"
+                "b50ab4c0d8c51edca7523d3090aa55ba993a598eff810e1e94cb4d05a81c3896"
             ),
             "deed_launcher_id": (
                 "1310b78bf387ea58bb9365e261ff099a6971fd2ca5cc98e750b1d07e92e29b1d"
@@ -890,6 +908,8 @@ class TestArtifactsCrossDriver:
             jurisdiction=JURISDICTION,
             royalty_puzhash=ROYALTY_PUZHASH,
             royalty_bps=ROYALTY_BPS,
+            pool_singleton_launcher_id=POOL_SINGLETON_LAUNCHER_ID,
+            pool_singleton_launcher_puzzle_hash=POOL_SINGLETON_LAUNCHER_PUZZLE_HASH,
             p2_pool_mod_hash=P2_POOL_MOD_HASH,
             p2_vault_mod_hash=P2_VAULT_MOD_HASH,
         )

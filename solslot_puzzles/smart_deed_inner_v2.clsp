@@ -19,6 +19,8 @@
     ROYALTY_PUZHASH
     ROYALTY_BPS
     POOL_SINGLETON_MOD_HASH
+    POOL_SINGLETON_LAUNCHER_ID
+    POOL_SINGLETON_LAUNCHER_PUZZLE_HASH
     P2_POOL_MOD_HASH
     P2_VAULT_MOD_HASH
     ;; --- solution ---
@@ -71,14 +73,13 @@
   ;;   singleton.curry(deed_struct, p2_pool_inner_hash)
   ;; This enforces pool-level containment: deposited deeds never leak to arbitrary
   ;; addresses, mirroring the spend_pool_redeem containment pattern via p2_vault.
-  ;; params = (pool_launcher_id pool_inner_puzhash launcher_puzzle_hash)
-  (defun spend_pool_deposit (SINGLETON_STRUCT POOL_SINGLETON_MOD_HASH P2_POOL_MOD_HASH PAR_VALUE ASSET_CLASS PROPERTY_ID COLLECTION_ID_CANON SHARE_PPM
+  ;; params = (pool_inner_puzhash)
+  (defun spend_pool_deposit (SINGLETON_STRUCT POOL_SINGLETON_MOD_HASH POOL_SINGLETON_LAUNCHER_ID POOL_SINGLETON_LAUNCHER_PUZZLE_HASH
+                             P2_POOL_MOD_HASH PAR_VALUE ASSET_CLASS PROPERTY_ID COLLECTION_ID_CANON SHARE_PPM
                              my_id my_amount my_inner_puzzlehash
-                             pool_launcher_id pool_inner_puzhash launcher_puzzle_hash)
+                             pool_inner_puzhash)
     (assert
-      (is-size-b32 pool_launcher_id)
       (is-size-b32 pool_inner_puzhash)
-      (is-size-b32 launcher_puzzle_hash)
       (c
         ;; Destination is the computed p2_pool inner puzhash (pre-morph).
         ;; p2_pool = curry(P2_POOL_MOD_HASH, POOL_SINGLETON_MOD_HASH, pool_launcher_id, launcher_puzzle_hash)
@@ -86,8 +87,8 @@
           (curry_hashes P2_POOL_MOD_HASH
             (sha256 1 P2_POOL_MOD_HASH)
             (sha256 1 POOL_SINGLETON_MOD_HASH)
-            (sha256 1 pool_launcher_id)
-            (sha256 1 launcher_puzzle_hash)
+            (sha256 1 POOL_SINGLETON_LAUNCHER_ID)
+            (sha256 1 POOL_SINGLETON_LAUNCHER_PUZZLE_HASH)
             (sha256 1
               (deed-commitment
                 SINGLETON_STRUCT PAR_VALUE ASSET_CLASS PROPERTY_ID COLLECTION_ID_CANON SHARE_PPM)))
@@ -107,7 +108,7 @@
             (list RECEIVE_MESSAGE 0x10
               (concat PROTOCOL_PREFIX (sha256tree (list POOL_SPEND_DEPOSIT my_id PAR_VALUE)))
               (calculate_full_puzzle_hash
-                (c POOL_SINGLETON_MOD_HASH (c pool_launcher_id launcher_puzzle_hash))
+                (c POOL_SINGLETON_MOD_HASH (c POOL_SINGLETON_LAUNCHER_ID POOL_SINGLETON_LAUNCHER_PUZZLE_HASH))
                 pool_inner_puzhash))
             (base_conditions SINGLETON_STRUCT my_id my_amount my_inner_puzzlehash)
           )
@@ -119,15 +120,13 @@
   ;; SPEND CASE 'r' — POOL REDEEM (pool -> vault)
   ;; Deed can ONLY go to a valid p2_vault escrow — computed from P2_VAULT_MOD_HASH.
   ;; This enforces vault-level containment: deeds never leak to arbitrary addresses.
-  ;; params = (pool_launcher_id pool_inner_puzhash launcher_puzzle_hash vault_launcher_id)
-  (defun spend_pool_redeem (SINGLETON_STRUCT POOL_SINGLETON_MOD_HASH P2_VAULT_MOD_HASH PAR_VALUE COLLECTION_ID_CANON SHARE_PPM
+  ;; params = (pool_inner_puzhash vault_launcher_id)
+  (defun spend_pool_redeem (SINGLETON_STRUCT POOL_SINGLETON_MOD_HASH POOL_SINGLETON_LAUNCHER_ID POOL_SINGLETON_LAUNCHER_PUZZLE_HASH
+                            P2_VAULT_MOD_HASH PAR_VALUE COLLECTION_ID_CANON SHARE_PPM
                             my_id my_amount my_inner_puzzlehash
-                            pool_launcher_id pool_inner_puzhash launcher_puzzle_hash
-                            vault_launcher_id)
+                            pool_inner_puzhash vault_launcher_id)
     (assert
-      (is-size-b32 pool_launcher_id)
       (is-size-b32 pool_inner_puzhash)
-      (is-size-b32 launcher_puzzle_hash)
       (is-size-b32 vault_launcher_id)
       (c
         ;; Destination is computed p2_vault — NOT a free parameter.
@@ -137,7 +136,7 @@
           (curry_hashes P2_VAULT_MOD_HASH
             (sha256 1 POOL_SINGLETON_MOD_HASH)
             (sha256 1 vault_launcher_id)
-            (sha256 1 launcher_puzzle_hash))
+            (sha256 1 POOL_SINGLETON_LAUNCHER_PUZZLE_HASH))
           my_amount)
         (c
           (list CREATE_COIN_ANNOUNCEMENT
@@ -149,7 +148,7 @@
                   (curry_hashes P2_VAULT_MOD_HASH
                     (sha256 1 POOL_SINGLETON_MOD_HASH)
                     (sha256 1 vault_launcher_id)
-                    (sha256 1 launcher_puzzle_hash))))))
+                    (sha256 1 POOL_SINGLETON_LAUNCHER_PUZZLE_HASH))))))
           (c
             ;; Base pool acknowledgement: the pool release message remains keyed
             ;; by the deed id and destination p2_vault hash.  V2 pool spends
@@ -159,9 +158,9 @@
                 (curry_hashes P2_VAULT_MOD_HASH
                   (sha256 1 POOL_SINGLETON_MOD_HASH)
                   (sha256 1 vault_launcher_id)
-                  (sha256 1 launcher_puzzle_hash)))))
+                  (sha256 1 POOL_SINGLETON_LAUNCHER_PUZZLE_HASH)))))
               (calculate_full_puzzle_hash
-                (c POOL_SINGLETON_MOD_HASH (c pool_launcher_id launcher_puzzle_hash))
+                (c POOL_SINGLETON_MOD_HASH (c POOL_SINGLETON_LAUNCHER_ID POOL_SINGLETON_LAUNCHER_PUZZLE_HASH))
                 pool_inner_puzhash))
             (base_conditions SINGLETON_STRUCT my_id my_amount my_inner_puzzlehash)
           )
@@ -178,18 +177,22 @@
     (is-size-b32 my_inner_puzzlehash)
     (is-size-b32 PROPERTY_ID)
     (is-size-b32 COLLECTION_ID_CANON)
+    (is-size-b32 POOL_SINGLETON_LAUNCHER_ID)
+    (is-size-b32 POOL_SINGLETON_LAUNCHER_PUZZLE_HASH)
     (is-uint64 my_amount)
     (is-uint64 SHARE_PPM)
     (> SHARE_PPM 0)
     (gte SHARE_PPM_DENOMINATOR SHARE_PPM)
     (if (= spend_case DEED_SPEND_POOL_DEPOSIT)
-      (spend_pool_deposit SINGLETON_STRUCT POOL_SINGLETON_MOD_HASH P2_POOL_MOD_HASH PAR_VALUE ASSET_CLASS PROPERTY_ID COLLECTION_ID_CANON SHARE_PPM
+      (spend_pool_deposit SINGLETON_STRUCT POOL_SINGLETON_MOD_HASH POOL_SINGLETON_LAUNCHER_ID POOL_SINGLETON_LAUNCHER_PUZZLE_HASH
+                          P2_POOL_MOD_HASH PAR_VALUE ASSET_CLASS PROPERTY_ID COLLECTION_ID_CANON SHARE_PPM
                           my_id my_amount my_inner_puzzlehash
-                          (f params) (f (r params)) (f (r (r params))))
+                          (f params))
       (if (= spend_case DEED_SPEND_POOL_REDEEM)
-        (spend_pool_redeem SINGLETON_STRUCT POOL_SINGLETON_MOD_HASH P2_VAULT_MOD_HASH PAR_VALUE COLLECTION_ID_CANON SHARE_PPM
+        (spend_pool_redeem SINGLETON_STRUCT POOL_SINGLETON_MOD_HASH POOL_SINGLETON_LAUNCHER_ID POOL_SINGLETON_LAUNCHER_PUZZLE_HASH
+                           P2_VAULT_MOD_HASH PAR_VALUE COLLECTION_ID_CANON SHARE_PPM
                            my_id my_amount my_inner_puzzlehash
-                           (f params) (f (r params)) (f (r (r params))) (f (r (r (r params)))))
+                           (f params) (f (r params)))
         (x)  ;; Invalid spend case — FAIL. No free transfer allowed.
       )
     )

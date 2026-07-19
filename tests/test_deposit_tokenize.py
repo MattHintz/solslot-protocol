@@ -151,6 +151,8 @@ def curry_deed() -> Program:
         ROYALTY_PUZHASH,
         ROYALTY_BPS,
         SINGLETON_MOD_HASH,  # POOL_SINGLETON_MOD_HASH = same mod
+        POOL_LAUNCHER_ID,
+        LAUNCHER_PUZZLE_HASH,
         P2_POOL_MOD_HASH,
         P2_VAULT_MOD_HASH,
     )
@@ -240,7 +242,7 @@ class TestPoolDeedMessageMatch:
         deed_sol = Program.to([
             deed_id, deed_inner.get_tree_hash(), 1,
             DEED_SPEND_POOL_DEPOSIT,
-            [POOL_LAUNCHER_ID, pool_inner_puzhash, LAUNCHER_PUZZLE_HASH],
+            [pool_inner_puzhash],
         ])
         deed_conditions = deed_inner.run(deed_sol).as_python()
 
@@ -267,7 +269,7 @@ class TestPoolDeedMessageMatch:
         deed_sol = Program.to([
             deed_id, deed_inner.get_tree_hash(), 1,
             DEED_SPEND_POOL_DEPOSIT,
-            [POOL_LAUNCHER_ID, pool_inner_puzhash, LAUNCHER_PUZZLE_HASH],
+            [pool_inner_puzhash],
         ])
         deed_conditions = deed_inner.run(deed_sol).as_python()
 
@@ -275,17 +277,12 @@ class TestPoolDeedMessageMatch:
         deed_recv = extract_condition(deed_conditions, 67)
         expected_sender_ph = bytes32(deed_recv[3])
 
-        # The deed should expect messages from the pool singleton's full puzzle hash
-        # (singleton_mod_hash, (pool_launcher_id, launcher_puzzle_hash)) + pool_inner_puzhash
-        # We compute it the same way the deed does: curry_hashes
-        computed_pool_full_ph = Program.to(SINGLETON_MOD_HASH).curry(
-            POOL_SINGLETON_STRUCT, pool_inner
-        ).get_tree_hash()
-
-        # Note: the deed uses calculate_full_puzzle_hash which wraps with singleton top layer.
-        # We just verify the deed produced a 32-byte puzzle hash and the mode is 0x10.
+        # The deed should expect messages from the sanctioned pool singleton's
+        # full puzzle hash, not from a solution-chosen pool launcher.
+        computed_pool_full_ph = pool_full_puzzle_hash(pool_inner)
         assert len(expected_sender_ph) == 32
         assert deed_recv[1] == bytes([0x10])  # mode: sender commits puzzle_hash
+        assert expected_sender_ph == computed_pool_full_ph
 
 
 class TestPoolTokenAnnouncementMatch:
@@ -481,7 +478,7 @@ class TestFullDepositTokenizeRoundTrip:
         deed_sol = Program.to([
             deed_id, deed_inner_puzhash, 1,
             DEED_SPEND_POOL_DEPOSIT,
-            [POOL_LAUNCHER_ID, pool_inner_puzhash, LAUNCHER_PUZZLE_HASH],
+            [pool_inner_puzhash],
         ])
         deed_conds = deed_inner.run(deed_sol).as_python()
 

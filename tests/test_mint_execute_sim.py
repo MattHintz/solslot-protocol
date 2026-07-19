@@ -103,6 +103,7 @@ async def test_complete_mint_execute_bundle_passes_consensus() -> None:
         collection_id = bytes32(b"\xc1" * 32)
         owner_member_hash = bytes32(b"\xa1" * 32)
         gov_member_hash = bytes32(b"\xa2" * 32)
+        pool_launcher_id = bytes32(b"\xb4" * 32)
         artifacts = build_mint_publish_artifacts(
             property_id_canon=property_id,
             collection_id_canon=collection_id,
@@ -121,6 +122,8 @@ async def test_complete_mint_execute_bundle_passes_consensus() -> None:
             protocol_did_puzhash=did_full_hash,
             protocol_did_inner_puzhash=bytes32(did_inner.get_tree_hash()),
             governance_singleton_struct=tracker_struct,
+            pool_singleton_launcher_id=pool_launcher_id,
+            pool_singleton_launcher_puzzle_hash=SINGLETON_LAUNCHER_HASH,
             p2_pool_mod_hash=bytes32(load_puzzle("p2_pool_v2.clsp").get_tree_hash()),
             p2_vault_mod_hash=bytes32(load_puzzle("p2_vault.clsp").get_tree_hash()),
             property_registry_puzzle_hash=registry_full_hash,
@@ -129,7 +132,7 @@ async def test_complete_mint_execute_bundle_passes_consensus() -> None:
         pool_struct = Program.to(
             (
                 SINGLETON_MOD_HASH,
-                (bytes32(b"\xb4" * 32), SINGLETON_LAUNCHER_HASH),
+                (pool_launcher_id, SINGLETON_LAUNCHER_HASH),
             )
         )
         tracker_inner = proposal_tracker_inner_puzzle(

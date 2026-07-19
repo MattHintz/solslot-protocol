@@ -46,6 +46,12 @@
         "kind": "bytes32"
       },
       {
+        "portal_key": "poolLauncherId",
+        "api_setting": "pool_launcher_id",
+        "api_env": "SOLSLOT_POOL_LAUNCHER_ID",
+        "kind": "bytes32"
+      },
+      {
         "portal_key": "p2PoolModHash",
         "api_setting": "p2_pool_mod_hash",
         "api_env": "SOLSLOT_P2_POOL_MOD_HASH",

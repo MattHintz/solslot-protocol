@@ -222,6 +222,8 @@ def make_smart_deed_inner(
     jurisdiction: bytes,
     royalty_puzhash: bytes32,
     royalty_bps: int,
+    pool_singleton_launcher_id: bytes32,
+    pool_singleton_launcher_puzzle_hash: bytes32,
     p2_pool_mod_hash: bytes32,
     p2_vault_mod_hash: bytes32,
 ) -> Program:
@@ -233,11 +235,15 @@ def make_smart_deed_inner(
         SINGLETON_STRUCT, PROTOCOL_DID_PUZHASH, PAR_VALUE,
         ASSET_CLASS, PROPERTY_ID, COLLECTION_ID_CANON, SHARE_PPM,
         JURISDICTION, ROYALTY_PUZHASH, ROYALTY_BPS,
-        POOL_SINGLETON_MOD_HASH, P2_POOL_MOD_HASH, P2_VAULT_MOD_HASH
+        POOL_SINGLETON_MOD_HASH, POOL_SINGLETON_LAUNCHER_ID,
+        POOL_SINGLETON_LAUNCHER_PUZZLE_HASH, P2_POOL_MOD_HASH,
+        P2_VAULT_MOD_HASH
 
     The puzzle parameter named ``POOL_SINGLETON_MOD_HASH`` is the
     chia singleton top-layer mod hash (used in the deed's
     p2_pool-destination compute), **not** any solslot pool mod.
+    The pool launcher fields bind deposit/redeem authorization to the
+    sanctioned pool singleton lineage instead of solution-supplied identity.
     """
     if len(protocol_did_puzhash) != 32:
         raise ValueError(
@@ -267,6 +273,16 @@ def make_smart_deed_inner(
         raise ValueError(
             f"royalty_bps must be in [0, 10000], got {royalty_bps}"
         )
+    if len(pool_singleton_launcher_id) != 32:
+        raise ValueError(
+            "pool_singleton_launcher_id must be 32 bytes, "
+            f"got {len(pool_singleton_launcher_id)}"
+        )
+    if len(pool_singleton_launcher_puzzle_hash) != 32:
+        raise ValueError(
+            "pool_singleton_launcher_puzzle_hash must be 32 bytes, "
+            f"got {len(pool_singleton_launcher_puzzle_hash)}"
+        )
     if len(p2_pool_mod_hash) != 32:
         raise ValueError(
             f"p2_pool_mod_hash must be 32 bytes, got {len(p2_pool_mod_hash)}"
@@ -293,6 +309,8 @@ def make_smart_deed_inner(
         royalty_puzhash,
         royalty_bps,
         SINGLETON_MOD_HASH,
+        pool_singleton_launcher_id,
+        pool_singleton_launcher_puzzle_hash,
         p2_pool_mod_hash,
         p2_vault_mod_hash,
     )
@@ -564,6 +582,8 @@ def build_mint_publish_artifacts(
     protocol_did_puzhash: bytes32,
     protocol_did_inner_puzhash: bytes32,
     governance_singleton_struct: Program,
+    pool_singleton_launcher_id: bytes32,
+    pool_singleton_launcher_puzzle_hash: bytes32,
     p2_pool_mod_hash: bytes32,
     p2_vault_mod_hash: bytes32,
     property_registry_puzzle_hash: bytes32,
@@ -591,6 +611,11 @@ def build_mint_publish_artifacts(
         (proposal_launcher_parent_coin_name, "proposal_launcher_parent_coin_name"),
         (protocol_did_puzhash, "protocol_did_puzhash"),
         (protocol_did_inner_puzhash, "protocol_did_inner_puzhash"),
+        (pool_singleton_launcher_id, "pool_singleton_launcher_id"),
+        (
+            pool_singleton_launcher_puzzle_hash,
+            "pool_singleton_launcher_puzzle_hash",
+        ),
         (property_registry_puzzle_hash, "property_registry_puzzle_hash"),
     ):
         if len(ph) != 32:
@@ -626,6 +651,8 @@ def build_mint_publish_artifacts(
         jurisdiction=jurisdiction,
         royalty_puzhash=royalty_puzhash,
         royalty_bps=royalty_bps,
+        pool_singleton_launcher_id=pool_singleton_launcher_id,
+        pool_singleton_launcher_puzzle_hash=pool_singleton_launcher_puzzle_hash,
         p2_pool_mod_hash=p2_pool_mod_hash,
         p2_vault_mod_hash=p2_vault_mod_hash,
     )

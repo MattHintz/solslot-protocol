@@ -231,6 +231,8 @@ def test_smart_deed_deposit_curries_immutable_commitment_into_escrow() -> None:
         bytes32(b"\x83" * 32),
         100,
         SINGLETON_MOD_HASH,
+        POOL_LAUNCHER_ID,
+        SINGLETON_LAUNCHER_HASH,
         P2_POOL_V2.get_tree_hash(),
         P2_VAULT_MOD_HASH,
     )
@@ -243,7 +245,7 @@ def test_smart_deed_deposit_curries_immutable_commitment_into_escrow() -> None:
                 smart_deed.get_tree_hash(),
                 1,
                 0x64,
-                [POOL_LAUNCHER_ID, pool_inner_hash, SINGLETON_LAUNCHER_HASH],
+                [pool_inner_hash],
             ]
         )
     ).as_python()
