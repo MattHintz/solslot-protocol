@@ -60,7 +60,7 @@ def test_mod_hash_is_a_known_constant() -> None:
     # this catches accidental Chialisp puzzle changes (which would
     # change the bytecode and thus the mod hash).
     expected_mod_hash = (
-        "0x2a43121d71655697b5c37f6cbd00beafa0e9a1145933aabc2fbc765ae7edeec4"
+        "0x9842657d7ecb74760e5cce485d2ea4e22afb24b213e22279f272b932e28985d2"
     )
     assert fixture["constants"]["mod_hash"] == expected_mod_hash, (
         f"admin_authority_v2_inner.clsp mod hash drifted!\n"

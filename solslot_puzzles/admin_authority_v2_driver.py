@@ -345,6 +345,40 @@ def compute_roster_update_binding_hash(
     )
 
 
+def compute_key_op_binding_hash(
+    *,
+    admin_idx: int,
+    op_kind: int,
+    member_hash: bytes32,
+    activates_at: int,
+) -> bytes32:
+    if admin_idx < 0:
+        raise ValueError("admin_idx must be non-negative")
+    if op_kind not in (OP_KIND_ADD, OP_KIND_REMOVE):
+        raise ValueError("op_kind must be OP_KIND_ADD or OP_KIND_REMOVE")
+    if len(member_hash) != 32:
+        raise ValueError("member_hash must be 32 bytes")
+    if activates_at < 0:
+        raise ValueError("activates_at must be non-negative")
+    return bytes32(
+        Program.to([admin_idx, op_kind, member_hash, activates_at]).get_tree_hash()
+    )
+
+
+def compute_key_remove_quorum_binding_hash(
+    *,
+    admin_idx: int,
+    removed_member_hash: bytes32,
+) -> bytes32:
+    if admin_idx < 0:
+        raise ValueError("admin_idx must be non-negative")
+    if len(removed_member_hash) != 32:
+        raise ValueError("removed_member_hash must be 32 bytes")
+    return bytes32(
+        Program.to([admin_idx, OP_KIND_REMOVE, removed_member_hash]).get_tree_hash()
+    )
+
+
 def admin_supermajority_threshold(admin_count: int) -> int:
     if admin_count < 1:
         raise ValueError(f"admin_count must be >= 1, got {admin_count}")
@@ -997,6 +1031,9 @@ def build_key_remove_emergency_solution(
         ACTIVATE time (tag 0x03 with op_kind=OP_KIND_REMOVE).
       - A new pending REMOVE op appended with
         activates_at = current_block_height + RECOVERY_TIMEOUT_BLOCKS.
+
+    The on-chain shim prepends the pending REMOVE binding hash to
+    ``approving_member_solution`` before running the member puzzle.
     """
     return Program.to(
         [
@@ -1034,9 +1071,11 @@ def build_key_remove_quorum_solution(
 
     Args:
         approving_pairs: list of (member_reveal, member_solution)
-            cons-pairs. Must contain at least m_within DISTINCT members
-            of the affected admin's leaves; duplicates are rejected by
-            the on-chain aggregator.
+            cons-pairs. ``member_solution`` is the solution tail after the
+            immediate-remove binding hash; the on-chain aggregator prepends
+            that binding before running each member. Must contain at least
+            m_within DISTINCT members of the affected admin's leaves;
+            duplicates are rejected by the on-chain aggregator.
     """
     # Construct cons-pairs as Programs. Each pair is (reveal . solution),
     # which Program.to((reveal, solution)) builds correctly.
@@ -1081,6 +1120,9 @@ def build_key_add_veto_solution(
         target_member_hash: the leaf whose pending ADD is being cancelled
             (must match what was stored at PROPOSE).
         activates_at: cooldown end height (must match stored pending op).
+
+    The on-chain shim prepends the ADD pending-op binding hash to
+    ``approving_member_solution`` before running the member puzzle.
     """
     return Program.to(
         [
@@ -1121,13 +1163,10 @@ def build_key_add_propose_solution(
     then appends a new pending ADD op with
     ``activates_at = current_block_height + COOLDOWN_BLOCKS``.
 
-    The signature-binding to the rotation intent is the off-chain
-    builder's responsibility: the ``approving_member_solution`` should
-    be constructed such that the member's signature targets exactly
-    ``sha256(admin_idx . OP_KIND_ADD . new_member_hash . activates_at)``.
-    For testing the puzzle's structural behaviour (not signature
-    cryptography), any solution that produces emittable conditions is
-    fine.
+    The on-chain shim prepends the ADD pending-op binding hash to
+    ``approving_member_solution`` before running the member puzzle. For a
+    BLS-style member, that prepended value becomes the emitted AGG_SIG_ME
+    message.
 
     Args:
         my_amount: singleton coin amount.
@@ -1139,7 +1178,7 @@ def build_key_add_propose_solution(
         admin_idx: which admin slot is gaining the leaf.
         approving_member_reveal: puzzle reveal of one leaf in admin's
             OneOfN whose tree hash is in that admin's leaves list.
-        approving_member_solution: solution to run against the member.
+        approving_member_solution: solution tail after the binding hash.
         new_member_hash: 32-byte tree hash of the member to be added.
         current_block_height: user-claimed block height; the puzzle
             binds confirmation to this value via ASSERT_HEIGHT_ABSOLUTE

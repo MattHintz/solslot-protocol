@@ -120,6 +120,10 @@ The `KEY_*` spend tags mutate keys inside an existing admin slot.
 They do not create new admin slots.
 They do not update `MIPS_ROOT_HASH`.
 They must not be used as the mechanism for voting in a new protocol admin.
+Every approving member puzzle is run with the key operation binding hash
+prepended to its solution, so BLS-style members sign the exact
+`(admin_idx, op_kind, member_hash, activates_at)` pending operation, or
+the exact immediate quorum-removal tuple.
 
 Brick 0.5 pins this with tests:
 

@@ -176,6 +176,18 @@
             new_authority_version))
   )
 
+  (defun-inline key-op-binding-hash
+      (admin_idx op_kind member_hash activates_at)
+    (sha256tree
+      (list admin_idx op_kind member_hash activates_at))
+  )
+
+  (defun-inline key-remove-quorum-binding-hash
+      (admin_idx removed_member_hash)
+    (sha256tree
+      (list admin_idx OP_KIND_REMOVE removed_member_hash))
+  )
+
   ;; Compute the puzzle hash of a v2 singleton inner curried with new state.
   ;; The immutable curried params (MAX_ADMINS, COOLDOWN_BLOCKS, etc.) are
   ;; folded in via their existing tree-hashes — they don't change across
@@ -443,15 +455,10 @@
   ;;      (typically AGG_SIG_ME / AGG_SIG_UNSAFE / SECP256K1_VERIFY) are
   ;;      passed through to consensus, which validates the signature(s).
   ;;
-  ;;      NOTE on signature binding: the C.2b shim does NOT introspect the
-  ;;      member's emitted conditions to verify the signed payload equals
-  ;;      sha256(admin_idx . OP_KIND_ADD . new_member_hash . activates_at).
-  ;;      That binding is constructed off-chain by the driver (C.3): the
-  ;;      member's solution is built such that its signature targets exactly
-  ;;      that hash, so a signature collected for one rotation cannot be
-  ;;      replayed for a different one. C.2d may add an on-chain binding
-  ;;      check; for now, off-chain construction discipline + the cooldown
-  ;;      window are the defence layers.
+  ;;      The shim prepends the canonical operation hash to the member
+  ;;      solution before running the member puzzle, matching the binding
+  ;;      pattern used by mint_proposal_inner_v2. For BLS-style members,
+  ;;      the first solution argument becomes the AGG_SIG_ME message.
   ;;
   ;;   6. Computes activates_at = current_block_height + COOLDOWN_BLOCKS.
   ;;   7. Appends a new pending-op tuple to the pending-ops list.
@@ -508,7 +515,8 @@
   ;; this proof set, so we can reject [X X Y] etc. as a quorum of 2.
   ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-  (defun aggregate-quorum-conditions (approving_pairs leaves seen_hashes acc)
+  (defun aggregate-quorum-conditions
+      (approving_pairs leaves binding_hash seen_hashes acc)
     (if approving_pairs
       (if (atom-in-list (sha256tree (f (f approving_pairs))) leaves)
         (if (atom-in-list (sha256tree (f (f approving_pairs))) seen_hashes)
@@ -519,9 +527,11 @@
           (aggregate-quorum-conditions
             (r approving_pairs)
             leaves
+            binding_hash
             (c (sha256tree (f (f approving_pairs))) seen_hashes)
             (merge-lists
-              (a (f (f approving_pairs)) (r (f approving_pairs)))
+              (a (f (f approving_pairs))
+                 (c binding_hash (r (f approving_pairs))))
               acc))
         )
         ;; Approving member's tree hash isn't a leaf of the OneOfN — reject.
@@ -580,7 +590,14 @@
       (merge-lists
         (propose-height-bindings current_block_height)
         (merge-lists
-          (a approving_member_reveal approving_member_solution)
+          (a approving_member_reveal
+             (c
+               (key-op-binding-hash
+                 admin_idx
+                 OP_KIND_ADD
+                 new_member_hash
+                 (+ current_block_height COOLDOWN_BLOCKS))
+               approving_member_solution))
           ;; emit-shim-conditions returns a list-of-conditions; we pass the
           ;; new state in directly. ADMINS_HASH and MIPS_ROOT_HASH are
           ;; unchanged at PROPOSE — only the pending-ops list grows.
@@ -805,14 +822,19 @@
         (sha256tree
           (list admin_idx OP_KIND_ADD target_member_hash activates_at)))
       ;; Build conditions:
-      ;;   1. The approving member's emitted conditions (signature checks
-      ;;      that consensus enforces). Same off-chain binding caveat as
-      ;;      PROPOSE — driver constructs the solution to bind signature
-      ;;      to (admin_idx, OP_KIND_ADD, target_member_hash, activates_at).
+      ;;   1. The approving member's emitted conditions. The shim prepends
+      ;;      the ADD pending-op binding so the signature is operation-bound.
       ;;   2. Shim conditions with admins unchanged + pending-ops minus
       ;;      the vetoed op.
       (merge-lists
-        (a approving_member_reveal approving_member_solution)
+        (a approving_member_reveal
+           (c
+             (key-op-binding-hash
+               admin_idx
+               OP_KIND_ADD
+               target_member_hash
+               activates_at)
+             approving_member_solution))
         (emit-shim-conditions
           MIPS_ROOT_HASH                  ; unchanged
           ADMINS_HASH                     ; unchanged — veto only touches pending
@@ -937,7 +959,14 @@
       (merge-lists
         (propose-height-bindings current_block_height)
         (merge-lists
-          (a approving_member_reveal approving_member_solution)
+          (a approving_member_reveal
+             (c
+               (key-op-binding-hash
+                 admin_idx
+                 OP_KIND_REMOVE
+                 removed_member_hash
+                 (+ current_block_height RECOVERY_TIMEOUT_BLOCKS))
+               approving_member_solution))
           (emit-shim-conditions
             MIPS_ROOT_HASH                  ; unchanged
             ADMINS_HASH                     ; unchanged — leaf removed at ACTIVATE
@@ -981,6 +1010,7 @@
       (aggregate-quorum-conditions
         approving_pairs
         (f (r (find-admin-by-idx current_admins_list admin_idx)))
+        (key-remove-quorum-binding-hash admin_idx removed_member_hash)
         ()
         ())
       ;; Quorum cardinality. The admin's m_within (third element of the
@@ -992,17 +1022,18 @@
         (f (aggregate-quorum-conditions
              approving_pairs
              (f (r (find-admin-by-idx current_admins_list admin_idx)))
+             (key-remove-quorum-binding-hash admin_idx removed_member_hash)
              ()
              ()))))
       ;; Build conditions:
-      ;;   1. The merged member-emitted conditions (each member's signature
-      ;;      check, enforced by consensus). Same off-chain binding caveat
-      ;;      as PROPOSE.
+      ;;   1. The merged member-emitted conditions. The shim prepends the
+      ;;      immediate removal binding so every signature is operation-bound.
       ;;   2. Shim conditions with the affected admin's leaves trimmed.
       (merge-lists
         (r (aggregate-quorum-conditions
              approving_pairs
              (f (r (find-admin-by-idx current_admins_list admin_idx)))
+             (key-remove-quorum-binding-hash admin_idx removed_member_hash)
              ()
              ()))
         (emit-shim-conditions

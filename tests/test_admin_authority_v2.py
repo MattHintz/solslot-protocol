@@ -54,6 +54,8 @@ from solslot_puzzles.admin_authority_v2_driver import (
     build_key_remove_quorum_solution,
     build_operational_solution,
     compute_admins_hash,
+    compute_key_op_binding_hash,
+    compute_key_remove_quorum_binding_hash,
     compute_pending_ops_hash,
     compute_roster_update_binding_hash,
     compute_state_hash,
@@ -145,6 +147,18 @@ def _first_agg_sig_me_condition(result: Program) -> tuple[bytes, bytes]:
             assert message is not None
             return pubkey, message
     raise AssertionError("No AGG_SIG_ME emitted")
+
+
+def _agg_sig_me_messages(result: Program) -> list[bytes]:
+    messages: list[bytes] = []
+    for cond in result.as_iter():
+        if int(cond.first().as_int()) == 50:
+            message = cond.rest().rest().first().atom
+            assert message is not None
+            messages.append(message)
+    if not messages:
+        raise AssertionError("No AGG_SIG_ME emitted")
+    return messages
 
 
 _BLS_MEMBER_FIXTURE: Program | None = None
@@ -1993,19 +2007,16 @@ class TestRealMemberPuzzleIntegration:
     def test_key_add_propose_with_real_bls_approver(self):
         """KEY_ADD_PROPOSE with a real BLS-style approving member. The
         AGG_SIG_ME condition the leaf emits should be passed through
-        with the ROTATION_INTENT_HASH as the message — proving the
-        signature-binding flow works end-to-end via the off-chain
-        constructor convention.
+        with the operation binding hash as the message.
         """
         bls_approver = _bls_member_fixture().curry(REAL_BLS_PUBKEY)
         approver_hash = bytes32(bls_approver.get_tree_hash())
-
-        # The off-chain rotation intent hash (signature target). The
-        # design says the driver should bind the leaf's signature to
-        # sha256(admin_idx || OP_KIND_ADD || new_member_hash || activates_at).
-        # For this test we use an arbitrary 32-byte sentinel as the
-        # intent hash; the real driver computes it deterministically.
-        rotation_intent = bytes32(b"\xAB" * 32)
+        expected_binding = compute_key_op_binding_hash(
+            admin_idx=0,
+            op_kind=OP_KIND_ADD,
+            member_hash=NEW_MEMBER_HASH,
+            activates_at=CURRENT_BLOCK_HEIGHT + DEFAULT_COOLDOWN_BLOCKS,
+        )
 
         admins = (
             AdminRecord(admin_idx=0, leaves=(approver_hash,), m_within=1),
@@ -2024,15 +2035,15 @@ class TestRealMemberPuzzleIntegration:
             current_pending_ops=(),
             admin_idx=0,
             approving_member_reveal=bls_approver,
-            approving_member_solution=Program.to([rotation_intent]),
+            approving_member_solution=Program.to([]),
             new_member_hash=NEW_MEMBER_HASH,
             current_block_height=CURRENT_BLOCK_HEIGHT,
         )
         result = inner.run(sol)
         conditions = list(result.as_iter())
 
-        # The approver's AGG_SIG_ME should be present with the rotation
-        # intent as the signed message.
+        # The approver's AGG_SIG_ME should be present with the on-chain
+        # operation binding as the signed message.
         agg_sig_me = None
         for cond in conditions:
             if int(cond.first().as_int()) == 50:
@@ -2040,9 +2051,95 @@ class TestRealMemberPuzzleIntegration:
                 break
         assert agg_sig_me is not None
         agg_message = agg_sig_me.rest().rest().first().atom
-        assert agg_message == rotation_intent, (
-            "Approver's signature should bind to the rotation intent"
+        assert agg_message == expected_binding, (
+            "Approver's signature should bind to the key-add operation"
         )
+
+    def test_key_add_propose_forces_member_to_sign_operation_binding(self):
+        bls_approver = _bls_member_fixture().curry(REAL_BLS_PUBKEY)
+        approver_hash = bytes32(bls_approver.get_tree_hash())
+        admins = (
+            AdminRecord(admin_idx=0, leaves=(approver_hash,), m_within=1),
+        )
+        current_height = CURRENT_BLOCK_HEIGHT
+        activates_at = current_height + DEFAULT_COOLDOWN_BLOCKS
+        expected_binding = compute_key_op_binding_hash(
+            admin_idx=0,
+            op_kind=OP_KIND_ADD,
+            member_hash=NEW_MEMBER_HASH,
+            activates_at=activates_at,
+        )
+        attacker_reused_binding = compute_key_op_binding_hash(
+            admin_idx=0,
+            op_kind=OP_KIND_ADD,
+            member_hash=bytes32(b"\xDD" * 32),
+            activates_at=activates_at,
+        )
+        inner = make_inner_puzzle(
+            mips_root_hash=bytes32(_trivial_mips_puzzle().get_tree_hash()),
+            admins_hash=compute_admins_hash(admins),
+            pending_ops_hash=EMPTY_LIST_HASH,
+            authority_version=INITIAL_AUTHORITY_VERSION,
+        )
+        sol = build_key_add_propose_solution(
+            my_amount=SINGLETON_AMOUNT,
+            new_authority_version=INITIAL_AUTHORITY_VERSION + 1,
+            current_admins=admins,
+            current_pending_ops=(),
+            admin_idx=0,
+            approving_member_reveal=bls_approver,
+            approving_member_solution=Program.to([attacker_reused_binding]),
+            new_member_hash=NEW_MEMBER_HASH,
+            current_block_height=current_height,
+        )
+        _, message = _first_agg_sig_me_condition(inner.run(sol))
+
+        assert message == expected_binding
+        assert message != attacker_reused_binding
+
+    def test_key_remove_quorum_forces_members_to_sign_removed_leaf_binding(self):
+        bls_member_a = _bls_member_fixture().curry(REAL_BLS_PUBKEY)
+        bls_member_b = _bls_member_fixture().curry(bytes(b"\x43" * 48))
+        leaf_a = bytes32(bls_member_a.get_tree_hash())
+        leaf_b = bytes32(bls_member_b.get_tree_hash())
+        legit_removed_hash = bytes32(b"\xAA" * 32)
+        attacker_removed_hash = bytes32(b"\xBB" * 32)
+        admins = (
+            AdminRecord(
+                admin_idx=0,
+                leaves=(leaf_a, leaf_b, legit_removed_hash, attacker_removed_hash),
+                m_within=2,
+            ),
+        )
+        legit_binding = compute_key_remove_quorum_binding_hash(
+            admin_idx=0,
+            removed_member_hash=legit_removed_hash,
+        )
+        expected_attack_binding = compute_key_remove_quorum_binding_hash(
+            admin_idx=0,
+            removed_member_hash=attacker_removed_hash,
+        )
+        inner = make_inner_puzzle(
+            mips_root_hash=bytes32(_trivial_mips_puzzle().get_tree_hash()),
+            admins_hash=compute_admins_hash(admins),
+            pending_ops_hash=EMPTY_LIST_HASH,
+            authority_version=INITIAL_AUTHORITY_VERSION,
+        )
+        sol = build_key_remove_quorum_solution(
+            my_amount=SINGLETON_AMOUNT,
+            new_authority_version=INITIAL_AUTHORITY_VERSION + 1,
+            current_admins=admins,
+            admin_idx=0,
+            removed_member_hash=attacker_removed_hash,
+            approving_pairs=(
+                (bls_member_a, Program.to([legit_binding])),
+                (bls_member_b, Program.to([legit_binding])),
+            ),
+        )
+        messages = _agg_sig_me_messages(inner.run(sol))
+
+        assert messages == [expected_attack_binding, expected_attack_binding]
+        assert legit_binding not in messages
 
     def test_admin_roster_update_forces_real_bls_mips_to_sign_binding_hash(self):
         bls_mips_reveal = _bls_member_fixture().curry(REAL_BLS_PUBKEY)

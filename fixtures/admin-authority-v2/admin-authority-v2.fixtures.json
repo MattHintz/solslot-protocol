@@ -1,6 +1,6 @@
 {
   "constants": {
-    "mod_hash": "0x2a43121d71655697b5c37f6cbd00beafa0e9a1145933aabc2fbc765ae7edeec4",
+    "mod_hash": "0x9842657d7ecb74760e5cce485d2ea4e22afb24b213e22279f272b932e28985d2",
     "empty_list_hash": "0x4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a",
     "default_max_admins": 25,
     "default_max_keys_per_admin": 10,
@@ -162,7 +162,7 @@
         "pending_ops_hash": "0x4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a",
         "authority_version": 1
       },
-      "expected": "0x02dbdbe58a680856d2bcc918b536ac7762bbd15189b605a42ca2b9afb34fd2ea"
+      "expected": "0xcdc58e020833f574854847471bf11b4b065c66461f1d40b52084f91d6428e5d6"
     },
     {
       "label": "custom-policy-with-pending-op",
@@ -177,7 +177,7 @@
         "recovery_timeout_blocks": 1000,
         "sgt_governance_puzzle_hash": "0x1111111111111111111111111111111111111111111111111111111111111111"
       },
-      "expected": "0x4d5cdbec394e40c3686954a5554157769b7c57cdd2c073cb012ac4e20a3a48bb"
+      "expected": "0x549399d0c4b498d92d95a79dec40b85316c85c5d9ceb60acdb925d8dade93248"
     }
   ],
   "roster_update_binding_hash": [
@@ -252,28 +252,28 @@
       "label": "default-fresh-launch",
       "input": {
         "parent_coin_id": "0x1111111111111111111111111111111111111111111111111111111111111111",
-        "eve_inner_puzzle_hash": "0x02dbdbe58a680856d2bcc918b536ac7762bbd15189b605a42ca2b9afb34fd2ea",
+        "eve_inner_puzzle_hash": "0xcdc58e020833f574854847471bf11b4b065c66461f1d40b52084f91d6428e5d6",
         "eve_amount": 1
       },
       "expected": {
         "launcher_id": "0x573d41c79e81a15e499d6ee1994c4ef939443f3d4eeee67f9132634ce2131c58",
-        "eve_full_puzzle_hash": "0x26cc66f7bdb83ce3a8a8e15f5262c02a81233e96e48d7297987fb45d2e1ef74f",
-        "launcher_announcement_message": "0xf240a5924da1a8f4b3b93199c59761a84b6573a861b01b339aa14b742af4b057",
-        "launcher_announcement_id": "0xf1dd29095a0ecacb7aa4424061db6ba6008b9488d2854fe70dc96c2658de66b9"
+        "eve_full_puzzle_hash": "0x92be802bb457979562ab57dd725043e24ca9ed0061b80d738b030e046cd8964e",
+        "launcher_announcement_message": "0x76a53fbce00e3f702c4443d29fe7127a029b8b68909378b9b1cfb02dca791abf",
+        "launcher_announcement_id": "0xa824dce021c3106dd57550abba38a3d1c2e9777e1ee5ee32b9021112000468d3"
       }
     },
     {
       "label": "different-funding-coin",
       "input": {
         "parent_coin_id": "0x2222222222222222222222222222222222222222222222222222222222222222",
-        "eve_inner_puzzle_hash": "0x02dbdbe58a680856d2bcc918b536ac7762bbd15189b605a42ca2b9afb34fd2ea",
+        "eve_inner_puzzle_hash": "0xcdc58e020833f574854847471bf11b4b065c66461f1d40b52084f91d6428e5d6",
         "eve_amount": 1
       },
       "expected": {
         "launcher_id": "0xe9fb9d0439f55099c232c41c179232c96a2fe58453ec0abc49caa723a384607f",
-        "eve_full_puzzle_hash": "0x9b712d2fb25f2f20185046c03d422ea523f37f2fe28262539edbdfe1a2022697",
-        "launcher_announcement_message": "0xcdc37b60e2215878d46b9529688c0b75092388f80b9a2a39ea842e9e9c0a62e7",
-        "launcher_announcement_id": "0xc7dfc2c96474b6bd779665474b9a71878d21c898606363d84bd0d84fe2560968"
+        "eve_full_puzzle_hash": "0xaea6c8b55652064882fd345d4df718fce2ef92b69a997f443acd9ace97ce6c12",
+        "launcher_announcement_message": "0x38aeda5b889c40cdc620c5db459d722c12b0046bea61be276a9d94d960a1f815",
+        "launcher_announcement_id": "0xd5abf963057d99521bc4a37c62bde8b81a056b6ac7827f5cc66a394b5c6531ae"
       }
     },
     {
@@ -294,14 +294,14 @@
       "label": "non-default-eve-amount",
       "input": {
         "parent_coin_id": "0x1111111111111111111111111111111111111111111111111111111111111111",
-        "eve_inner_puzzle_hash": "0x02dbdbe58a680856d2bcc918b536ac7762bbd15189b605a42ca2b9afb34fd2ea",
+        "eve_inner_puzzle_hash": "0xcdc58e020833f574854847471bf11b4b065c66461f1d40b52084f91d6428e5d6",
         "eve_amount": 3
       },
       "expected": {
         "launcher_id": "0x573d41c79e81a15e499d6ee1994c4ef939443f3d4eeee67f9132634ce2131c58",
-        "eve_full_puzzle_hash": "0x26cc66f7bdb83ce3a8a8e15f5262c02a81233e96e48d7297987fb45d2e1ef74f",
-        "launcher_announcement_message": "0xa0d4ee0f453d53a3dfa848ec826d12cbf3deafa5dd9ca96ed5eb6ba1c3b85966",
-        "launcher_announcement_id": "0xcfdec03c23abd242f0a367d439697c70d2c0960dcbd93e9a15c145dced6c70b2"
+        "eve_full_puzzle_hash": "0x92be802bb457979562ab57dd725043e24ca9ed0061b80d738b030e046cd8964e",
+        "launcher_announcement_message": "0xe5ad3f6e333fe0a09da42f2265a148f1fabce78c3e1a04601dbdc0412ccbdcfb",
+        "launcher_announcement_id": "0x8d07848cb2d1528797eb6351d36a0f2b3072a776acce436ed842d21738c670da"
       }
     }
   ]
