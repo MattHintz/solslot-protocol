@@ -363,10 +363,11 @@ def _build_publish(
     my_amount: int,
     path_tag: bytes,
 ) -> PublishSpendArtifacts:
-    if new_vault_version <= current.vault_version:
+    expected_vault_version = current.vault_version + 1
+    if new_vault_version != expected_vault_version:
         raise ValueError(
-            "new_vault_version must strictly exceed current.vault_version "
-            f"(got new={new_vault_version} current={current.vault_version})"
+            "new_vault_version must advance exactly one step "
+            f"(got new={new_vault_version} expected={expected_vault_version})"
         )
     if my_amount % 2 == 0:
         raise ValueError(

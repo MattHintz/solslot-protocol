@@ -64,7 +64,8 @@ PUZZLE_FILENAMES = (
     "mint_proposal_inner_v2.clsp",
     "zkpassport_bridge_message.clsp",
     # Vault upgrade — vault_version_registry singleton.  On-chain canonical vault
-    # version source: VAULT_INNER_MOD_HASH + CANONICAL_PARAMS_HASH + monotonic
+    # version source: VAULT_INNER_MOD_HASH + CANONICAL_PARAMS_HASH +
+    # exact-incrementing
     # VAULT_VERSION, with two publish paths (admin_authority_v2 params-only
     # fast-track / SGT-tracker routine).  See
     # research/SOLSLOT_VAULT_UPGRADE_DESIGN.md and the puzzle docstring.
@@ -75,7 +76,8 @@ PUZZLE_FILENAMES = (
 # Set to None to skip verification (development mode).
 # Generate with: python -c "from solslot_puzzles import compute_puzzles_checksum; print(compute_puzzles_checksum())"
 FROZEN_CHECKSUM: Optional[str] = (
-    # 2026-07-19 PA3 governance PROPOSE bill-tag whitelist +
+    # 2026-07-19 PA16 exact version increments for protocol_config and
+    # vault_version_registry + PA3 governance PROPOSE bill-tag whitelist +
     # 2026-07-18 PA17 live acquisition KYC pairing +
     # PA2 operation-bound admin member signatures + PA4 exact admin authority
     # version increments + PA6 settlement target binding + PA13 SmartDeed
@@ -93,13 +95,15 @@ FROZEN_CHECKSUM: Optional[str] = (
     #     operation hash before running each member puzzle;
     #   - admin authority V2 requires every spend to advance AUTHORITY_VERSION
     #     by exactly one step;
+    #   - protocol_config and vault_version_registry require exact one-step
+    #     version increments to prevent authority-signed self-bricks;
     #   - pool V3 with retired exits disabled and governance identity pinned;
     #   - pool V3 case-6 deed acquisition requires a canonical enrolled buyer
     #     vault authorization under the trusted zkPassport bridge policy;
     #   - Solslot V2 vault and credential domains;
     #   - five-spend governance/DID/registry/proposal/deed mint execution;
     #   - no retired contract implementations in the canonical package.
-    "15bd89d77d87572e97055d1ce2b58813acd5c61d49e48f7290a16b7cff597bf4"
+    "8a3255df571b40dc83841bf467645ae07d4feab5f13abe68f51089eb3b7dc883"
 )
 
 # ── Cache ──

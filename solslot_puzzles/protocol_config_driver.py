@@ -308,7 +308,7 @@ def build_update_spend(
 ) -> UpdateSpendArtifacts:
     """Construct the inner-puzzle solution + signing message for an update.
 
-    The puzzle on-chain enforces ``new_config_version > current.version``;
+    The puzzle on-chain enforces ``new_config_version == current.version + 1``;
     we replicate that check here so callers fail fast in Python rather
     than getting an opaque CLVM ``(x)`` panic at spend time.
 
@@ -320,8 +320,7 @@ def build_update_spend(
         new_gov_tracker_launcher_id: replacement governance tracker.
         new_network_id: replacement network id (typically only changes
             during a testnet → mainnet migration).
-        new_config_version: must be strictly greater than
-            ``current.config_version``.
+        new_config_version: must be exactly ``current.config_version + 1``.
         my_amount: singleton coin amount (must be odd; singleton
             convention).
 
@@ -331,12 +330,13 @@ def build_update_spend(
         hash, the AGG_SIG_ME message, and the public content_hash.
 
     Raises:
-        ValueError: on non-monotonic version or invalid lengths.
+        ValueError: on non-exact version bump or invalid lengths.
     """
-    if new_config_version <= current.config_version:
+    expected_config_version = current.config_version + 1
+    if new_config_version != expected_config_version:
         raise ValueError(
-            "new_config_version must strictly exceed current.config_version "
-            f"(got new={new_config_version} current={current.config_version})"
+            "new_config_version must advance exactly one step "
+            f"(got new={new_config_version} expected={expected_config_version})"
         )
     if my_amount % 2 == 0:
         raise ValueError(

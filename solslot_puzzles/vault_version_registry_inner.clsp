@@ -11,7 +11,7 @@
 ;;;                            module: the vault's executable CODE identity.
 ;;;   CANONICAL_PARAMS_HASH  — sha256tree of the canonical curried vault params
 ;;;                            (pool refs + zkpassport bridge policy hash).
-;;;   VAULT_VERSION          — uint64, STRICTLY increasing.  Replay guard.
+;;;   VAULT_VERSION          — uint64, exact-incrementing.  Replay guard.
 ;;;
 ;;; Authorization is delegated to live singletons — the registry holds NO key
 ;;; of its own and is never singly centralized by construction:
@@ -60,7 +60,7 @@
 ;;;                                 governance for routine).
 ;;;   new_vault_inner_mod_hash    — bytes32, next VAULT_INNER_MOD_HASH.
 ;;;   new_canonical_params_hash   — bytes32, next CANONICAL_PARAMS_HASH.
-;;;   new_vault_version           — uint64, must be > VAULT_VERSION.
+;;;   new_vault_version           — uint64, must equal VAULT_VERSION + 1.
 ;;;
 ;;; Output conditions on a valid publish:
 ;;;   ASSERT_PUZZLE_ANNOUNCEMENT <authorizer approval>
@@ -198,8 +198,8 @@
     (is-size-b32 VAULT_INNER_MOD_HASH)
     (is-size-b32 CANONICAL_PARAMS_HASH)
     (is-uint64 VAULT_VERSION)
-    ;; Replay/downgrade guard: version must STRICTLY increase (both tiers).
-    (> new_vault_version VAULT_VERSION)
+    ;; Replay/self-brick guard: version must advance exactly one step.
+    (= new_vault_version (+ VAULT_VERSION 1))
 
     (if (= spend_case SPEND_PARAMS_FASTTRACK)
       ;; ── Params-only fast-track ───────────────────────────────────────

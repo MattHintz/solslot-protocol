@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import hashlib
 
+import pytest
 from chia.types.blockchain_format.program import Program
 from chia.wallet.puzzles.singleton_top_layer_v1_1 import (
     SINGLETON_LAUNCHER_HASH,
@@ -193,17 +194,15 @@ def test_gov_execute_announcement_pairs_with_registry_routine_assert():
 
 def test_relayer_cannot_publish_a_different_version_than_ratified():
     """The committee ratified (NEW_CODE, NEW_PARAMS, NEW_VERSION).  A relayer who
-    tries to drive the registry to a DIFFERENT version produces an assertion id
-    the governance coin never announced — so the bundle cannot pair."""
-    gov_conds, gov_inner_ph, gov_full_ph = _run_gov_execute(_gov_execute_ready_inner())
-    ratified_msg = vault_version_approval_message(NEW_CODE, NEW_PARAMS, NEW_VERSION)
-    gov_announcement_id = bytes32(hashlib.sha256(gov_full_ph + ratified_msg).digest())
+    tries to drive the registry to a DIFFERENT version is rejected before the
+    registry can publish an assertion — so the bundle cannot pair."""
+    _, gov_inner_ph, _ = _run_gov_execute(_gov_execute_ready_inner())
 
     # Attacker drives the registry to version 3 (not what was voted).
-    tampered = _registry_routine_asserts(
-        gov_inner_ph=gov_inner_ph, code=NEW_CODE, params=NEW_PARAMS, version=3
-    )
-    assert tampered != [bytes(gov_announcement_id)]
+    with pytest.raises(ValueError, match="exactly one"):
+        _registry_routine_asserts(
+            gov_inner_ph=gov_inner_ph, code=NEW_CODE, params=NEW_PARAMS, version=3
+        )
 
 
 def test_routine_binds_to_governance_not_admin_authority():

@@ -316,7 +316,7 @@ class TestUpdateSpend:
 class TestReplayProtection:
     def test_python_rejects_version_downgrade(self):
         state = _make_state()
-        with pytest.raises(ValueError, match="strictly exceed"):
+        with pytest.raises(ValueError, match="exactly one"):
             build_update_spend(
                 current=state,
                 new_pool_launcher_id=NEW_POOL_LAUNCHER_ID,
@@ -335,7 +335,7 @@ class TestReplayProtection:
             network_id=NETWORK_ID_TESTNET11,
             config_version=10,
         )
-        with pytest.raises(ValueError, match="strictly exceed"):
+        with pytest.raises(ValueError, match="exactly one"):
             build_update_spend(
                 current=state,
                 new_pool_launcher_id=NEW_POOL_LAUNCHER_ID,
@@ -344,6 +344,19 @@ class TestReplayProtection:
                 new_config_version=5,
                 my_amount=SINGLETON_AMOUNT,
             )
+
+    def test_python_rejects_version_jump(self):
+        state = _make_state()
+        for bad_version in (CONFIG_VERSION + 2, (1 << 64) - 1):
+            with pytest.raises(ValueError, match="exactly one"):
+                build_update_spend(
+                    current=state,
+                    new_pool_launcher_id=NEW_POOL_LAUNCHER_ID,
+                    new_gov_tracker_launcher_id=NEW_GOV_TRACKER_LAUNCHER_ID,
+                    new_network_id=NETWORK_ID_TESTNET11,
+                    new_config_version=bad_version,
+                    my_amount=SINGLETON_AMOUNT,
+                )
 
     def test_clvm_rejects_version_downgrade(self):
         """If the Python guard is bypassed somehow (hand-rolled solution),
@@ -389,6 +402,27 @@ class TestReplayProtection:
         )
         with pytest.raises(ValueError):
             curried.run(sol)
+
+    def test_clvm_rejects_version_jump(self):
+        curried = make_inner_puzzle(
+            gov_pubkey=GOV_PUBKEY,
+            pool_launcher_id=POOL_LAUNCHER_ID,
+            gov_tracker_launcher_id=GOV_TRACKER_LAUNCHER_ID,
+            network_id=NETWORK_ID_TESTNET11,
+            config_version=CONFIG_VERSION,
+        )
+        for bad_version in (CONFIG_VERSION + 2, (1 << 64) - 1):
+            sol = Program.to(
+                [
+                    SINGLETON_AMOUNT,
+                    NEW_POOL_LAUNCHER_ID,
+                    NEW_GOV_TRACKER_LAUNCHER_ID,
+                    NETWORK_ID_TESTNET11,
+                    bad_version,
+                ]
+            )
+            with pytest.raises(ValueError):
+                curried.run(sol)
 
 
 # ── Input validation ────────────────────────────────────────────────────

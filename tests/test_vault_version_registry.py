@@ -323,7 +323,7 @@ class TestRoutine:
 class TestGuards:
     def test_driver_rejects_version_downgrade(self):
         state = _state(vault_version=10)
-        with pytest.raises(ValueError, match="strictly exceed"):
+        with pytest.raises(ValueError, match="exactly one"):
             build_fasttrack_spend(
                 current=state,
                 authorizer_inner_puzzle_hash=bytes32(
@@ -332,6 +332,19 @@ class TestGuards:
                 new_canonical_params_hash=NEW_CANONICAL_PARAMS_HASH,
                 new_vault_version=10,  # equal — must reject
             )
+
+    def test_driver_rejects_version_jump(self):
+        state = _state()
+        for bad_version in (VAULT_VERSION + 2, (1 << 64) - 1):
+            with pytest.raises(ValueError, match="exactly one"):
+                build_fasttrack_spend(
+                    current=state,
+                    authorizer_inner_puzzle_hash=bytes32(
+                        AUTHORITY_INNER.get_tree_hash()
+                    ),
+                    new_canonical_params_hash=NEW_CANONICAL_PARAMS_HASH,
+                    new_vault_version=bad_version,
+                )
 
     def test_clvm_rejects_version_downgrade(self):
         curried = _curry(vault_version=10)
@@ -362,6 +375,22 @@ class TestGuards:
         )
         with pytest.raises(ValueError):
             _run(curried, sol)
+
+    def test_clvm_rejects_version_jump(self):
+        curried = _curry(vault_version=VAULT_VERSION)
+        for bad_version in (VAULT_VERSION + 2, (1 << 64) - 1):
+            sol = Program.to(
+                [
+                    SPEND_PARAMS_FASTTRACK,
+                    SINGLETON_AMOUNT,
+                    bytes32(AUTHORITY_INNER.get_tree_hash()),
+                    VAULT_INNER_MOD_HASH,
+                    NEW_CANONICAL_PARAMS_HASH,
+                    bad_version,
+                ]
+            )
+            with pytest.raises(ValueError):
+                _run(curried, sol)
 
     def test_clvm_rejects_unknown_spend_case(self):
         sol = Program.to(

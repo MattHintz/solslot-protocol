@@ -31,7 +31,7 @@
 ;;;   NETWORK_ID              — bytes32 marker for the chain network
 ;;;                             (we use the AGG_SIG_ME genesis challenge
 ;;;                             of the target network: testnet11 or mainnet).
-;;;   CONFIG_VERSION          — uint64; monotonically increases on every
+;;;   CONFIG_VERSION          — uint64; exact-increments on every
 ;;;                             update.  Replay-attack guard.
 ;;;
 ;;; Solution:
@@ -39,7 +39,7 @@
 ;;;   new_pool_launcher_id            — bytes32, replacement POOL_LAUNCHER_ID
 ;;;   new_gov_tracker_launcher_id     — bytes32, replacement GOV_TRACKER
 ;;;   new_network_id                  — bytes32, replacement NETWORK_ID
-;;;   new_config_version              — uint64, must be > CONFIG_VERSION
+;;;   new_config_version              — uint64, must equal CONFIG_VERSION + 1
 ;;;
 ;;; Output conditions on a valid update spend:
 ;;;   AGG_SIG_ME GOV_PUBKEY <new_state_hash>
@@ -147,8 +147,8 @@
     (is-size-b32 GOV_TRACKER_LAUNCHER_ID)
     (is-size-b32 NETWORK_ID)
     (is-uint64 CONFIG_VERSION)
-    ;; Replay protection: version must STRICTLY increase.
-    (> new_config_version CONFIG_VERSION)
+    ;; Replay/self-brick protection: version must advance exactly one step.
+    (= new_config_version (+ CONFIG_VERSION 1))
     (list
       ;; (1) Governance signs the entire new state.  Note: we sign the
       ;; content_hash directly (not just an opaque message) so anyone
