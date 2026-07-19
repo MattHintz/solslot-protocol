@@ -300,6 +300,20 @@ class TestPropose:
         with pytest.raises(PuzzleError):
             curried.run(sol)
 
+    def test_propose_rejects_unknown_bill_tag(self):
+        """PA3: malformed bills must not enter the open governance state."""
+        curried = _curry_tracker()
+        my_id, my_ph = _tracker_my_id_and_ph(curried)
+        bill = Program.to([b"X", bytes32(b"\x33" * 32), 0])
+        ph = proposal_hash_from_bill(bill)
+        sol = Program.to([
+            my_id, my_ph, TRACKER_AMOUNT,
+            TRK_PROPOSE,
+            [ph, bill, VOTER_INNER_PUZHASH, MIN_PROPOSAL_STAKE, 2_000_000_000],
+        ])
+        with pytest.raises(PuzzleError):
+            curried.run(sol)
+
     def test_propose_rejects_zero_first_vote(self):
         """Zero stake fails the MIN_PROPOSAL_STAKE check."""
         curried = _curry_tracker()

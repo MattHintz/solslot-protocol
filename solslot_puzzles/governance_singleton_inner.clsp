@@ -46,6 +46,7 @@
 ;;;   (F new_pool_status)                               ; FREEZE (tag 'F' = 0x46)
 ;;;   (S splitxch_root_hash total_amount num_deeds deed_releases_hash)
 ;;;                                                       ; SETTLE (tag 'S' = 0x53)
+;;;   (V new_code_hash new_params_hash new_version)      ; VAULT_VERSION (tag 'V' = 0x56)
 ;;;
 ;;; Spend cases:
 ;;;   1 — PROPOSE : open a new proposal.  Requires:
@@ -219,6 +220,18 @@
             (f (r (r (r (r bill_op)))))))
     )
 
+    (defun-inline known-bill-tag (bill_op)
+        (if (= (f bill_op) BILL_MINT)
+            1
+            (if (= (f bill_op) BILL_FREEZE)
+                1
+                (if (= (f bill_op) BILL_SETTLE)
+                    1
+                    (if (= (f bill_op) BILL_VAULT_VERSION)
+                        1
+                        0))))
+    )
+
     ;; ─────────────────────────────────────────────────────────────────────
     ;;  Spend handlers
     ;; ─────────────────────────────────────────────────────────────────────
@@ -243,6 +256,7 @@
             ;; (via the EXEC announcement that sgt_locked_inner watches).
             (gte first_vote_amount min_stake)
             (= proposal_hash (sha256tree bill_op))
+            (known-bill-tag bill_op)
             ;; Time bound: voting must close within VOTING_WINDOW_SECONDS of now.
             ;; We assert that "now" is within window via paired height/time bounds:
             ;;   ASSERT_BEFORE_SECONDS_ABSOLUTE deadline       (now < deadline)

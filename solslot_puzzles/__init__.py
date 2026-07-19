@@ -75,6 +75,7 @@ PUZZLE_FILENAMES = (
 # Set to None to skip verification (development mode).
 # Generate with: python -c "from solslot_puzzles import compute_puzzles_checksum; print(compute_puzzles_checksum())"
 FROZEN_CHECKSUM: Optional[str] = (
+    # 2026-07-19 PA3 governance PROPOSE bill-tag whitelist +
     # 2026-07-18 PA17 live acquisition KYC pairing +
     # PA2 operation-bound admin member signatures + PA4 exact admin authority
     # version increments + PA6 settlement target binding + PA13 SmartDeed
@@ -84,6 +85,8 @@ FROZEN_CHECKSUM: Optional[str] = (
     #   - commitment-bound SmartDeed and p2_pool custody;
     #   - SmartDeed deposit/redeem authorization binds sanctioned pool launcher
     #     identity in curry, not spend solution;
+    #   - governance PROPOSE rejects unknown bill tags before a malformed bill
+    #     can enter the OPEN state and later deadlock EXECUTE/EXPIRE;
     #   - settlement CLAIM requires both p2_pool_v2 burn proof and a
     #     pool coin announcement binding the governance-approved payout target;
     #   - admin authority KEY_* member approvals prepend the canonical key
@@ -96,7 +99,7 @@ FROZEN_CHECKSUM: Optional[str] = (
     #   - Solslot V2 vault and credential domains;
     #   - five-spend governance/DID/registry/proposal/deed mint execution;
     #   - no retired contract implementations in the canonical package.
-    "dd3aa63a9a60c1eaf31be93dc9c8eede94668367746118c1c2f458500e1fe44a"
+    "15bd89d77d87572e97055d1ce2b58813acd5c61d49e48f7290a16b7cff597bf4"
 )
 
 # ── Cache ──
