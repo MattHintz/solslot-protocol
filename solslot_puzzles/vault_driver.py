@@ -792,6 +792,8 @@ def build_vault_accept_offer_spend(
         raise ValueError("pool_inner_puzhash must not be zero")
     if identity_attest_root == DEFAULT_IDENTITY_ATTEST_ROOT:
         raise ValueError("identity_attest_root must be enrolled before accepting offers")
+    if zkpassport_bridge_policy_hash == DEFAULT_ZKPASSPORT_BRIDGE_POLICY_HASH:
+        raise ValueError("zkpassport_bridge_policy_hash must be pinned before accepting offers")
     inner_puzzle = puzzle_for_vault_inner(
         vault_launcher_id, owner_pubkey_bytes, auth_type,
         members_merkle_root, pool_launcher_id,
@@ -839,6 +841,8 @@ def build_vault_update_identity_spend(
         raise ValueError("identity enrollment can only be built from the empty attestation root")
     if new_identity_attest_root == DEFAULT_IDENTITY_ATTEST_ROOT:
         raise ValueError("new_identity_attest_root must not be the empty attestation root")
+    if zkpassport_bridge_policy_hash == DEFAULT_ZKPASSPORT_BRIDGE_POLICY_HASH:
+        raise ValueError("zkpassport_bridge_policy_hash must be pinned before enrollment")
     if bridge_amount <= 0:
         raise ValueError("bridge_amount must be greater than zero")
     bridge_coin_id = Coin(bridge_parent_id, zkpassport_bridge_policy_hash, uint64(bridge_amount)).name()
@@ -983,6 +987,10 @@ def build_create_vault_bundle(
         fee:                  Network fee in mojos.
     """
     owner_pubkey_bytes = validate_owner_pubkey_for_auth_type(owner_pubkey_bytes, auth_type)
+    if identity_attest_root != DEFAULT_IDENTITY_ATTEST_ROOT:
+        raise ValueError("identity_attest_root must be empty at vault launch")
+    if zkpassport_bridge_policy_hash == DEFAULT_ZKPASSPORT_BRIDGE_POLICY_HASH:
+        raise ValueError("zkpassport_bridge_policy_hash must be pinned at vault launch")
     launcher_coin = launcher_coin_for_parent(parent_coin)
     vault_launcher_id: bytes32 = launcher_coin.name()
 

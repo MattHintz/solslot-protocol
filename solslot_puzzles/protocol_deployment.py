@@ -156,6 +156,15 @@ def _p2_vault_mod_hash() -> bytes32:
     return bytes32(p2_vault.get_tree_hash())
 
 
+def _vault_inner_mod_hash() -> bytes32:
+    vault_inner = load_clvm(
+        "vault_singleton_inner.clsp",
+        package_or_requirement="solslot_puzzles",
+        recompile=True,
+    )
+    return bytes32(vault_inner.get_tree_hash())
+
+
 def _p2_pool_v2_mod_hash() -> bytes32:
     p2_pool = load_clvm(
         "p2_pool_v2.clsp", package_or_requirement="solslot_puzzles", recompile=True
@@ -227,6 +236,7 @@ def pool_inner_puzzle(
     trusted_protocol_treasury_puzhash: bytes32 | None = None,
     trusted_governance_rewards_puzhash: bytes32 | None = None,
     trusted_governance_rewards_root: bytes32 = DEFAULT_EMPTY_B32,
+    trusted_zkpassport_bridge_policy_hash: bytes32 = DEFAULT_EMPTY_B32,
     fp_scale: int = DEFAULT_FP_SCALE,
     pool_status: int = 1,        # ACTIVE
     tvl: int = 0,
@@ -247,6 +257,10 @@ def pool_inner_puzzle(
     trusted_treasury_reserve_puzhash = trusted_treasury_reserve_puzhash or protocol_did_full_puzhash
     trusted_protocol_treasury_puzhash = trusted_protocol_treasury_puzhash or protocol_did_full_puzhash
     trusted_governance_rewards_puzhash = trusted_governance_rewards_puzhash or protocol_did_full_puzhash
+    _reject_empty_b32(
+        trusted_zkpassport_bridge_policy_hash,
+        "trusted_zkpassport_bridge_policy_hash",
+    )
     return mod.curry(
         mod_hash,
         singleton_struct(pool_launcher_id),
@@ -256,6 +270,7 @@ def pool_inner_puzzle(
         CAT_MOD_HASH,
         OFFER_MOD_HASH,
         _p2_vault_mod_hash(),
+        _vault_inner_mod_hash(),
         nav_registry_mod_hash,
         nav_registry_gov_pubkey,
         nav_registry_launcher_id,
@@ -264,6 +279,7 @@ def pool_inner_puzzle(
         trusted_protocol_treasury_puzhash,
         trusted_governance_rewards_puzhash,
         trusted_governance_rewards_root,
+        trusted_zkpassport_bridge_policy_hash,
         fp_scale,
         pool_status,
         tvl,
@@ -399,6 +415,7 @@ class ProtocolDeploymentPlan:
     trusted_protocol_treasury_puzhash: bytes32 | None = None
     trusted_governance_rewards_puzhash: bytes32 | None = None
     trusted_governance_rewards_root: bytes32 = DEFAULT_EMPTY_B32
+    trusted_zkpassport_bridge_policy_hash: bytes32 = DEFAULT_EMPTY_B32
 
     # ── Versioned deployment identity ────────────────────────────────────
     protocol_version: str = field(init=False, default=PROTOCOL_VERSION)
@@ -418,6 +435,7 @@ class ProtocolDeploymentPlan:
     pool_inner_mod_hash: bytes32 = field(init=False)
     p2_pool_mod_hash: bytes32 = field(init=False)
     p2_vault_mod_hash: bytes32 = field(init=False)
+    vault_inner_mod_hash: bytes32 = field(init=False)
     smart_deed_inner_mod_hash: bytes32 = field(init=False)
     governance_singleton_struct_hash: bytes32 = field(init=False)
     pool_inner_puzhash: bytes32 = field(init=False)
@@ -463,6 +481,10 @@ class ProtocolDeploymentPlan:
             self.trusted_governance_rewards_root,
             "trusted_governance_rewards_root",
         )
+        _reject_empty_b32(
+            self.trusted_zkpassport_bridge_policy_hash,
+            "trusted_zkpassport_bridge_policy_hash",
+        )
 
         self.pool_launcher_id = bytes32(
             Coin(self.pool_genesis_coin_id, SINGLETON_LAUNCHER_HASH, SINGLETON_AMOUNT).name()
@@ -476,6 +498,7 @@ class ProtocolDeploymentPlan:
         self.pool_inner_mod_hash = bytes32(_pool_inner_mod().get_tree_hash())
         self.p2_pool_mod_hash = _p2_pool_v2_mod_hash()
         self.p2_vault_mod_hash = _p2_vault_mod_hash()
+        self.vault_inner_mod_hash = _vault_inner_mod_hash()
         self.smart_deed_inner_mod_hash = _smart_deed_inner_v2_mod_hash()
         self.governance_singleton_struct_hash = bytes32(
             singleton_struct(self.tracker_launcher_id).get_tree_hash()
@@ -507,6 +530,7 @@ class ProtocolDeploymentPlan:
             trusted_protocol_treasury_puzhash=self.trusted_protocol_treasury_puzhash,
             trusted_governance_rewards_puzhash=self.trusted_governance_rewards_puzhash,
             trusted_governance_rewards_root=self.trusted_governance_rewards_root,
+            trusted_zkpassport_bridge_policy_hash=self.trusted_zkpassport_bridge_policy_hash,
             fp_scale=self.params.fp_scale,
             pool_status=self.params.initial_pool_status,
             total_pool_token_supply=self.params.initial_total_pool_token_supply,
@@ -763,6 +787,7 @@ def plan_from_manifest_dict(data: dict[str, Any]) -> ProtocolDeploymentPlan:
         "trusted_protocol_treasury_puzhash",
         "trusted_governance_rewards_puzhash",
         "trusted_governance_rewards_root",
+        "trusted_zkpassport_bridge_policy_hash",
     ]:
         if key in data and data[key] is not None:
             trusted_kwargs[key] = _b32(data[key])
@@ -786,6 +811,7 @@ def plan_from_manifest_dict(data: dict[str, Any]) -> ProtocolDeploymentPlan:
         "sgt_tail_hash", "sgt_full_puzhash",
         "pool_token_tail_hash", "pool_inner_puzhash", "pool_full_puzhash",
         "pool_inner_mod_hash", "p2_pool_mod_hash", "p2_vault_mod_hash",
+        "vault_inner_mod_hash",
         "smart_deed_inner_mod_hash",
         "governance_singleton_struct_hash",
         "did_inner_puzhash", "did_full_puzhash",
@@ -793,6 +819,7 @@ def plan_from_manifest_dict(data: dict[str, Any]) -> ProtocolDeploymentPlan:
         "trusted_nav_registry_mod_hash", "trusted_nav_registry_launcher_id",
         "trusted_treasury_reserve_puzhash", "trusted_protocol_treasury_puzhash",
         "trusted_governance_rewards_puzhash", "trusted_governance_rewards_root",
+        "trusted_zkpassport_bridge_policy_hash",
     ]:
         if key in data:
             stored = _b32(data[key])

@@ -86,11 +86,13 @@
   (defconstant ZKPASSPORT_ATTEST_DOMAIN 0x736f6c736c6f742d7a6b70617373706f72742d7661756c742d6174746573746174696f6e2d7632)
   (defconstant ZKPASSPORT_POLICY_VERSION 2)
   (defconstant ZKPASSPORT_EMPTY_ATTEST_ROOT 0x4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a)
+  (defconstant ZERO_B32 0x0000000000000000000000000000000000000000000000000000000000000000)
 
   ;; Pool spend case constants for announcement matching
   (defconst POOL_SPEND_DEPOSIT 1)
   (defconst POOL_SPEND_REDEEM 2)
   (defconst POOL_SPEND_GENERATE_OFFER 5)
+  (defconst POOL_SPEND_V2_SPECIFIC_DEED_SWAP 6)
 
   (defun base_conditions (SINGLETON_STRUCT my_id my_amount my_inner_puzzlehash)
     (list
@@ -312,7 +314,8 @@
   ;; SPEND CASE 'a' — ACCEPT POOL OFFER (secondary purchase)
   ;; p = (deed_launcher_id token_amount pool_inner_puzhash current_timestamp signature_data)
   ;; current_timestamp: Unix seconds supplied by the spender; pinned to the block via time_bound_conditions.
-  (defun spend_accept_offer (SINGLETON_STRUCT OWNER_PUBKEY AUTH_TYPE IDENTITY_ATTEST_ROOT POOL_SINGLETON_MOD_HASH
+  (defun spend_accept_offer (SINGLETON_STRUCT OWNER_PUBKEY AUTH_TYPE IDENTITY_ATTEST_ROOT ZKPASSPORT_BRIDGE_POLICY_HASH
+                             POOL_SINGLETON_MOD_HASH
                              POOL_SINGLETON_LAUNCHER_ID POOL_SINGLETON_LAUNCHER_PUZZLE_HASH
                              my_id my_inner_puzzlehash my_amount
                              deed_launcher_id token_amount pool_inner_puzhash attestation_leaf_hash attestation_proof current_timestamp signature_data)
@@ -327,6 +330,7 @@
       ;; unspendable trap.  The 32-byte zero atom is the sha256 of nothing: reject it.
       (not (= pool_inner_puzhash 0x0000000000000000000000000000000000000000000000000000000000000000))
       (not (= IDENTITY_ATTEST_ROOT ZKPASSPORT_EMPTY_ATTEST_ROOT))
+      (not (= ZKPASSPORT_BRIDGE_POLICY_HASH ZERO_B32))
       (is-size-b32 attestation_leaf_hash)
       (= IDENTITY_ATTEST_ROOT (simplify_merkle_proof_after_leaf attestation_leaf_hash attestation_proof))
       (is-uint64 current_timestamp)
@@ -341,14 +345,18 @@
           (list ASSERT_PUZZLE_ANNOUNCEMENT
             (sha256
               (pool_full_puzzle_hash POOL_SINGLETON_MOD_HASH POOL_SINGLETON_LAUNCHER_ID POOL_SINGLETON_LAUNCHER_PUZZLE_HASH pool_inner_puzhash)
-              (concat PROTOCOL_PREFIX (sha256tree (list POOL_SPEND_GENERATE_OFFER deed_launcher_id token_amount)))))
+              (concat PROTOCOL_PREFIX (sha256tree (list POOL_SPEND_V2_SPECIFIC_DEED_SWAP deed_launcher_id token_amount)))))
           (c
-            (list CREATE_COIN my_inner_puzzlehash my_amount (list my_inner_puzzlehash))
+            (list CREATE_PUZZLE_ANNOUNCEMENT
+              (concat PROTOCOL_PREFIX (sha256tree (list SPEND_ACCEPT_OFFER deed_launcher_id token_amount my_id))))
             (c
-              (list REMARK PROTOCOL_PREFIX SPEND_ACCEPT_OFFER deed_launcher_id token_amount)
-              (merge-lists
-                (time_bound_conditions current_timestamp)
-                (base_conditions SINGLETON_STRUCT my_id my_amount my_inner_puzzlehash)
+              (list CREATE_COIN my_inner_puzzlehash my_amount (list my_inner_puzzlehash))
+              (c
+                (list REMARK PROTOCOL_PREFIX SPEND_ACCEPT_OFFER deed_launcher_id token_amount)
+                (merge-lists
+                  (time_bound_conditions current_timestamp)
+                  (base_conditions SINGLETON_STRUCT my_id my_amount my_inner_puzzlehash)
+                )
               )
             )
           )
@@ -641,7 +649,8 @@
                                  my_id my_inner_puzzlehash my_amount
                                  (f p) (f (r p)) (f (r (r p))) (f (r (r (r p)))))
         (if (= spend_case SPEND_ACCEPT_OFFER)
-          (spend_accept_offer SINGLETON_STRUCT OWNER_PUBKEY AUTH_TYPE IDENTITY_ATTEST_ROOT POOL_SINGLETON_MOD_HASH
+          (spend_accept_offer SINGLETON_STRUCT OWNER_PUBKEY AUTH_TYPE IDENTITY_ATTEST_ROOT ZKPASSPORT_BRIDGE_POLICY_HASH
+                              POOL_SINGLETON_MOD_HASH
                               POOL_SINGLETON_LAUNCHER_ID POOL_SINGLETON_LAUNCHER_PUZZLE_HASH
                               my_id my_inner_puzzlehash my_amount
                               (f p) (f (r p)) (f (r (r p))) (f (r (r (r p)))) (f (r (r (r (r p))))) (f (r (r (r (r (r p)))))) (f (r (r (r (r (r (r p))))))))

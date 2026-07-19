@@ -46,6 +46,11 @@ POOL_INNER_MOD: Program = load_clvm(
     package_or_requirement="solslot_puzzles",
     recompile=True,
 )
+VAULT_INNER_MOD: Program = load_clvm(
+    "vault_singleton_inner.clsp",
+    package_or_requirement="solslot_puzzles",
+    recompile=True,
+)
 
 # Test constants
 LAUNCHER_PUZZLE_HASH = SINGLETON_LAUNCHER_HASH
@@ -60,6 +65,7 @@ TOKEN_TAIL_HASH = bytes32(b"\x04" * 32)
 CAT_MOD_HASH = bytes32(b"\x05" * 32)
 OFFER_MOD_HASH = bytes32(b"\x06" * 32)
 P2_VAULT_MOD_HASH = bytes32(b"\x07" * 32)
+VAULT_INNER_MOD_HASH = bytes32(VAULT_INNER_MOD.get_tree_hash())
 NAV_REGISTRY_MOD_HASH = collection_nav_registry_inner_mod_hash()
 NAV_REGISTRY_GOV_PUBKEY = b"\x08" * 48
 NAV_REGISTRY_LAUNCHER_ID = bytes32(b"\xc9" * 32)
@@ -68,6 +74,7 @@ TRUSTED_TREASURY_RESERVE_PUZHASH = bytes32(b"\xf1" * 32)
 TRUSTED_PROTOCOL_TREASURY_PUZHASH = bytes32(b"\xf2" * 32)
 TRUSTED_GOVERNANCE_REWARDS_PUZHASH = bytes32(b"\xf3" * 32)
 TRUSTED_GOVERNANCE_REWARDS_ROOT = bytes32(b"\xf4" * 32)
+TRUSTED_ZKPASSPORT_BRIDGE_POLICY_HASH = bytes32(b"\xf5" * 32)
 DEED_LAUNCHER_ID = bytes32(b"\xd2" * 32)
 DEED_PAR_VALUE = 123_000
 DEED_ASSET_CLASS = 1
@@ -93,6 +100,15 @@ POOL_FROZEN = 0
 
 # Protocol prefix
 PROTOCOL_PREFIX = b"\x53"
+VAULT_SPEND_ACCEPT_OFFER = 0x61
+ZKPASSPORT_EMPTY_ATTEST_ROOT = bytes32(
+    bytes.fromhex("4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a")
+)
+BUYER_VAULT_COIN_ID = bytes32(b"\xe5" * 32)
+BUYER_OWNER_PUBKEY = b"\xe6" * 48
+BUYER_AUTH_TYPE = 1
+BUYER_MEMBERS_MERKLE_ROOT = bytes32(b"\xe7" * 32)
+BUYER_IDENTITY_ATTEST_ROOT = bytes32(b"\xe8" * 32)
 
 # Condition codes used in settlement assertions.
 REMARK = 1
@@ -122,6 +138,7 @@ def curry_pool(
         CAT_MOD_HASH,
         OFFER_MOD_HASH,
         P2_VAULT_MOD_HASH,
+        VAULT_INNER_MOD_HASH,
         NAV_REGISTRY_MOD_HASH,
         NAV_REGISTRY_GOV_PUBKEY,
         NAV_REGISTRY_LAUNCHER_ID,
@@ -130,6 +147,7 @@ def curry_pool(
         TRUSTED_PROTOCOL_TREASURY_PUZHASH,
         TRUSTED_GOVERNANCE_REWARDS_PUZHASH,
         TRUSTED_GOVERNANCE_REWARDS_ROOT,
+        TRUSTED_ZKPASSPORT_BRIDGE_POLICY_HASH,
         FP_SCALE,
         pool_status,
         tvl,
@@ -181,6 +199,75 @@ def computed_p2_vault_ph(vault_launcher_id: bytes32) -> bytes32:
             hashlib.sha256(b"\x01" + bytes(LAUNCHER_PUZZLE_HASH)).digest(),
         )
     )
+
+
+def atom_tree_hash(value: bytes | bytes32 | int) -> bytes:
+    return hashlib.sha256(b"\x01" + Program.to(value).as_atom()).digest()
+
+
+def buyer_vault_params(
+    *,
+    vault_coin_id: bytes32 = BUYER_VAULT_COIN_ID,
+    owner_pubkey: bytes = BUYER_OWNER_PUBKEY,
+    auth_type: int = BUYER_AUTH_TYPE,
+    members_merkle_root: bytes32 = BUYER_MEMBERS_MERKLE_ROOT,
+    identity_root: bytes32 = BUYER_IDENTITY_ATTEST_ROOT,
+    bridge_policy_hash: bytes32 = TRUSTED_ZKPASSPORT_BRIDGE_POLICY_HASH,
+) -> list[object]:
+    return [
+        vault_coin_id,
+        owner_pubkey,
+        auth_type,
+        members_merkle_root,
+        identity_root,
+        bridge_policy_hash,
+    ]
+
+
+def computed_vault_inner_ph(vault_launcher_id: bytes32) -> bytes32:
+    vault_struct_hash = bytes32(
+        Program.to((SINGLETON_MOD_HASH, (vault_launcher_id, LAUNCHER_PUZZLE_HASH))).get_tree_hash()
+    )
+    quoted_mod = calculate_hash_of_quoted_mod_hash(VAULT_INNER_MOD_HASH)
+    return bytes32(
+        curry_and_treehash(
+            quoted_mod,
+            vault_struct_hash,
+            atom_tree_hash(BUYER_OWNER_PUBKEY),
+            atom_tree_hash(BUYER_AUTH_TYPE),
+            atom_tree_hash(BUYER_MEMBERS_MERKLE_ROOT),
+            atom_tree_hash(BUYER_IDENTITY_ATTEST_ROOT),
+            atom_tree_hash(TRUSTED_ZKPASSPORT_BRIDGE_POLICY_HASH),
+            atom_tree_hash(SINGLETON_MOD_HASH),
+            atom_tree_hash(POOL_LAUNCHER_ID),
+            atom_tree_hash(LAUNCHER_PUZZLE_HASH),
+        )
+    )
+
+
+def computed_vault_full_ph(vault_launcher_id: bytes32) -> bytes32:
+    return singleton_full_puzzle_hash(vault_launcher_id, computed_vault_inner_ph(vault_launcher_id))
+
+
+def pool_v2_kyc_offer_message(deed_launcher_id: bytes32, principal_tokens: int) -> bytes:
+    return PROTOCOL_PREFIX + Program.to([
+        POOL_SPEND_V2_SPECIFIC_DEED_SWAP,
+        deed_launcher_id,
+        principal_tokens,
+    ]).get_tree_hash()
+
+
+def vault_accept_offer_message(
+    deed_launcher_id: bytes32,
+    principal_tokens: int,
+    vault_coin_id: bytes32 = BUYER_VAULT_COIN_ID,
+) -> bytes:
+    return PROTOCOL_PREFIX + Program.to([
+        VAULT_SPEND_ACCEPT_OFFER,
+        deed_launcher_id,
+        principal_tokens,
+        vault_coin_id,
+    ]).get_tree_hash()
 
 
 def computed_cat_offer_puzzle_hash() -> bytes32:
@@ -460,6 +547,7 @@ class TestPoolV2SpecificDeedSwap:
                 nav_registry_puzzle_hash,
                 buyer_vault_launcher_id,
                 LAUNCHER_PUZZLE_HASH,
+                *buyer_vault_params(),
                 treasury_reserve_puzhash,
                 protocol_treasury_puzhash,
                 governance_rewards_puzhash,
@@ -468,7 +556,7 @@ class TestPoolV2SpecificDeedSwap:
         )
         conditions = curried.run(sol).as_python()
 
-        assert len(conditions) == 10
+        assert len(conditions) == 12
         assert atom_int(conditions[0][0]) == CREATE_COIN
         expected_next = curry_pool(
             pool_status=POOL_ACTIVE,
@@ -493,26 +581,41 @@ class TestPoolV2SpecificDeedSwap:
             bytes(computed_cat_offer_puzzle_hash()) + bytes(expected_payment_message)
         ).digest()
 
-        assert atom_int(conditions[4][0]) == CREATE_PUZZLE_ANNOUNCEMENT
-        assert conditions[4][1] == spec.pool_action_message
+        assert atom_int(conditions[4][0]) == ASSERT_PUZZLE_ANNOUNCEMENT
+        assert conditions[4][1] == hashlib.sha256(
+            bytes(computed_vault_full_ph(buyer_vault_launcher_id))
+            + vault_accept_offer_message(
+                DEED_LAUNCHER_ID,
+                spec.quote.principal_tokens,
+            )
+        ).digest()
 
         assert atom_int(conditions[5][0]) == CREATE_PUZZLE_ANNOUNCEMENT
-        assert conditions[5][1] == PROTOCOL_PREFIX + Program.to([
+        assert conditions[5][1] == pool_v2_kyc_offer_message(
+            DEED_LAUNCHER_ID,
+            spec.quote.principal_tokens,
+        )
+
+        assert atom_int(conditions[6][0]) == CREATE_PUZZLE_ANNOUNCEMENT
+        assert conditions[6][1] == spec.pool_action_message
+
+        assert atom_int(conditions[7][0]) == CREATE_PUZZLE_ANNOUNCEMENT
+        assert conditions[7][1] == PROTOCOL_PREFIX + Program.to([
             my_id,
             deed_id,
             spec.deed_commitment,
             p2_vault,
         ]).get_tree_hash()
 
-        assert atom_int(conditions[6][0]) == REMARK
-        assert conditions[6][1] == PROTOCOL_PREFIX
-        assert atom_int(conditions[6][2]) == POOL_V2_SPECIFIC_DEED_SWAP_TAG
-        assert atom_int(conditions[6][3]) == spec.next_state.total_nav_locked_mojos
-        assert atom_int(conditions[6][4]) == spec.next_state.deed_count
-        assert atom_int(conditions[6][5]) == spec.next_state.total_pool_token_supply
-        assert atom_int(conditions[6][6]) == spec.next_state.treasury_reserve_tokens
-        assert atom_int(conditions[6][7]) == spec.quote.fee_split.protocol_fee_tokens
-        assert atom_int(conditions[6][8]) == spec.quote.fee_split.governance_fee_tokens
+        assert atom_int(conditions[8][0]) == REMARK
+        assert conditions[8][1] == PROTOCOL_PREFIX
+        assert atom_int(conditions[8][2]) == POOL_V2_SPECIFIC_DEED_SWAP_TAG
+        assert atom_int(conditions[8][3]) == spec.next_state.total_nav_locked_mojos
+        assert atom_int(conditions[8][4]) == spec.next_state.deed_count
+        assert atom_int(conditions[8][5]) == spec.next_state.total_pool_token_supply
+        assert atom_int(conditions[8][6]) == spec.next_state.treasury_reserve_tokens
+        assert atom_int(conditions[8][7]) == spec.quote.fee_split.protocol_fee_tokens
+        assert atom_int(conditions[8][8]) == spec.quote.fee_split.governance_fee_tokens
 
     def test_specific_deed_swap_rejects_invalid_rewards_root(self):
         nav_root = bytes32(b"\xc3" * 32)
@@ -544,10 +647,91 @@ class TestPoolV2SpecificDeedSwap:
                 computed_nav_registry_puzzle_hash(nav_root, registry_version),
                 bytes32(b"\xee" * 32),
                 LAUNCHER_PUZZLE_HASH,
+                *buyer_vault_params(),
                 bytes32(b"\xf1" * 32),
                 bytes32(b"\xf2" * 32),
                 bytes32(b"\xf3" * 32),
                 b"\xf4" * 31,
+            ],
+        )
+        with pytest.raises(ValueError):
+            curried.run(sol)
+
+    def test_specific_deed_swap_rejects_empty_buyer_identity_root(self):
+        nav_root = bytes32(b"\xc3" * 32)
+        registry_version = 7
+        curried = curry_pool(
+            pool_status=POOL_ACTIVE,
+            tvl=1_000_000_000,
+            deed_count=10,
+            total_pool_token_supply=800_000_000,
+            treasury_reserve_tokens=200_000_000,
+        )
+        sol = make_pool_solution(
+            bytes32(b"\x11" * 32),
+            curried.get_tree_hash(),
+            1,
+            POOL_SPEND_V2_SPECIFIC_DEED_SWAP,
+            [
+                bytes32(b"\xd1" * 32),
+                DEED_LAUNCHER_ID,
+                DEED_PAR_VALUE,
+                DEED_ASSET_CLASS,
+                DEED_PROPERTY_ID,
+                bytes32(b"\xa1" * 32),
+                250_000,
+                1_000_000_000,
+                nav_root,
+                registry_version,
+                bytes32(b"\xc1" * 32),
+                computed_nav_registry_puzzle_hash(nav_root, registry_version),
+                bytes32(b"\xee" * 32),
+                LAUNCHER_PUZZLE_HASH,
+                *buyer_vault_params(identity_root=ZKPASSPORT_EMPTY_ATTEST_ROOT),
+                TRUSTED_TREASURY_RESERVE_PUZHASH,
+                TRUSTED_PROTOCOL_TREASURY_PUZHASH,
+                TRUSTED_GOVERNANCE_REWARDS_PUZHASH,
+                TRUSTED_GOVERNANCE_REWARDS_ROOT,
+            ],
+        )
+        with pytest.raises(ValueError):
+            curried.run(sol)
+
+    def test_specific_deed_swap_rejects_untrusted_buyer_bridge_policy(self):
+        nav_root = bytes32(b"\xc3" * 32)
+        registry_version = 7
+        curried = curry_pool(
+            pool_status=POOL_ACTIVE,
+            tvl=1_000_000_000,
+            deed_count=10,
+            total_pool_token_supply=800_000_000,
+            treasury_reserve_tokens=200_000_000,
+        )
+        sol = make_pool_solution(
+            bytes32(b"\x11" * 32),
+            curried.get_tree_hash(),
+            1,
+            POOL_SPEND_V2_SPECIFIC_DEED_SWAP,
+            [
+                bytes32(b"\xd1" * 32),
+                DEED_LAUNCHER_ID,
+                DEED_PAR_VALUE,
+                DEED_ASSET_CLASS,
+                DEED_PROPERTY_ID,
+                bytes32(b"\xa1" * 32),
+                250_000,
+                1_000_000_000,
+                nav_root,
+                registry_version,
+                bytes32(b"\xc1" * 32),
+                computed_nav_registry_puzzle_hash(nav_root, registry_version),
+                bytes32(b"\xee" * 32),
+                LAUNCHER_PUZZLE_HASH,
+                *buyer_vault_params(bridge_policy_hash=bytes32(b"\x99" * 32)),
+                TRUSTED_TREASURY_RESERVE_PUZHASH,
+                TRUSTED_PROTOCOL_TREASURY_PUZHASH,
+                TRUSTED_GOVERNANCE_REWARDS_PUZHASH,
+                TRUSTED_GOVERNANCE_REWARDS_ROOT,
             ],
         )
         with pytest.raises(ValueError):
@@ -581,6 +765,7 @@ class TestPoolV2SpecificDeedSwap:
                 bytes32(b"\xc2" * 32),
                 bytes32(b"\xee" * 32),
                 LAUNCHER_PUZZLE_HASH,
+                *buyer_vault_params(),
                 TRUSTED_TREASURY_RESERVE_PUZHASH,
                 TRUSTED_PROTOCOL_TREASURY_PUZHASH,
                 TRUSTED_GOVERNANCE_REWARDS_PUZHASH,
@@ -620,6 +805,7 @@ class TestPoolV2SpecificDeedSwap:
                 computed_nav_registry_puzzle_hash(nav_root, stale_version),
                 bytes32(b"\xee" * 32),
                 LAUNCHER_PUZZLE_HASH,
+                *buyer_vault_params(),
                 TRUSTED_TREASURY_RESERVE_PUZHASH,
                 TRUSTED_PROTOCOL_TREASURY_PUZHASH,
                 TRUSTED_GOVERNANCE_REWARDS_PUZHASH,
@@ -659,6 +845,7 @@ class TestPoolV2SpecificDeedSwap:
                 computed_nav_registry_puzzle_hash(nav_root, registry_version),
                 bytes32(b"\xee" * 32),
                 LAUNCHER_PUZZLE_HASH,
+                *buyer_vault_params(),
                 bytes32(b"\xaf" * 32),
                 TRUSTED_PROTOCOL_TREASURY_PUZHASH,
                 TRUSTED_GOVERNANCE_REWARDS_PUZHASH,

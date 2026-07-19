@@ -65,7 +65,12 @@ from solslot_puzzles.pool_economics_v2 import (
     token_settlement_payment_message,
 )
 from solslot_puzzles.protocol_deployment import singleton_full_puzzle_hash
-from solslot_puzzles.vault_driver import puzzle_for_p2_vault
+from solslot_puzzles.vault_driver import (
+    AUTH_TYPE_BLS,
+    build_vault_accept_offer_spend,
+    puzzle_for_p2_vault,
+    puzzle_for_vault_full,
+)
 
 
 def b32(byte: int) -> bytes32:
@@ -107,7 +112,17 @@ POOL_PARENT_COIN_ID = b32(0x15)
 POOL_LINEAGE_PARENT_PARENT_COIN_ID = b32(0x16)
 POOL_LINEAGE_PARENT_INNER_PUZZLE_HASH = b32(0x17)
 POOL_AMOUNT = uint64(1)
-BUYER_VAULT_LAUNCHER_ID = b32(0xD3)
+BUYER_VAULT_LAUNCHER_PARENT_COIN_ID = b32(0xD3)
+BUYER_VAULT_LAUNCHER_ID = bytes32(
+    Coin(BUYER_VAULT_LAUNCHER_PARENT_COIN_ID, SINGLETON_LAUNCHER_HASH, uint64(1)).name()
+)
+BUYER_OWNER_PUBKEY = b"\xD5" * 48
+BUYER_AUTH_TYPE = AUTH_TYPE_BLS
+BUYER_MEMBERS_MERKLE_ROOT = b32(0xD6)
+BUYER_IDENTITY_ATTEST_ROOT = b32(0xD7)
+TRUSTED_ZKPASSPORT_BRIDGE_POLICY_HASH = b32(0xF5)
+BUYER_ATTESTATION_PROOF = Program.to((0, []))
+CURRENT_TIMESTAMP = 1_735_689_600
 P2_VAULT = bytes32(puzzle_for_p2_vault(BUYER_VAULT_LAUNCHER_ID).get_tree_hash())
 TREASURY_RESERVE = b32(0xF1)
 PROTOCOL_TREASURY = b32(0xF2)
@@ -223,8 +238,18 @@ def _pool_inner_mod() -> Program:
     )
 
 
+def _vault_inner_mod_hash() -> bytes32:
+    mod = load_clvm(
+        "vault_singleton_inner.clsp",
+        package_or_requirement="solslot_puzzles",
+        recompile=True,
+    )
+    return bytes32(mod.get_tree_hash())
+
+
 POOL_TOKEN_TAIL_HASH = _pool_token_tail_hash()
 P2_VAULT_MOD_HASH = _p2_vault_mod_hash()
+VAULT_INNER_MOD_HASH = _vault_inner_mod_hash()
 POOL_INNER_MOD = _pool_inner_mod()
 POOL_INNER_MOD_HASH = bytes32(POOL_INNER_MOD.get_tree_hash())
 POOL_INNER = POOL_INNER_MOD.curry(
@@ -236,6 +261,7 @@ POOL_INNER = POOL_INNER_MOD.curry(
     CAT_MOD_HASH,
     OFFER_MOD_HASH,
     P2_VAULT_MOD_HASH,
+    VAULT_INNER_MOD_HASH,
     NAV_REGISTRY_MOD_HASH,
     NAV_REGISTRY_GOV_PUBKEY,
     NAV_REGISTRY_LAUNCHER_ID,
@@ -244,6 +270,7 @@ POOL_INNER = POOL_INNER_MOD.curry(
     PROTOCOL_TREASURY,
     GOVERNANCE_REWARDS,
     GOVERNANCE_REWARDS_ROOT,
+    TRUSTED_ZKPASSPORT_BRIDGE_POLICY_HASH,
     FP_SCALE,
     POOL_ACTIVE,
     STATE.total_nav_locked_mojos,
@@ -261,6 +288,26 @@ POOL_LINEAGE_PROOF = [
     POOL_LINEAGE_PARENT_INNER_PUZZLE_HASH,
     POOL_AMOUNT,
 ]
+
+BUYER_VAULT_FULL_PUZZLE = puzzle_for_vault_full(
+    BUYER_VAULT_LAUNCHER_ID,
+    BUYER_OWNER_PUBKEY,
+    BUYER_AUTH_TYPE,
+    BUYER_MEMBERS_MERKLE_ROOT,
+    POOL_LAUNCHER_ID,
+    identity_attest_root=BUYER_IDENTITY_ATTEST_ROOT,
+    zkpassport_bridge_policy_hash=TRUSTED_ZKPASSPORT_BRIDGE_POLICY_HASH,
+)
+BUYER_VAULT_COIN = Coin(
+    BUYER_VAULT_LAUNCHER_ID,
+    bytes32(BUYER_VAULT_FULL_PUZZLE.get_tree_hash()),
+    uint64(1),
+)
+BUYER_VAULT_COIN_ID = bytes32(BUYER_VAULT_COIN.name())
+BUYER_VAULT_LINEAGE = LineageProof(
+    parent_name=BUYER_VAULT_LAUNCHER_PARENT_COIN_ID,
+    amount=uint64(1),
+)
 
 NAV_EVIDENCE, NAV_EVIDENCE_COIN_SPEND = nav_read_evidence(
     nav_value_mojos=1_000_000_000,
@@ -360,6 +407,14 @@ def _coin_dict(coin: Coin) -> dict[str, Any]:
     }
 
 
+def _coin_spend_dict(spend: Any) -> dict[str, Any]:
+    return {
+        "coin": _coin_dict(spend.coin),
+        "puzzle_reveal": _hex(bytes(spend.puzzle_reveal)),
+        "solution": _hex(bytes(spend.solution)),
+    }
+
+
 def _lineage_proof_dict() -> dict[str, Any]:
     return {
         "parent_name": _hex(POOL_LINEAGE_PARENT_PARENT_COIN_ID),
@@ -423,6 +478,23 @@ def build_fixture() -> dict[str, Any]:
         governance_rewards_puzhash=GOVERNANCE_REWARDS,
         governance_rewards_root=GOVERNANCE_REWARDS_ROOT,
     )
+    buyer_vault_accept_offer_spend = build_vault_accept_offer_spend(
+        BUYER_VAULT_COIN,
+        BUYER_VAULT_LAUNCHER_ID,
+        BUYER_OWNER_PUBKEY,
+        BUYER_AUTH_TYPE,
+        BUYER_MEMBERS_MERKLE_ROOT,
+        POOL_LAUNCHER_ID,
+        DEED_LAUNCHER_ID,
+        swap.quote.principal_tokens,
+        POOL_INNER_PUZZLE_HASH,
+        BUYER_IDENTITY_ATTEST_ROOT,
+        BUYER_IDENTITY_ATTEST_ROOT,
+        BUYER_ATTESTATION_PROOF,
+        CURRENT_TIMESTAMP,
+        BUYER_VAULT_LINEAGE,
+        zkpassport_bridge_policy_hash=TRUSTED_ZKPASSPORT_BRIDGE_POLICY_HASH,
+    )
     redemption = build_true_redemption_spec(
         STATE,
         deed_id=DEED_ID,
@@ -465,6 +537,12 @@ def build_fixture() -> dict[str, Any]:
         NAV_EVIDENCE.registry_puzzle_hash,
         BUYER_VAULT_LAUNCHER_ID,
         SINGLETON_LAUNCHER_HASH,
+        BUYER_VAULT_COIN_ID,
+        BUYER_OWNER_PUBKEY,
+        BUYER_AUTH_TYPE,
+        BUYER_MEMBERS_MERKLE_ROOT,
+        BUYER_IDENTITY_ATTEST_ROOT,
+        TRUSTED_ZKPASSPORT_BRIDGE_POLICY_HASH,
         TREASURY_RESERVE,
         PROTOCOL_TREASURY,
         GOVERNANCE_REWARDS,
@@ -541,6 +619,13 @@ def build_fixture() -> dict[str, Any]:
             "deed_launcher_id": _hex(DEED_LAUNCHER_ID),
             "p2_vault_puzzle_hash": _hex(P2_VAULT),
             "buyer_vault_launcher_id": _hex(BUYER_VAULT_LAUNCHER_ID),
+            "buyer_vault_coin_id": _hex(BUYER_VAULT_COIN_ID),
+            "buyer_vault_full_puzzle_hash": _hex(BUYER_VAULT_COIN.puzzle_hash),
+            "buyer_owner_pubkey": "0x" + BUYER_OWNER_PUBKEY.hex(),
+            "buyer_auth_type": BUYER_AUTH_TYPE,
+            "buyer_members_merkle_root": _hex(BUYER_MEMBERS_MERKLE_ROOT),
+            "buyer_identity_attest_root": _hex(BUYER_IDENTITY_ATTEST_ROOT),
+            "buyer_bridge_policy_hash": _hex(TRUSTED_ZKPASSPORT_BRIDGE_POLICY_HASH),
             "launcher_puzzle_hash": _hex(SINGLETON_LAUNCHER_HASH),
             "property_id_canon": _hex(PROPERTY_ID),
             "collection_id_canon": _hex(COLLECTION_ID),
@@ -571,6 +656,9 @@ def build_fixture() -> dict[str, Any]:
                 ),
                 "pool_coin_spend": _pool_coin_spend_dict(
                     POOL_SPEND_V2_SPECIFIC_DEED_SWAP, swap_params
+                ),
+                "buyer_vault_accept_offer_coin_spend": _coin_spend_dict(
+                    buyer_vault_accept_offer_spend
                 ),
             },
         },

@@ -50,7 +50,7 @@ def test_vault_inner_mod_hash_is_a_known_constant() -> None:
     """
     fixture = dump_vault_launch_fixtures.build_fixture()
     expected_vault_inner_mod_hash = (
-        "0x81f11be807b668455ce4139dbd71e1303bb1048259cd1416c2a8bc88e27c9c87"
+        "0xb9165548667a296c6ecf4921f4a0ba54bb98104810fd539abd7416417eb39b45"
     )
     assert fixture["constants"]["vault_inner_mod_hash"] == expected_vault_inner_mod_hash, (
         "vault_singleton_inner.clsp mod hash drifted!\n"

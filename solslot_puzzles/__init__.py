@@ -75,9 +75,10 @@ PUZZLE_FILENAMES = (
 # Set to None to skip verification (development mode).
 # Generate with: python -c "from solslot_puzzles import compute_puzzles_checksum; print(compute_puzzles_checksum())"
 FROZEN_CHECKSUM: Optional[str] = (
-    # 2026-07-18 PA2 operation-bound admin member signatures +
-    # PA4 exact admin authority version increments + PA6 settlement target
-    # binding + PA13 SmartDeed pool-identity freeze:
+    # 2026-07-18 PA17 live acquisition KYC pairing +
+    # PA2 operation-bound admin member signatures + PA4 exact admin authority
+    # version increments + PA6 settlement target binding + PA13 SmartDeed
+    # pool-identity freeze:
     #   - announcement namespace 0x53;
     #   - SGT governance modules;
     #   - commitment-bound SmartDeed and p2_pool custody;
@@ -90,10 +91,12 @@ FROZEN_CHECKSUM: Optional[str] = (
     #   - admin authority V2 requires every spend to advance AUTHORITY_VERSION
     #     by exactly one step;
     #   - pool V3 with retired exits disabled and governance identity pinned;
+    #   - pool V3 case-6 deed acquisition requires a canonical enrolled buyer
+    #     vault authorization under the trusted zkPassport bridge policy;
     #   - Solslot V2 vault and credential domains;
     #   - five-spend governance/DID/registry/proposal/deed mint execution;
     #   - no retired contract implementations in the canonical package.
-    "3890ecb5c8e5da56ae4dcd285e809573cd43163419d5a60f261c7baf69409265"
+    "dd3aa63a9a60c1eaf31be93dc9c8eede94668367746118c1c2f458500e1fe44a"
 )
 
 # ── Cache ──

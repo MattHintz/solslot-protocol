@@ -55,7 +55,10 @@ def test_expected_action_spec_surface() -> None:
         "pool_full_solution_hex",
         "pool_coin_spend",
     }
-    assert expected_keys | {"token_settlement_payment_message"} == set(
+    assert expected_keys | {
+        "buyer_vault_accept_offer_coin_spend",
+        "token_settlement_payment_message",
+    } == set(
         fixture["specific_deed_swap"]["expected"].keys()
     )
     assert expected_keys == set(fixture["true_redemption"]["expected"].keys())

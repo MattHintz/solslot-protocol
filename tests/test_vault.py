@@ -21,6 +21,8 @@ from chia.wallet.puzzles.singleton_top_layer_v1_1 import (
 )
 from chia_rs.sized_bytes import bytes32
 
+from solslot_puzzles.protocol_deployment import singleton_full_puzzle_hash
+
 # ── Load compiled puzzles ──────────────────────────────────────────────────
 VAULT_INNER_MOD: Program = load_clvm(
     "vault_singleton_inner.clsp",
@@ -55,7 +57,7 @@ SECP_OWNER_PUBKEY = b"\x02" + bytes(32)
 # Members Merkle root — 32-byte placeholder (one-leaf tree for single-owner vaults)
 MEMBERS_MERKLE_ROOT = bytes32(b"\xee" * 32)
 IDENTITY_ATTEST_ROOT = bytes32(bytes.fromhex("4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a"))
-ZKPASSPORT_BRIDGE_POLICY_HASH = bytes32(b"\x00" * 32)
+ZKPASSPORT_BRIDGE_POLICY_HASH = bytes32(b"\x88" * 32)
 ATTESTATION_LEAF_HASH = bytes32(b"\x44" * 32)
 ATTESTATION_PROOF = Program.to((0, []))
 
@@ -377,7 +379,7 @@ class TestVaultBLSAcceptOffer:
         # Pinned solution tree hash. Embeds the vault inner puzzle hash, so it
         # updates whenever vault_singleton_inner.clsp's mod hash changes — here,
         # the 'm' (migrate) spend case (vault upgrade flow) was added.
-        assert sol.get_tree_hash().hex() == "8ab99e40a3787a000e6973027f9fead2d96b2e7e3b00e45c46aa4eee961f0657"
+        assert sol.get_tree_hash().hex() == "e12e401cc2e81cd1a18ff16208179ec3bf5e073f7d68dfc6633a890860eb1a0e"
         fields = list(sol.as_iter())
         params = list(fields[4].as_iter())
         assert bytes32(fields[0].as_atom()) == my_id
@@ -415,7 +417,7 @@ class TestVaultBLSAcceptOffer:
             "2d33d2424799d4a31f7225871d9a56239729293e44e574c47905587fa84d81db"
         )
         assert extract_cond(conds, OP_ASSERT_PUZZLE_ANN)[1] == bytes.fromhex(
-            "edcf4c2a4cf369fc74cc94bda7effb4747c383acacd1f11aa0885a00c261ef89"
+            "8f93f51cc853aee8aa58d6b49ddf74d58c8d1e5bfd3bf3b6123d5e202c188715"
         )
 
     def test_accept_offer_agg_sig_present(self):
@@ -428,13 +430,13 @@ class TestVaultBLSAcceptOffer:
             self._offer_params(),
         ])
         conds = curried.run(sol).as_python()
-        # AGG_SIG_ME, ASSERT_PUZZLE_ANN, CREATE_COIN, REMARK,
+        # AGG_SIG_ME, ASSERT_PUZZLE_ANN, CREATE_PUZZLE_ANN, CREATE_COIN, REMARK,
         # ASSERT_SECONDS_ABSOLUTE, ASSERT_BEFORE_SECONDS_ABSOLUTE,
         # ASSERT_MY_COIN_ID, ASSERT_MY_AMOUNT, ASSERT_MY_PUZZLEHASH
-        assert len(conds) == 9
+        assert len(conds) == 10
         assert extract_cond(conds, OP_AGG_SIG_ME)[1] == BLS_OWNER_PUBKEY
 
-    def test_accept_offer_asserts_pool_announcement(self):
+    def test_accept_offer_pairs_with_live_pool_swap_announcement(self):
         curried = self._curried_enrolled()
         my_id = bytes32(b"\x11" * 32)
         my_inner_puzhash = curried.get_tree_hash()
@@ -444,10 +446,46 @@ class TestVaultBLSAcceptOffer:
             self._offer_params(),
         ])
         conds = curried.run(sol).as_python()
-        assert extract_cond(conds, OP_ASSERT_PUZZLE_ANN) is not None
+        expected_pool_message = PROTOCOL_PREFIX + Program.to([
+            6,
+            DEED_LAUNCHER_ID,
+            100_000,
+        ]).get_tree_hash()
+        assert extract_cond(conds, OP_ASSERT_PUZZLE_ANN)[1] == hashlib.sha256(
+            bytes(singleton_full_puzzle_hash(POOL_LAUNCHER_ID, POOL_INNER_PUZHASH))
+            + expected_pool_message
+        ).digest()
+        assert extract_cond(conds, OP_CREATE_PUZZLE_ANN)[1] == PROTOCOL_PREFIX + Program.to([
+            b"a",
+            DEED_LAUNCHER_ID,
+            100_000,
+            my_id,
+        ]).get_tree_hash()
 
     def test_accept_offer_rejects_empty_identity_root(self):
         curried = curry_vault_bls()
+        my_id = bytes32(b"\x11" * 32)
+        my_inner_puzhash = curried.get_tree_hash()
+        sol = Program.to([
+            my_id, my_inner_puzhash, 1,
+            SPEND_ACCEPT_OFFER,
+            self._offer_params(),
+        ])
+        with pytest.raises(Exception):
+            curried.run(sol)
+
+    def test_accept_offer_rejects_zero_bridge_policy(self):
+        curried = VAULT_INNER_MOD.curry(
+            VAULT_SINGLETON_STRUCT,
+            BLS_OWNER_PUBKEY,
+            AUTH_TYPE_BLS,
+            MEMBERS_MERKLE_ROOT,
+            ATTESTATION_LEAF_HASH,
+            bytes32(b"\x00" * 32),
+            SINGLETON_MOD_HASH,
+            POOL_LAUNCHER_ID,
+            LAUNCHER_PUZZLE_HASH,
+        )
         my_id = bytes32(b"\x11" * 32)
         my_inner_puzhash = curried.get_tree_hash()
         sol = Program.to([
@@ -923,6 +961,7 @@ class TestVaultDriverHelpers:
             MEMBERS_MERKLE_ROOT,
             POOL_LAUNCHER_ID,
             identity_attest_root=ATTESTATION_LEAF_HASH,
+            zkpassport_bridge_policy_hash=ZKPASSPORT_BRIDGE_POLICY_HASH,
         )
         vault_coin = Coin(bytes32(b"\x99" * 32), current_inner.get_tree_hash(), 1)
         lineage = LineageProof(parent_name=VAULT_LAUNCHER_ID, amount=1)
@@ -941,6 +980,7 @@ class TestVaultDriverHelpers:
             ATTESTATION_PROOF,
             CURRENT_TIMESTAMP,
             lineage,
+            zkpassport_bridge_policy_hash=ZKPASSPORT_BRIDGE_POLICY_HASH,
         )
         assert spend.coin == vault_coin
 
@@ -1423,6 +1463,7 @@ class TestVaultUpdateIdentity:
                 1,
                 CURRENT_TIMESTAMP,
                 lineage,
+                zkpassport_bridge_policy_hash=ZKPASSPORT_BRIDGE_POLICY_HASH,
             )
         with pytest.raises(ValueError, match="bridge_amount"):
             build_vault_update_identity_spend(
@@ -1437,6 +1478,7 @@ class TestVaultUpdateIdentity:
                 0,
                 CURRENT_TIMESTAMP,
                 lineage,
+                zkpassport_bridge_policy_hash=ZKPASSPORT_BRIDGE_POLICY_HASH,
             )
         spend = build_vault_update_identity_spend(
             vault_coin,
@@ -1450,6 +1492,7 @@ class TestVaultUpdateIdentity:
             1,
             CURRENT_TIMESTAMP,
             lineage,
+            zkpassport_bridge_policy_hash=ZKPASSPORT_BRIDGE_POLICY_HASH,
         )
         assert spend.coin == vault_coin
 

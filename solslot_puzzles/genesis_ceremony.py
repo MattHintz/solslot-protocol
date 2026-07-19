@@ -429,6 +429,7 @@ def build_genesis_ceremony_plan(
     )
     validator_tuple = tuple(validator_set.pubkeys)
 
+    bridge_policy_hash = validator_set.policy_hash
     nav_launcher_id = _launcher_id(funding.nav_registry)
     base = ProtocolDeploymentPlan(
         network=network,
@@ -444,6 +445,7 @@ def build_genesis_ceremony_plan(
         trusted_protocol_treasury_puzhash=trusted_protocol_treasury_puzzle_hash,
         trusted_governance_rewards_puzhash=trusted_governance_rewards_puzzle_hash,
         trusted_governance_rewards_root=trusted_governance_rewards_root,
+        trusted_zkpassport_bridge_policy_hash=bridge_policy_hash,
     )
 
     nav_inner = nav_registry.make_inner_puzzle_hash(
@@ -485,7 +487,6 @@ def build_genesis_ceremony_plan(
         full_puzzle_hash=singleton_full_puzzle_hash(admin_launcher_id, admin_inner),
     )
 
-    bridge_policy_hash = validator_set.policy_hash
     canonical_params_hash = vault_registry.compute_canonical_params_hash(
         pool_singleton_mod_hash=bytes32(SINGLETON_MOD_HASH),
         pool_launcher_id=base.pool_launcher_id,

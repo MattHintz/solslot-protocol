@@ -53,6 +53,7 @@ TOKEN_TAIL_HASH = bytes32(b"\x41" * 32)
 CAT_MOD_HASH = bytes32(b"\x42" * 32)
 OFFER_MOD_HASH = bytes32(b"\x43" * 32)
 P2_VAULT_MOD_HASH = bytes32(b"\x44" * 32)
+VAULT_INNER_MOD_HASH = bytes32(b"\x4b" * 32)
 NAV_REGISTRY_MOD_HASH = collection_nav_registry_inner_mod_hash()
 NAV_REGISTRY_GOV_PUBKEY = b"\x45" * 48
 NAV_REGISTRY_LAUNCHER_ID = bytes32(b"\x46" * 32)
@@ -60,6 +61,7 @@ TREASURY_RESERVE_HASH = bytes32(b"\x47" * 32)
 PROTOCOL_TREASURY_HASH = bytes32(b"\x48" * 32)
 GOVERNANCE_REWARDS_HASH = bytes32(b"\x49" * 32)
 GOVERNANCE_REWARDS_ROOT = bytes32(b"\x4a" * 32)
+TRUSTED_ZKPASSPORT_BRIDGE_POLICY_HASH = bytes32(b"\x4c" * 32)
 
 CREATE_COIN = 51
 CREATE_COIN_ANNOUNCEMENT = 60
@@ -96,6 +98,7 @@ def _curry_pool(
             CAT_MOD_HASH,
             OFFER_MOD_HASH,
             P2_VAULT_MOD_HASH,
+            VAULT_INNER_MOD_HASH,
             NAV_REGISTRY_MOD_HASH,
             NAV_REGISTRY_GOV_PUBKEY,
             NAV_REGISTRY_LAUNCHER_ID,
@@ -104,6 +107,7 @@ def _curry_pool(
             PROTOCOL_TREASURY_HASH,
             GOVERNANCE_REWARDS_HASH,
             GOVERNANCE_REWARDS_ROOT,
+            TRUSTED_ZKPASSPORT_BRIDGE_POLICY_HASH,
             1000,
             status,
             tvl,

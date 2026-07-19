@@ -70,6 +70,7 @@ GOV_GENESIS = bytes32(b"\xd0" * 32)
 TRUSTED_NAV_REGISTRY_GOV_PUBKEY = b"\x91" * 48
 TRUSTED_NAV_REGISTRY_LAUNCHER_ID = bytes32(b"\x92" * 32)
 TRUSTED_GOVERNANCE_REWARDS_ROOT = bytes32(b"\x93" * 32)
+TRUSTED_ZKPASSPORT_BRIDGE_POLICY_HASH = bytes32(b"\x94" * 32)
 
 
 def trusted_v2_kwargs() -> dict:
@@ -77,6 +78,7 @@ def trusted_v2_kwargs() -> dict:
         "trusted_nav_registry_gov_pubkey": TRUSTED_NAV_REGISTRY_GOV_PUBKEY,
         "trusted_nav_registry_launcher_id": TRUSTED_NAV_REGISTRY_LAUNCHER_ID,
         "trusted_governance_rewards_root": TRUSTED_GOVERNANCE_REWARDS_ROOT,
+        "trusted_zkpassport_bridge_policy_hash": TRUSTED_ZKPASSPORT_BRIDGE_POLICY_HASH,
     }
 
 
