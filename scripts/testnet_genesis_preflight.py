@@ -374,6 +374,12 @@ def _validate_plan(
         findings.append(Finding("error", "ceremony plan protocolVersion is not solslot-v2"))
     if plan.get("network") != "testnet11" or plan.get("evmChainId") != 11155111:
         findings.append(Finding("error", "ceremony plan is not testnet11/Sepolia"))
+    _require_hex(
+        plan.get("kosMintExecutePubkey"),
+        48,
+        "plan.kosMintExecutePubkey",
+        findings,
+    )
     if ceremony_id and plan.get("ceremonyId") != ceremony_id:
         findings.append(Finding("error", "ceremony plan is bound to a different ceremony"))
     plan_sources = validate_source_shas(plan.get("sourceShas"), findings, "plan.sourceShas")
@@ -659,6 +665,16 @@ def _validate_artifact(
             findings.append(Finding("error", "artifact launcher IDs must be distinct"))
     _require_hex(artifact.get("sgtGenesisCoinId"), 32, "artifact.sgtGenesisCoinId", findings)
     _require_hex(artifact.get("sgtTailHash"), 32, "artifact.sgtTailHash", findings)
+    governance = _require_mapping(
+        artifact.get("governanceStruct"), "artifact.governanceStruct", findings
+    )
+    if governance:
+        _require_hex(
+            governance.get("mintExecuteCosignerPubkey"),
+            48,
+            "artifact.governanceStruct.mintExecuteCosignerPubkey",
+            findings,
+        )
 
     retired = artifact.get("retiredCoordinates")
     if not isinstance(retired, list) or not retired:

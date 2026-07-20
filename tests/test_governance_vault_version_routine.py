@@ -33,6 +33,7 @@ from chia_rs.sized_bytes import bytes32
 
 from solslot_puzzles import vault_version_registry_driver as vvr
 from solslot_puzzles.sgt_driver import (
+    TEST_KOS_MINT_EXECUTE_PUBKEY,
     TRK_EXECUTE,
     bill_vault_version,
     proposal_hash_from_bill,
@@ -99,6 +100,7 @@ def _gov_execute_ready_inner(
         VOTING_WINDOW,
         SGT_TOTAL_SUPPLY,
         MIN_PROPOSAL_STAKE,
+        TEST_KOS_MINT_EXECUTE_PUBKEY,
         proposal_hash=proposal_hash_from_bill(bill),
         bill_operation=bill,
         vote_tally=SGT_TOTAL_SUPPLY,  # 100% > quorum

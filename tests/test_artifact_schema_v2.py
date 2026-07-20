@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 
 import pytest
+from chia_rs import AugSchemeMPL
 from chia_rs.sized_bytes import bytes32
 
 from solslot_puzzles.artifact_schema_v2 import (
@@ -95,6 +96,25 @@ def test_artifact_hash_is_canonical_and_tamper_evident() -> None:
     tampered["network"] = "mainnet"
     with pytest.raises(ValueError, match="network|artifactHash"):
         verify_public_artifact(tampered, signature_verifier=accept_test_signature)
+
+
+def test_artifact_rejects_empty_mint_execute_cosigner() -> None:
+    value = artifact()
+    value["governanceStruct"]["mintExecuteCosignerPubkey"] = "0x" + ("00" * 48)
+    value["artifactHash"] = artifact_hash(value)
+    with pytest.raises(ValueError, match="mintExecuteCosignerPubkey.*nonzero"):
+        verify_public_artifact(value, signature_verifier=accept_test_signature)
+
+
+def test_artifact_rejects_cosigner_not_bound_to_governance_puzzle() -> None:
+    value = artifact()
+    replacement = AugSchemeMPL.key_gen(
+        b"other artifact mint execute key seed".ljust(32, b"0")
+    ).get_g1()
+    value["governanceStruct"]["mintExecuteCosignerPubkey"] = "0x" + bytes(replacement).hex()
+    value["artifactHash"] = artifact_hash(value)
+    with pytest.raises(ValueError, match="not bound to governance puzzle hashes"):
+        verify_public_artifact(value, signature_verifier=accept_test_signature)
 
 
 def test_artifact_requires_two_distinct_roster_signatures() -> None:

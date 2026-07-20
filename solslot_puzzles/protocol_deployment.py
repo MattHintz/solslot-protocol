@@ -410,6 +410,9 @@ class ProtocolDeploymentPlan:
     # ── Trusted Pool Economic V2 wiring ─────────────────────────────────
     trusted_nav_registry_mod_hash: bytes32 = field(default_factory=collection_nav_registry_inner_mod_hash)
     trusted_nav_registry_gov_pubkey: bytes = DEFAULT_EMPTY_GOV_PUBKEY
+    # The private co-signer key never belongs in a deployment plan. Its public
+    # key is immutable governance-puzzle material and permits only MINT EXECUTE.
+    kos_mint_execute_pubkey: bytes = DEFAULT_EMPTY_GOV_PUBKEY
     trusted_nav_registry_launcher_id: bytes32 = DEFAULT_EMPTY_B32
     trusted_treasury_reserve_puzhash: bytes32 | None = None
     trusted_protocol_treasury_puzhash: bytes32 | None = None
@@ -451,6 +454,8 @@ class ProtocolDeploymentPlan:
         # Step 1: launcher ids deterministic from parent coin names
         if len(self.trusted_nav_registry_gov_pubkey) != 48:
             raise ValueError("trusted_nav_registry_gov_pubkey must be 48 bytes")
+        if len(self.kos_mint_execute_pubkey) != 48:
+            raise ValueError("kos_mint_execute_pubkey must be 48 bytes")
         if self.trusted_treasury_reserve_puzhash is None:
             self.trusted_treasury_reserve_puzhash = self.faucet_inner_puzhash
         if self.trusted_protocol_treasury_puzhash is None:
@@ -460,6 +465,10 @@ class ProtocolDeploymentPlan:
         _reject_empty_gov_pubkey(
             self.trusted_nav_registry_gov_pubkey,
             "trusted_nav_registry_gov_pubkey",
+        )
+        _reject_empty_gov_pubkey(
+            self.kos_mint_execute_pubkey,
+            "kos_mint_execute_pubkey",
         )
         _reject_empty_b32(
             self.trusted_nav_registry_launcher_id,
@@ -554,6 +563,7 @@ class ProtocolDeploymentPlan:
             self.params.voting_window_seconds,
             self.params.sgt_total_supply,
             self.params.min_proposal_stake,
+            self.kos_mint_execute_pubkey,
         )
         self.tracker_inner_puzhash = bytes32(tracker_inner.get_tree_hash())
         self.tracker_full_puzhash = singleton_full_puzzle_hash(
@@ -795,6 +805,10 @@ def plan_from_manifest_dict(data: dict[str, Any]) -> ProtocolDeploymentPlan:
         trusted_kwargs["trusted_nav_registry_gov_pubkey"] = _bytes(
             data["trusted_nav_registry_gov_pubkey"]
         )
+    if "kos_mint_execute_pubkey" in data:
+        trusted_kwargs["kos_mint_execute_pubkey"] = _bytes(
+            data["kos_mint_execute_pubkey"]
+        )
     plan = ProtocolDeploymentPlan(
         network=data["network"],
         params=params,
@@ -816,13 +830,18 @@ def plan_from_manifest_dict(data: dict[str, Any]) -> ProtocolDeploymentPlan:
         "governance_singleton_struct_hash",
         "did_inner_puzhash", "did_full_puzhash",
         "tracker_inner_puzhash", "tracker_full_puzhash",
+        "kos_mint_execute_pubkey",
         "trusted_nav_registry_mod_hash", "trusted_nav_registry_launcher_id",
         "trusted_treasury_reserve_puzhash", "trusted_protocol_treasury_puzhash",
         "trusted_governance_rewards_puzhash", "trusted_governance_rewards_root",
         "trusted_zkpassport_bridge_policy_hash",
     ]:
         if key in data:
-            stored = _b32(data[key])
+            stored = (
+                _bytes(data[key])
+                if key == "kos_mint_execute_pubkey"
+                else _b32(data[key])
+            )
             actual = getattr(plan, key)
             if stored != actual:
                 raise ValueError(
@@ -874,11 +893,12 @@ def load_manifest_dict(path: Path) -> dict[str, Any]:
         "governance_singleton_struct_hash",
         "did_inner_puzhash", "did_full_puzhash",
         "tracker_inner_puzhash", "tracker_full_puzhash",
+        "kos_mint_execute_pubkey",
     }
     missing = required - set(raw.keys())
     if missing:
         raise ValueError(f"Manifest missing required fields: {sorted(missing)}")
-    # Sanity: all 32-byte hex fields should be 0x-prefixed 64 hex chars
+    # Sanity: 32-byte fields and the co-signer public key have fixed encoding.
     if raw["protocol_version"] != PROTOCOL_VERSION:
         raise ValueError(f"Unsupported or retired protocol_version: {raw['protocol_version']!r}")
     if raw["pool_puzzle_version"] != POOL_PUZZLE_VERSION:
@@ -892,7 +912,7 @@ def load_manifest_dict(path: Path) -> dict[str, Any]:
         )
     hex_fields = required - {
         "network", "params", "protocol_version", "pool_puzzle_version",
-        "smart_deed_puzzle_version",
+        "smart_deed_puzzle_version", "kos_mint_execute_pubkey",
     }
     for f in hex_fields:
         v = raw[f]
@@ -900,6 +920,11 @@ def load_manifest_dict(path: Path) -> dict[str, Any]:
             raise ValueError(
                 f"Manifest field {f} is not a 0x-prefixed 32-byte hex string: {v!r}"
             )
+    cosigner = raw["kos_mint_execute_pubkey"]
+    if not isinstance(cosigner, str) or not cosigner.startswith("0x") or len(cosigner) != 98:
+        raise ValueError("Manifest field kos_mint_execute_pubkey is not a 0x-prefixed 48-byte hex string")
+    if cosigner.lower() == "0x" + ("00" * 48):
+        raise ValueError("Manifest field kos_mint_execute_pubkey must be nonzero")
     return raw
 
 

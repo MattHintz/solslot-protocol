@@ -40,6 +40,7 @@ from solslot_puzzles.protocol_deployment import (
 )
 from solslot_puzzles.sgt_driver import (
     build_tracker_execute_coin_spend,
+    kos_mint_execute_signing_message,
     proposal_tracker_inner_puzzle,
     sgt_free_inner_mod,
     sgt_locked_inner_mod,
@@ -88,6 +89,8 @@ async def test_complete_mint_execute_bundle_passes_consensus() -> None:
 
         registry_sk = AugSchemeMPL.key_gen(b"solslot-property-registry-sim-key")
         registry_pk = bytes(registry_sk.get_g1())
+        kos_sk = AugSchemeMPL.key_gen(b"solslot-mint-execute-cosigner-sim-key")
+        kos_pk = bytes(kos_sk.get_g1())
         registry_launcher_id = bytes32(
             Coin(registry_origin.name(), SINGLETON_LAUNCHER_HASH, uint64(1)).name()
         )
@@ -147,6 +150,7 @@ async def test_complete_mint_execute_bundle_passes_consensus() -> None:
             VOTING_WINDOW,
             SGT_TOTAL_SUPPLY,
             MIN_PROPOSAL_STAKE,
+            kos_pk,
             proposal_hash=artifacts.proposal_hash,
             bill_operation=artifacts.bill_op_program,
             vote_tally=SGT_TOTAL_SUPPLY,
@@ -266,7 +270,7 @@ async def test_complete_mint_execute_bundle_passes_consensus() -> None:
             + bytes(DEFAULT_CONSTANTS.AGG_SIG_ME_ADDITIONAL_DATA)
         )
         registry_signature = AugSchemeMPL.sign(registry_sk, registry_message)
-        execute_bundle = SpendBundle(
+        unsigned_kos_execute_bundle = SpendBundle(
             [
                 tracker_execute,
                 did_execute,
@@ -275,6 +279,21 @@ async def test_complete_mint_execute_bundle_passes_consensus() -> None:
                 deed_launch,
             ],
             registry_signature,
+        )
+        unsigned_status, unsigned_error = await client.push_tx(unsigned_kos_execute_bundle)
+        assert unsigned_status != MempoolInclusionStatus.SUCCESS
+        assert unsigned_error is not None
+
+        kos_message = kos_mint_execute_signing_message(
+            governance_singleton_struct=tracker_struct,
+            governance_coin_id=bytes32(tracker_coin.name()),
+            proposal_hash=artifacts.proposal_hash,
+            agg_sig_me_additional_data=bytes(DEFAULT_CONSTANTS.AGG_SIG_ME_ADDITIONAL_DATA),
+        )
+        kos_signature = AugSchemeMPL.sign(kos_sk, kos_message)
+        execute_bundle = SpendBundle(
+            unsigned_kos_execute_bundle.coin_spends,
+            AugSchemeMPL.aggregate([registry_signature, kos_signature]),
         )
         execute_status, execute_error = await client.push_tx(execute_bundle)
         assert execute_error is None, f"complete mint execute rejected: {execute_error}"
@@ -306,6 +325,7 @@ async def test_complete_mint_execute_bundle_passes_consensus() -> None:
             VOTING_WINDOW,
             SGT_TOTAL_SUPPLY,
             MIN_PROPOSAL_STAKE,
+            kos_pk,
         )
         idle_records = await client.get_coin_records_by_puzzle_hash(
             bytes32(puzzle_for_singleton(tracker_launcher_id, idle_tracker).get_tree_hash()),

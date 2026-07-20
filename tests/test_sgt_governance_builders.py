@@ -35,6 +35,7 @@ from chia_rs.sized_ints import uint64
 
 from solslot_puzzles.sgt_driver import (
     SGT_LOCK,
+    TEST_KOS_MINT_EXECUTE_PUBKEY,
     TRK_VOTE,
     bill_mint,
     build_sgt_lock_coin_spend,
@@ -117,6 +118,7 @@ def _curry_open_tracker(
         VOTING_WINDOW,
         SGT_TOTAL_SUPPLY,
         MIN_PROPOSAL_STAKE,
+        TEST_KOS_MINT_EXECUTE_PUBKEY,
         proposal_hash=proposal_hash,
         bill_operation=bill,
         vote_tally=vote_tally,

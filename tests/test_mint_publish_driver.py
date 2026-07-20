@@ -1055,6 +1055,7 @@ class TestBuildTrackerProposeCoinSpend:
     def _idle_tracker_inner(self) -> Program:
         """Build an idle (no-active-proposal) tracker inner puzzle."""
         from solslot_puzzles.sgt_driver import (
+            TEST_KOS_MINT_EXECUTE_PUBKEY,
             sgt_free_inner_mod,
             sgt_locked_inner_mod,
             proposal_tracker_inner_puzzle,
@@ -1077,6 +1078,7 @@ class TestBuildTrackerProposeCoinSpend:
             300,  # voting_window (5 min)
             1_000_000,  # sgt_total_supply
             10_000,  # min_proposal_stake
+            TEST_KOS_MINT_EXECUTE_PUBKEY,
             proposal_hash=0,
             bill_operation=0,
             vote_tally=0,

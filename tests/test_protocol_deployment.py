@@ -57,9 +57,11 @@ from solslot_puzzles.protocol_deployment import (
     plan_to_manifest_dict,
     save_manifest,
     load_manifest,
+    load_manifest_dict,
     singleton_full_puzzle_hash,
     singleton_struct,
 )
+from solslot_puzzles.sgt_driver import TEST_KOS_MINT_EXECUTE_PUBKEY
 
 
 # ── Test fixtures ────────────────────────────────────────────────────────────
@@ -76,6 +78,7 @@ TRUSTED_ZKPASSPORT_BRIDGE_POLICY_HASH = bytes32(b"\x94" * 32)
 def trusted_v2_kwargs() -> dict:
     return {
         "trusted_nav_registry_gov_pubkey": TRUSTED_NAV_REGISTRY_GOV_PUBKEY,
+        "kos_mint_execute_pubkey": TEST_KOS_MINT_EXECUTE_PUBKEY,
         "trusted_nav_registry_launcher_id": TRUSTED_NAV_REGISTRY_LAUNCHER_ID,
         "trusted_governance_rewards_root": TRUSTED_GOVERNANCE_REWARDS_ROOT,
         "trusted_zkpassport_bridge_policy_hash": TRUSTED_ZKPASSPORT_BRIDGE_POLICY_HASH,
@@ -214,6 +217,34 @@ class TestPlanDerivation:
         )
         assert a.tracker_inner_puzhash != b.tracker_inner_puzhash
 
+    def test_mint_execute_cosigner_is_curried_into_tracker_hash(self, faucet):
+        """Replacing the dedicated MINT key changes the live governance puzzle."""
+        first = ProtocolDeploymentPlan(
+            network="testnet11",
+            params=ProtocolDeploymentParams(),
+            faucet_inner_puzhash=faucet.address_puzzle_hash,
+            sgt_genesis_coin_id=SGT_GENESIS,
+            pool_genesis_coin_id=POOL_GENESIS,
+            did_genesis_coin_id=DID_GENESIS,
+            gov_genesis_coin_id=GOV_GENESIS,
+            **trusted_v2_kwargs(),
+        )
+        changed = trusted_v2_kwargs()
+        changed["kos_mint_execute_pubkey"] = bytes(
+            AugSchemeMPL.key_gen(b"solslot-other-mint-execute-cosigner").get_g1()
+        )
+        second = ProtocolDeploymentPlan(
+            network="testnet11",
+            params=ProtocolDeploymentParams(),
+            faucet_inner_puzhash=faucet.address_puzzle_hash,
+            sgt_genesis_coin_id=SGT_GENESIS,
+            pool_genesis_coin_id=POOL_GENESIS,
+            did_genesis_coin_id=DID_GENESIS,
+            gov_genesis_coin_id=GOV_GENESIS,
+            **changed,
+        )
+        assert first.tracker_inner_puzhash != second.tracker_inner_puzhash
+
     def test_changing_nav_registry_floor_changes_pool_hash(self, faucet):
         """Different minimum NAV registry versions commit different pool inners."""
         a = ProtocolDeploymentPlan(
@@ -295,6 +326,7 @@ class TestManifestRoundtrip:
             "governance_singleton_struct_hash",
             "did_inner_puzhash", "did_full_puzhash",
             "tracker_inner_puzhash", "tracker_full_puzhash",
+            "kos_mint_execute_pubkey",
         ]:
             assert required in m, f"manifest missing {required}"
 
@@ -303,6 +335,7 @@ class TestManifestRoundtrip:
         for key in ["sgt_tail_hash", "pool_launcher_id", "tracker_full_puzhash"]:
             assert m[key].startswith("0x")
             assert len(m[key]) == 66  # 0x + 64 hex chars
+        assert len(m["kos_mint_execute_pubkey"]) == 98  # 0x + 96 hex chars
 
     def test_from_dict_reconstructs_identical_plan(self, plan):
         m = plan_to_manifest_dict(plan)
@@ -322,6 +355,19 @@ class TestManifestRoundtrip:
         m["pool_full_puzhash"] = "0x" + ("00" * 32)
         with pytest.raises(ValueError, match="Manifest corruption"):
             plan_from_manifest_dict(m)
+
+    def test_zero_mint_execute_cosigner_is_rejected(self, plan, tmp_path):
+        m = plan_to_manifest_dict(plan)
+        m["kos_mint_execute_pubkey"] = "0x" + ("00" * 48)
+        with pytest.raises(ValueError, match="kos_mint_execute_pubkey"):
+            plan_from_manifest_dict(m)
+
+        path = tmp_path / "deployment.json"
+        path.write_text(json.dumps(m), encoding="utf-8")
+        with pytest.raises(ValueError, match="must be nonzero"):
+            load_manifest_dict(path)
+        with pytest.raises(ValueError, match="must be configured"):
+            load_manifest(path)
 
     def test_retired_manifest_rejected(self, plan):
         m = plan_to_manifest_dict(plan)
