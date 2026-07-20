@@ -59,6 +59,7 @@ def _ceremony_plan() -> tuple[dict, dict, dict, dict]:
         "expiresAt": 2_000_000_000,
         "sourceShas": sources,
         "evmAddresses": evm_addresses,
+        "kosMintExecutePubkey": _hex(29, 48),
         "fundingCoinIds": {
             name: _hex(10 + index)
             for index, name in enumerate(preflight.FUNDING_NAMES)
@@ -220,6 +221,7 @@ def _public_artifact(record: dict, plan: dict) -> dict:
         "governanceStruct": {
             "treeHash": _hex(81),
             "launcherId": plan["launcherIds"]["governance"],
+            "mintExecuteCosignerPubkey": plan["kosMintExecutePubkey"],
         },
         "protocolParameters": plan["protocolParameters"],
         "stateVersions": plan["stateVersions"],

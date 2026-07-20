@@ -29,7 +29,9 @@ from solslot_puzzles.sgt_driver import (
     BILL_MINT,
     BILL_SETTLE,
     BILL_VAULT_VERSION,
+    KOS_MINT_EXECUTE_TAG,
     SINGLETON_LAUNCHER_HASH,
+    TEST_KOS_MINT_EXECUTE_PUBKEY,
     TRK_EXECUTE,
     TRK_EXPIRE,
     TRK_PROPOSE,
@@ -40,6 +42,7 @@ from solslot_puzzles.sgt_driver import (
     bill_vault_version,
     cat_sgt_free_puzzle_hash,
     deed_releases_hash,
+    kos_mint_execute_message,
     sgt_free_inner_mod,
     sgt_locked_inner_mod,
     proposal_hash_from_bill,
@@ -65,6 +68,7 @@ ASSERT_MY_PUZZLEHASH = 72
 ASSERT_SECONDS_ABSOLUTE = 81
 ASSERT_BEFORE_SECONDS_ABSOLUTE = 85
 REMARK = 1
+AGG_SIG_ME = 50
 
 
 # ── Common fixtures ──────────────────────────────────────────────────────────
@@ -123,6 +127,7 @@ def _curry_tracker(
         VOTING_WINDOW,
         SGT_TOTAL_SUPPLY,
         MIN_PROPOSAL_STAKE,
+        TEST_KOS_MINT_EXECUTE_PUBKEY,
         proposal_hash=proposal_hash,
         bill_operation=bill_op,
         vote_tally=vote_tally,
@@ -362,6 +367,7 @@ class TestPropose:
             TRACKER_STRUCT, SGT_FREE_MOD_HASH, SGT_LOCKED_MOD_HASH,
             CAT_MOD_HASH, SGT_TAIL_HASH, DID_PUZHASH, POOL_STRUCT,
             QUORUM_BPS, VOTING_WINDOW, SGT_TOTAL_SUPPLY, MIN_PROPOSAL_STAKE,
+            TEST_KOS_MINT_EXECUTE_PUBKEY,
             proposal_hash=ph, bill_operation=bill,
             vote_tally=MIN_PROPOSAL_STAKE, voting_deadline=2_000_000_000,
         ).get_tree_hash()
@@ -545,6 +551,16 @@ class TestExecute:
             expected_registry_announce_id,
         }
 
+        cosigner_conditions = [c for c in conds if _atom_int(c[0]) == AGG_SIG_ME]
+        assert len(cosigner_conditions) == 1
+        assert _atom_bytes(cosigner_conditions[0][1]) == TEST_KOS_MINT_EXECUTE_PUBKEY
+        assert _atom_bytes(cosigner_conditions[0][2]) == kos_mint_execute_message(
+            governance_singleton_struct=TRACKER_STRUCT,
+            governance_coin_id=my_id,
+            proposal_hash=proposal_hash,
+        )
+        assert _atom_bytes(cosigner_conditions[0][2])[:5] == b"S" + KOS_MINT_EXECUTE_TAG
+
     def test_execute_rejects_below_quorum(self):
         bill = mint_bill(bytes32(b"\x33" * 32))
         # 49% — below 50% quorum
@@ -589,6 +605,7 @@ class TestExecute:
         # FREEZE has no DID assertion (pool handles routing alone)
         asserts = [c for c in conds if _atom_int(c[0]) == ASSERT_PUZZLE_ANNOUNCEMENT]
         assert len(asserts) == 0
+        assert AGG_SIG_ME not in [_atom_int(c[0]) for c in conds]
 
     def test_execute_settle_sends_message_to_pool(self):
         """SETTLE EXECUTE: same pattern as FREEZE — mode 0x10, no extra asserts."""
@@ -638,6 +655,7 @@ class TestExecute:
         assert _atom_bytes(sends[0][2]) == expected_message
         asserts = [c for c in conds if _atom_int(c[0]) == ASSERT_PUZZLE_ANNOUNCEMENT]
         assert len(asserts) == 0
+        assert AGG_SIG_ME not in [_atom_int(c[0]) for c in conds]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -739,6 +757,7 @@ class TestDispatch:
             VOTING_WINDOW,
             SGT_TOTAL_SUPPLY,
             MIN_PROPOSAL_STAKE,
+            TEST_KOS_MINT_EXECUTE_PUBKEY,
             proposal_hash=ph,
             bill_operation=bill,
             vote_tally=100_000,
@@ -788,6 +807,7 @@ class TestExecuteVaultVersion:
         # and asserts nothing (registry is the asserter, gov the announcer).
         assert SEND_MESSAGE not in codes
         assert ASSERT_PUZZLE_ANNOUNCEMENT not in codes
+        assert AGG_SIG_ME not in codes
 
         # The governance driver and the registry driver must agree on the
         # routine approval message byte-for-byte.
@@ -825,6 +845,7 @@ class TestExecuteVaultVersion:
             TRACKER_STRUCT, SGT_FREE_MOD_HASH, SGT_LOCKED_MOD_HASH,
             CAT_MOD_HASH, SGT_TAIL_HASH, DID_PUZHASH, POOL_STRUCT,
             QUORUM_BPS, VOTING_WINDOW, SGT_TOTAL_SUPPLY, MIN_PROPOSAL_STAKE,
+            TEST_KOS_MINT_EXECUTE_PUBKEY,
             proposal_hash=0, bill_operation=0, vote_tally=0, voting_deadline=0,
         ).get_tree_hash()
         assert _atom_bytes(cc[1]) == expected_idle
@@ -859,6 +880,7 @@ class TestExecuteVaultVersion:
             TRACKER_STRUCT, SGT_FREE_MOD_HASH, SGT_LOCKED_MOD_HASH,
             CAT_MOD_HASH, SGT_TAIL_HASH, DID_PUZHASH, POOL_STRUCT,
             QUORUM_BPS, VOTING_WINDOW, SGT_TOTAL_SUPPLY, MIN_PROPOSAL_STAKE,
+            TEST_KOS_MINT_EXECUTE_PUBKEY,
             proposal_hash=ph, bill_operation=bill,
             vote_tally=MIN_PROPOSAL_STAKE, voting_deadline=2_000_000_000,
         ).get_tree_hash()

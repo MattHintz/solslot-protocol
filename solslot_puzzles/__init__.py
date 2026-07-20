@@ -102,8 +102,10 @@ FROZEN_CHECKSUM: Optional[str] = (
     #     vault authorization under the trusted zkPassport bridge policy;
     #   - Solslot V2 vault and credential domains;
     #   - five-spend governance/DID/registry/proposal/deed mint execution;
+    #   - RC17 MINT EXECUTE requires the immutable, dedicated KoS co-signer
+    #     public key to sign the governance singleton/proposal commitment;
     #   - no retired contract implementations in the canonical package.
-    "8a3255df571b40dc83841bf467645ae07d4feab5f13abe68f51089eb3b7dc883"
+    "ea5b46bc20b2ea626c233d9535235d8be597f343d0bd23947f74f124df2ccaff"
 )
 
 # ── Cache ──

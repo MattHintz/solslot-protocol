@@ -253,6 +253,7 @@ def _plan_payload(
         "expiresAt": plan.expires_at,
         "sourceShas": dict(plan.source_shas),
         "evmAddresses": dict(plan.evm_addresses),
+        "kosMintExecutePubkey": _hex(plan.base_protocol.kos_mint_execute_pubkey),
         "fundingCoinIds": {
             key: _hex(value)
             for key, value in asdict(plan.funding).items()
@@ -365,6 +366,7 @@ def build_genesis_ceremony_plan(
     funding: GenesisFundingCoinIds,
     faucet_puzzle_hash: bytes32,
     governance_bls_pubkey: bytes,
+    kos_mint_execute_pubkey: bytes,
     admin_compressed_pubkeys: Sequence[bytes],
     validator_pubkeys: Sequence[bytes],
     trusted_treasury_reserve_puzzle_hash: bytes32,
@@ -392,6 +394,8 @@ def build_genesis_ceremony_plan(
         raise ValueError("expires_at must be a positive Unix timestamp")
     if len(governance_bls_pubkey) != 48:
         raise ValueError("governance_bls_pubkey must be 48 bytes")
+    if len(kos_mint_execute_pubkey) != 48 or kos_mint_execute_pubkey == b"\x00" * 48:
+        raise ValueError("kos_mint_execute_pubkey must be a nonzero 48-byte BLS key")
     funding.validate()
     normalized_sources = _normalize_source_shas(source_shas)
     normalized_evm = _normalize_evm_addresses(evm_addresses)
@@ -440,6 +444,7 @@ def build_genesis_ceremony_plan(
         did_genesis_coin_id=funding.did,
         gov_genesis_coin_id=funding.governance,
         trusted_nav_registry_gov_pubkey=bytes(governance_bls_pubkey),
+        kos_mint_execute_pubkey=bytes(kos_mint_execute_pubkey),
         trusted_nav_registry_launcher_id=nav_launcher_id,
         trusted_treasury_reserve_puzhash=trusted_treasury_reserve_puzzle_hash,
         trusted_protocol_treasury_puzhash=trusted_protocol_treasury_puzzle_hash,

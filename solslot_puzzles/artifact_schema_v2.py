@@ -5,9 +5,11 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
 from chia.types.blockchain_format.program import Program
+from chia.wallet.cat_wallet.cat_utils import CAT_MOD_HASH
 from chia_rs.sized_bytes import bytes32
 
 from solslot_puzzles import property_registry_driver as property_registry
@@ -18,7 +20,11 @@ from solslot_puzzles.genesis_ceremony import (
     GenesisCeremonyPlan,
     verify_genesis_ceremony_plan,
 )
-from solslot_puzzles.protocol_deployment import PROTOCOL_VERSION, singleton_struct
+from solslot_puzzles.protocol_deployment import (
+    PROTOCOL_VERSION,
+    singleton_full_puzzle_hash,
+    singleton_struct,
+)
 
 
 SCHEMA_VERSION = 2
@@ -76,6 +82,22 @@ def _hex_value(
 
 def _hex32(value: bytes | bytes32 | str, field: str) -> str:
     return _hex_value(value, field, length=32)
+
+
+def _fresh_puzzle_module(filename: str) -> Program:
+    """Load a module for the current thread without using the global CLVM cache.
+
+    Chia's Rust LazyNode is intentionally thread-affine. Public-artifact
+    verification also runs from FastAPI worker threads, so using
+    ``load_puzzle`` here would reuse a node created by another request or the
+    main thread. The committed hex is the release artifact we want to verify;
+    parsing it per check keeps this small derivation thread-safe.
+    """
+    hex_path = Path(__file__).with_name(f"{filename}.hex")
+    try:
+        return Program.from_bytes(bytes.fromhex(hex_path.read_text(encoding="ascii")))
+    except (OSError, ValueError) as exc:
+        raise ValueError(f"artifact verifier cannot load frozen {filename}") from exc
 
 
 def _address(value: str, field: str) -> str:
@@ -256,6 +278,11 @@ def build_public_artifact(
             ),
             "launcherId": _hex32(base.tracker_launcher_id, "governanceLauncherId"),
             "serialized": "0x" + bytes(singleton_struct(base.tracker_launcher_id)).hex(),
+            "mintExecuteCosignerPubkey": _hex_value(
+                base.kos_mint_execute_pubkey,
+                "governanceStruct.mintExecuteCosignerPubkey",
+                length=48,
+            ),
         },
         "protocolDid": {
             "launcherId": _hex32(base.did_launcher_id, "didLauncherId"),
@@ -422,6 +449,7 @@ def _verify_artifact_content(payload: Mapping[str, Any]) -> None:
     for key in (
         "didInnerPuzzleHash",
         "didFullPuzzleHash",
+        "governanceInnerPuzzleHash",
         "governanceFullPuzzleHash",
         "propertyRegistryFullPuzzleHash",
         "p2PoolModHash",
@@ -463,6 +491,55 @@ def _verify_artifact_content(payload: Mapping[str, Any]) -> None:
         != _hex32(expected_governance.get_tree_hash(), "governanceStruct.treeHash")
     ):
         raise ValueError("artifact governance singleton struct is invalid")
+    _hex_value(
+        str(governance.get("mintExecuteCosignerPubkey", "")),
+        "governanceStruct.mintExecuteCosignerPubkey",
+        length=48,
+    )
+    params = payload.get("protocolParameters")
+    if not isinstance(params, Mapping):
+        raise ValueError("artifact protocol parameters are missing")
+    try:
+        cosigner_pubkey = bytes.fromhex(
+            str(governance["mintExecuteCosignerPubkey"]).removeprefix("0x")
+        )
+        governance_module = _fresh_puzzle_module("governance_singleton_inner.clsp")
+        expected_governance_inner = governance_module.curry(
+            governance_module.get_tree_hash(),
+            expected_governance,
+            bytes32(_fresh_puzzle_module("sgt_free_inner.clsp").get_tree_hash()),
+            bytes32(_fresh_puzzle_module("sgt_locked_inner.clsp").get_tree_hash()),
+            CAT_MOD_HASH,
+            bytes32.fromhex(str(puzzles["sgtTailHash"]).removeprefix("0x")),
+            bytes32.fromhex(str(puzzles["didFullPuzzleHash"]).removeprefix("0x")),
+            singleton_struct(
+                bytes32.fromhex(str(launchers["pool"]).removeprefix("0x"))
+            ),
+            int(params["quorumBps"]),
+            int(params["votingWindowSeconds"]),
+            int(params["sgtTotalSupply"]),
+            int(params["minProposalStake"]),
+            cosigner_pubkey,
+            0,
+            0,
+            0,
+            0,
+        ).get_tree_hash()
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("artifact governance co-signer binding is malformed") from exc
+    expected_governance_full = singleton_full_puzzle_hash(
+        bytes32.fromhex(str(launchers["governance"]).removeprefix("0x")),
+        bytes32(expected_governance_inner),
+    )
+    if (
+        puzzles.get("governanceInnerPuzzleHash")
+        != _hex32(expected_governance_inner, "governanceInnerPuzzleHash")
+        or puzzles.get("governanceFullPuzzleHash")
+        != _hex32(expected_governance_full, "governanceFullPuzzleHash")
+    ):
+        raise ValueError(
+            "artifact MINT co-signer public key is not bound to governance puzzle hashes"
+        )
 
     registry = payload.get("propertyRegistry")
     if not isinstance(registry, Mapping):

@@ -64,6 +64,7 @@ from solslot_puzzles.mint_publish_driver import (
     canonical_p2_pool_mod_hash,
 )
 from solslot_puzzles.sgt_driver import (
+    TEST_KOS_MINT_EXECUTE_PUBKEY,
     cat_sgt_free_puzzle_hash,
     sgt_free_inner_mod,
     sgt_locked_inner_hash,
@@ -204,6 +205,7 @@ def _idle_tracker_inner() -> Program:
         VOTING_WINDOW,
         SGT_TOTAL_SUPPLY,
         MIN_PROPOSAL_STAKE,
+        TEST_KOS_MINT_EXECUTE_PUBKEY,
         proposal_hash=0,
         bill_operation=0,
         vote_tally=0,

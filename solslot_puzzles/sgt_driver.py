@@ -110,6 +110,15 @@ PROTOCOL_PREFIX = bytes.fromhex("53")  # "S"
 # vault_version_registry_inner.clsp `TAG_ROUTINE`.
 REGISTRY_TAG_ROUTINE = bytes.fromhex("5254")  # "RT"
 
+# Dedicated MINT execution co-signer namespace. This public test vector is
+# deliberately exported for deterministic fixtures only; deployment plans must
+# provide their own nonzero co-signer public key.
+KOS_MINT_EXECUTE_TAG = bytes.fromhex("4b4f534d")  # "KOSM"
+TEST_KOS_MINT_EXECUTE_PUBKEY = bytes.fromhex(
+    "ac5669419e8eb7d00814692207ddf331e45835ee441260f6309fd564e7e92a60"
+    "555e5be793654a9b5f949c7f74de8174"
+)
+
 
 # ── Singleton-struct construction ────────────────────────────────────────────
 SINGLETON_LAUNCHER_HASH = bytes32.fromhex(
@@ -240,6 +249,7 @@ def proposal_tracker_inner_puzzle(
     voting_window_seconds: int,
     sgt_total_supply: int,
     min_proposal_stake: int,
+    kos_mint_execute_pubkey: bytes,
     proposal_hash: int = 0,
     bill_operation: int = 0,
     vote_tally: int = 0,
@@ -258,6 +268,8 @@ def proposal_tracker_inner_puzzle(
     EXPIRE so this is a stake-deposit, not a fee).  Suggested testnet
     default: 10_000 (= 1% of 1M SGT total supply).
     """
+    if len(kos_mint_execute_pubkey) != 48:
+        raise ValueError("kos_mint_execute_pubkey must be 48 bytes")
     mod = proposal_tracker_mod()
     mod_hash = mod.get_tree_hash()
     return mod.curry(
@@ -273,6 +285,7 @@ def proposal_tracker_inner_puzzle(
         voting_window_seconds,
         sgt_total_supply,
         min_proposal_stake,
+        kos_mint_execute_pubkey,
         proposal_hash,
         bill_operation,
         vote_tally,
@@ -282,6 +295,46 @@ def proposal_tracker_inner_puzzle(
 
 def proposal_tracker_inner_hash(*args, **kwargs) -> bytes32:
     return proposal_tracker_inner_puzzle(*args, **kwargs).get_tree_hash()
+
+
+def kos_mint_execute_message(
+    *,
+    governance_singleton_struct: Program,
+    governance_coin_id: bytes32,
+    proposal_hash: bytes32,
+) -> bytes:
+    """Return the exact visible MINT co-signer condition message.
+
+    The governance puzzle emits this only for a MINT execution.  It commits to
+    the immutable governance singleton structure, the live singleton coin, and
+    the approved proposal hash.  Consensus appends AGG_SIG_ME additional data
+    when forming the BLS signing message.
+    """
+    governance_coin_id = _require_b32(governance_coin_id, "governance_coin_id")
+    proposal_hash = _require_b32(proposal_hash, "proposal_hash")
+    struct_hash = bytes32(governance_singleton_struct.get_tree_hash())
+    return (
+        PROTOCOL_PREFIX
+        + KOS_MINT_EXECUTE_TAG
+        + bytes(Program.to([struct_hash, governance_coin_id, proposal_hash]).get_tree_hash())
+    )
+
+
+def kos_mint_execute_signing_message(
+    *,
+    governance_singleton_struct: Program,
+    governance_coin_id: bytes32,
+    proposal_hash: bytes32,
+    agg_sig_me_additional_data: bytes,
+) -> bytes:
+    """Return the full testnet/mainnet-specific AGG_SIG_ME BLS message."""
+    if len(agg_sig_me_additional_data) != 32:
+        raise ValueError("agg_sig_me_additional_data must be 32 bytes")
+    return kos_mint_execute_message(
+        governance_singleton_struct=governance_singleton_struct,
+        governance_coin_id=governance_coin_id,
+        proposal_hash=proposal_hash,
+    ) + bytes(governance_coin_id) + bytes(agg_sig_me_additional_data)
 
 
 # ── Bill operation builders ──────────────────────────────────────────────────

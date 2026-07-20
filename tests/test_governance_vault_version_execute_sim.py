@@ -40,6 +40,7 @@ from chia_rs.sized_ints import uint64
 
 from solslot_puzzles import vault_version_registry_driver as vvr
 from solslot_puzzles.sgt_driver import (
+    TEST_KOS_MINT_EXECUTE_PUBKEY,
     bill_vault_version,
     build_tracker_execute_coin_spend,
     proposal_hash_from_bill,
@@ -98,6 +99,7 @@ def _tracker_inner(
         VOTING_WINDOW,
         SGT_TOTAL_SUPPLY,
         MIN_PROPOSAL_STAKE,
+        TEST_KOS_MINT_EXECUTE_PUBKEY,
         proposal_hash=proposal_hash,
         bill_operation=bill,
         vote_tally=vote_tally,
