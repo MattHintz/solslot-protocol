@@ -79,6 +79,10 @@ from solslot_puzzles.mint_proposal_v2_driver import (
     compute_proposal_data_hash,
     make_inner_puzzle_hash,
 )
+from solslot_puzzles.primary_purchase_v2_driver import (
+    PrimaryMintTermsV2,
+    make_mint_offer_v2_inner,
+)
 from solslot_puzzles.sgt_driver import (
     TRK_PROPOSE,
     build_sgt_lock_coin_spend,
@@ -580,6 +584,38 @@ class MintPublishArtifacts:
     A's singleton top-layer wrap."""
 
 
+@dataclass(frozen=True)
+class PrimaryPurchaseMintConfig:
+    """Immutable purchase terms sealed into a collection deed at mint.
+
+    The deed launcher ID and collection commitments are derived inside
+    :func:`build_mint_publish_artifacts`; callers supply only values that are
+    fixed by the signed release artifact and sealed dossier.
+    """
+
+    network: str
+    usd_amount_minor: int
+    protocol_treasury_puzhash: bytes32
+    validator_pubkeys: tuple[bytes, bytes, bytes]
+    provider_id: bytes32
+
+    def __post_init__(self) -> None:
+        if not self.network or len(self.network.encode("ascii")) > 32:
+            raise ValueError("primary purchase network must be 1-32 ASCII bytes")
+        if self.usd_amount_minor <= 0 or self.usd_amount_minor > 0xFFFFFFFFFFFFFFFF:
+            raise ValueError("primary purchase USD amount must be a positive uint64")
+        if len(self.protocol_treasury_puzhash) != 32:
+            raise ValueError("protocol treasury puzzle hash must be bytes32")
+        if len(self.validator_pubkeys) != 3:
+            raise ValueError("primary purchase requires exactly three validator pubkeys")
+        if len(set(self.validator_pubkeys)) != 3:
+            raise ValueError("primary purchase validator pubkeys must be unique")
+        if any(len(pubkey) != 48 for pubkey in self.validator_pubkeys):
+            raise ValueError("primary purchase validator pubkeys must be 48-byte BLS keys")
+        if len(self.provider_id) != 32:
+            raise ValueError("primary purchase provider_id must be bytes32")
+
+
 def build_mint_publish_artifacts(
     *,
     # Operator metadata (matches MintDraftStorageService fields).
@@ -610,6 +646,7 @@ def build_mint_publish_artifacts(
     property_registry_puzzle_hash: bytes32,
     metadata_root: bytes32 | None = None,
     metadata_anchor_id: bytes32 | None = None,
+    primary_purchase: PrimaryPurchaseMintConfig | None = None,
 ) -> MintPublishArtifacts:
     """Deterministically pin all publish-time artifacts for a mint proposal.
 
@@ -681,12 +718,34 @@ def build_mint_publish_artifacts(
     )
     smart_deed_inner_puzhash = bytes32(smart_deed_inner.get_tree_hash())
 
-    # Step 3: mint-offer eve inner + deed_full_puzhash.
-    eve_mint_offer_inner = make_mint_offer_eve_inner(
-        smart_deed_inner_hash=smart_deed_inner_puzhash,
-        par_value_mojos=par_value_mojos,
-        protocol_puzhash=protocol_did_puzhash,
-    )
+    # Step 3: mint-offer eve inner + deed_full_puzhash. Collection mints use
+    # the purchase-aware V2 delegate; the legacy fixed-mojo delegate remains
+    # available for historical fixtures and recall-only records.
+    if primary_purchase is None:
+        eve_mint_offer_inner = make_mint_offer_eve_inner(
+            smart_deed_inner_hash=smart_deed_inner_puzhash,
+            par_value_mojos=par_value_mojos,
+            protocol_puzhash=protocol_did_puzhash,
+        )
+    else:
+        if metadata_root is None:
+            raise ValueError("primary purchase mints require metadata_root")
+        resolved_anchor = metadata_anchor_id or deed_launcher_id
+        eve_mint_offer_inner = make_mint_offer_v2_inner(
+            PrimaryMintTermsV2(
+                network=primary_purchase.network,
+                smart_deed_inner_hash=smart_deed_inner_puzhash,
+                deed_launcher_id=deed_launcher_id,
+                collection_id=collection_id_canon,
+                metadata_root=metadata_root,
+                metadata_anchor_id=resolved_anchor,
+                share_ppm=share_ppm,
+                usd_amount_minor=primary_purchase.usd_amount_minor,
+                protocol_puzhash=primary_purchase.protocol_treasury_puzhash,
+                validator_pubkeys=primary_purchase.validator_pubkeys,
+                provider_id=primary_purchase.provider_id,
+            )
+        )
     eve_mint_offer_inner_hash = bytes32(eve_mint_offer_inner.get_tree_hash())
     deed_full_puzhash = compute_deed_full_puzzle_hash(
         deed_singleton_struct_program=deed_struct,
@@ -1066,6 +1125,7 @@ __all__ = [
     "BILL_MINT_TAG",
     "SINGLETON_AMOUNT",
     "MintPublishArtifacts",
+    "PrimaryPurchaseMintConfig",
     "ProposalEveLaunchSpend",
     "build_mint_publish_artifacts",
     "build_sgt_first_vote_coin_spend",

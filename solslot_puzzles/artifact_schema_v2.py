@@ -197,6 +197,10 @@ def build_public_artifact(
             "p2VaultModHash": _hex32(base.p2_vault_mod_hash, "p2VaultModHash"),
             "didInnerPuzzleHash": _hex32(base.did_inner_puzhash, "didInnerPuzzleHash"),
             "didFullPuzzleHash": _hex32(base.did_full_puzhash, "didFullPuzzleHash"),
+            "protocolTreasuryPuzzleHash": _hex32(
+                base.trusted_protocol_treasury_puzhash,
+                "protocolTreasuryPuzzleHash",
+            ),
             "governanceInnerPuzzleHash": _hex32(
                 base.tracker_inner_puzhash, "governanceInnerPuzzleHash"
             ),
@@ -449,6 +453,7 @@ def _verify_artifact_content(payload: Mapping[str, Any]) -> None:
     for key in (
         "didInnerPuzzleHash",
         "didFullPuzzleHash",
+        "protocolTreasuryPuzzleHash",
         "governanceInnerPuzzleHash",
         "governanceFullPuzzleHash",
         "propertyRegistryFullPuzzleHash",
