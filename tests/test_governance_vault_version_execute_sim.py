@@ -38,8 +38,9 @@ from chia_rs import Coin, G2Element, SpendBundle
 from chia_rs.sized_bytes import bytes32
 from chia_rs.sized_ints import uint64
 
-from populis_puzzles import vault_version_registry_driver as vvr
-from populis_puzzles.pgt_driver import (
+from solslot_puzzles import vault_version_registry_driver as vvr
+from solslot_puzzles.sgt_driver import (
+    TEST_KOS_MINT_EXECUTE_PUBKEY,
     bill_vault_version,
     build_tracker_execute_coin_spend,
     proposal_hash_from_bill,
@@ -58,18 +59,18 @@ NEW_PARAMS = bytes32(b"\x20" * 32)
 NEW_VERSION = 2
 
 # ── Tracker immutable params (the VAULT_VERSION EXECUTE dispatch uses none of
-# the PGT/DID/pool params, so these are inert sentinels) ─────────────────────
-PGT_FREE_MOD_HASH = bytes32(b"\x31" * 32)
-PGT_LOCKED_MOD_HASH = bytes32(b"\x32" * 32)
+# the SGT/DID/pool params, so these are inert sentinels) ─────────────────────
+SGT_FREE_MOD_HASH = bytes32(b"\x31" * 32)
+SGT_LOCKED_MOD_HASH = bytes32(b"\x32" * 32)
 CAT_MOD_HASH = bytes32(b"\x33" * 32)
-PGT_TAIL_HASH = bytes32(b"\x34" * 32)
+SGT_TAIL_HASH = bytes32(b"\x34" * 32)
 DID_PUZHASH = bytes32(b"\x35" * 32)
 POOL_STRUCT = Program.to(
     (SINGLETON_MOD_HASH, (bytes32(b"\xc0" * 32), SINGLETON_LAUNCHER_HASH))
 )
 QUORUM_BPS = 5000
 VOTING_WINDOW = 300
-PGT_TOTAL_SUPPLY = 1_000_000
+SGT_TOTAL_SUPPLY = 1_000_000
 MIN_PROPOSAL_STAKE = 10_000
 
 # Voting deadline: must be <= the sim block timestamp at spend time.  The fixture
@@ -88,16 +89,17 @@ def _tracker_inner(
 ) -> Program:
     return proposal_tracker_inner_puzzle(
         _tracker_struct(launcher_id),
-        PGT_FREE_MOD_HASH,
-        PGT_LOCKED_MOD_HASH,
+        SGT_FREE_MOD_HASH,
+        SGT_LOCKED_MOD_HASH,
         CAT_MOD_HASH,
-        PGT_TAIL_HASH,
+        SGT_TAIL_HASH,
         DID_PUZHASH,
         POOL_STRUCT,
         QUORUM_BPS,
         VOTING_WINDOW,
-        PGT_TOTAL_SUPPLY,
+        SGT_TOTAL_SUPPLY,
         MIN_PROPOSAL_STAKE,
+        TEST_KOS_MINT_EXECUTE_PUBKEY,
         proposal_hash=proposal_hash,
         bill_operation=bill,
         vote_tally=vote_tally,
@@ -105,7 +107,6 @@ def _tracker_inner(
     )
 
 
-@pytest.mark.asyncio
 @pytest.fixture()
 async def sim_chain() -> AsyncGenerator[Tuple[SpendSim, SimClient], None]:
     async with SpendSim.managed(None, defaults=DEFAULT_CONSTANTS) as sim:
@@ -144,7 +145,7 @@ async def test_governance_execute_advances_registry_to_new_version(
         tracker_launcher_id,
         proposal_hash=proposal_hash_from_bill(bill),
         bill=bill,
-        vote_tally=PGT_TOTAL_SUPPLY,  # 100% > quorum
+        vote_tally=SGT_TOTAL_SUPPLY,  # 100% > quorum
         deadline=DEADLINE,
     )
     trk_conds, trk_launcher_spend = launch_conditions_and_coinsol(
@@ -243,7 +244,7 @@ async def test_registry_routine_rejected_without_governance_cospend(
     """The registry's SPEND_CODE_ROUTINE asserts a governance puzzle
     announcement.  Spending it WITHOUT co-spending the authorizing tracker
     leaves that assertion unsatisfied — consensus rejects the bundle, so a code
-    change can never ship without PGT ratification."""
+    change can never ship without SGT ratification."""
     sim, client = sim_chain
     acs = Program.to(1)
     acs_ph = bytes32(acs.get_tree_hash())

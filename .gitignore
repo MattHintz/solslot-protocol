@@ -30,5 +30,7 @@ Thumbs.db
 # Backup files (left by editors / refactors)
 *.bak
 
-# Docs — internal design docs excluded from public repo for now
+# Docs - only reviewed V2 release runbooks are public.
 docs/*.md
+!docs/SOLSLOT_V2_GENESIS_RUNBOOK.md
+!docs/SOLSLOT_V2_SECURITY_HANDOFF.md

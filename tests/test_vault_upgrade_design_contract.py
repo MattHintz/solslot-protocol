@@ -1,10 +1,10 @@
-"""Docs-contract test pinning the Populis vault-upgrade design.
+"""Docs-contract test pinning the Solslot vault-upgrade design.
 
 Brick 1 of the vault-upgrade feature. This test does not exercise runtime
 behaviour; it pins the invariants that later bricks (registry singleton,
 migrate spend case, portal detection/upgrade) must not silently drift from.
 
-The design lives in ``research/POPULIS_VAULT_UPGRADE_DESIGN.md`` and mirrors the
+The design lives in ``research/SOLSLOT_VAULT_UPGRADE_DESIGN.md`` and mirrors the
 proven ``protocol_config_inner.clsp`` on-chain state-machine pattern.
 """
 from __future__ import annotations
@@ -16,7 +16,7 @@ import pytest
 DESIGN_DOC = (
     Path(__file__).resolve().parent.parent
     / "research"
-    / "POPULIS_VAULT_UPGRADE_DESIGN.md"
+    / "SOLSLOT_VAULT_UPGRADE_DESIGN.md"
 )
 
 
@@ -33,11 +33,11 @@ def _lower(doc_text: str) -> str:
 
 
 def test_decentralized_no_backend(doc_text: str) -> None:
-    """Detection + upgrade must read chain directly with no Populis backend."""
+    """Detection + upgrade must read chain directly with no Solslot backend."""
     low = _lower(doc_text)
     assert "decentralized" in low
-    assert "no populis backend" in low
-    assert "no populis backend dependency" in low
+    assert "no solslot backend" in low
+    assert "no solslot backend dependency" in low
     assert "coinset.org" in low
     # Non-custodial: the wallet signs; the backend never moves assets.
     assert "non-custodial" in low
@@ -75,23 +75,23 @@ def test_publish_authority_binds_to_quorum_not_a_key(doc_text: str) -> None:
 
 
 def test_governance_model_decision_is_documented(doc_text: str) -> None:
-    """The PGT-vs-admin authorization decision must be explicitly pinned.
+    """The SGT-vs-admin authorization decision must be explicitly pinned.
 
-    Answers "is this properly documented?": the current reality (PGT governance
-    is mint-scoped; vaults out of scope; committee vote unwired; admin<->PGT
+    Answers "is this properly documented?": the current reality (SGT governance
+    is mint-scoped; vaults out of scope; committee vote unwired; admin<->SGT
     hook reserved) plus the open A/B/C decision for vault-version publishes.
     """
     low = _lower(doc_text)
     assert "governance model" in low
-    # Current reality: PGT governance is mint-scoped; vaults are out of scope.
+    # Current reality: SGT governance is mint-scoped; vaults are out of scope.
     assert "three fixed bills" in low
     for bill in ("MINT", "FREEZE", "SETTLE"):
         assert bill in doc_text
     assert "out of scope" in low
     assert "ratif" in low  # ratify / ratification
-    # The admin<->PGT hook is reserved + unwired.
-    assert "PGT_GOVERNANCE_PUZZLE_HASH" in doc_text
-    # The committee on-chain PGT-VOTE path is not wired (501).
+    # The admin<->SGT hook is reserved + unwired.
+    assert "SGT_GOVERNANCE_PUZZLE_HASH" in doc_text
+    # The committee on-chain SGT-VOTE path is not wired (501).
     assert "/admin/committee/vote" in doc_text
     assert "501" in doc_text
 
@@ -102,20 +102,20 @@ def test_emergency_vs_routine_determinant_is_code_vs_params(doc_text: str) -> No
     """
     low = _lower(doc_text)
     assert "tiered by code-vs-parameter change" in low
-    # Code change (VAULT_INNER_MOD_HASH) => always PGT ratification.
+    # Code change (VAULT_INNER_MOD_HASH) => always SGT ratification.
     assert "the vault code changes" in low
-    assert "always requires affirmative pgt quorum ratification" in low
+    assert "always requires affirmative sgt quorum ratification" in low
     # Params-only (CANONICAL_PARAMS_HASH, code byte-identical) => admin fast-track.
     assert "parameters only" in low
     assert "byte-identical" in low
     assert "fast-track" in low
     # Enforced structurally: the fast path asserts the code hash is unchanged.
     assert "new vault_inner_mod_hash == vault_inner_mod_hash" in low
-    # Admin can never unilaterally change code; PGT is supreme (veto + cooldown).
+    # Admin can never unilaterally change code; SGT is supreme (veto + cooldown).
     assert "can never unilaterally change the code" in low
-    assert "pgt-vetoable" in low
+    assert "sgt-vetoable" in low
     assert "cooldown" in low
-    assert "pgt is supreme in every path" in low
+    assert "sgt is supreme in every path" in low
 
 
 def test_monotonic_version_guard(doc_text: str) -> None:

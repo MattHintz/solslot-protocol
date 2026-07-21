@@ -1,0 +1,221 @@
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; One-use payment escrow for primary SmartDeed delivery.
+;;;
+;;; Stripe and EVM payments retain funds on their origin rail and use a
+;;; one-mojo Chia marker. Native XCH and CAT purchases use atomic Chia offer
+;;; files and never enter this external-payment escrow.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(mod
+  (
+    VALIDATOR_PUBKEYS
+    THRESHOLD
+    PURCHASE_ID
+    ARTIFACT_HASH
+    PROVIDER_ID
+    EXTERNAL_REFERENCE_HASH
+    PENDING_ATTESTATION_HASH
+    PENDING_AT
+    RAIL
+    RAIL_AMOUNT
+    PROTOCOL_PUZHASH
+    REFUND_PUZHASH
+    VAULT_P2_PUZZLE_HASH
+    ;; solution
+    my_id
+    my_puzzlehash
+    my_amount
+    transition
+    resolution
+    evidence_hash
+    observed_at
+    reason_hash
+    signer_indices
+  )
+
+  (include condition_codes.clib)
+  (include utils.clib)
+  (include utility_macros.clib)
+
+  (defconstant ATTESTATION_VERSION 1)
+  (defconstant TRANSITION_SUCCEEDED 2)
+  (defconstant TRANSITION_FAILED 3)
+  (defconstant TRANSITION_MANUAL_RELEASE 4)
+  (defconstant RESOLUTION_DELIVER 1)
+  (defconstant RESOLUTION_REFUND 2)
+  (defconstant RAIL_STRIPE 1)
+  (defconstant RAIL_EVM_TEST_USD 2)
+  (defconstant MANUAL_RELEASE_DELAY 604800)
+  (defconstant MAX_ATTESTATION_BLOCK_DRIFT 120)
+  (defconstant ZERO_B32 0x0000000000000000000000000000000000000000000000000000000000000000)
+  (defconstant DELIVERY_DOMAIN 0x736f6c736c6f742d7061796d656e742d64656c69766572792d7631)
+
+  (defun list-length (lst)
+    (if lst (+ 1 (list-length (r lst))) 0)
+  )
+
+  (defun nth (lst n)
+    (if (= n 0)
+      (f lst)
+      (nth (r lst) (- n 1))
+    )
+  )
+
+  (defun is-sorted-strict (lst)
+    (if lst
+      (if (r lst)
+        (if (> (f (r lst)) (f lst))
+          (is-sorted-strict (r lst))
+          ()
+        )
+        1
+      )
+      1
+    )
+  )
+
+  (defun all-indices-in-range (indices bound)
+    (if indices
+      (if (> 0 (f indices))
+        ()
+        (if (> bound (f indices))
+          (all-indices-in-range (r indices) bound)
+          ()
+        )
+      )
+      1
+    )
+  )
+
+  (defun emit-sigs (pubkeys indices msg)
+    (if indices
+      (c
+        (list AGG_SIG_ME (nth pubkeys (f indices)) msg)
+        (emit-sigs pubkeys (r indices) msg)
+      )
+      ()
+    )
+  )
+
+  (defun-inline attestation-hash
+      (PURCHASE_ID ARTIFACT_HASH transition resolution PROVIDER_ID
+       EXTERNAL_REFERENCE_HASH evidence_hash PENDING_ATTESTATION_HASH
+       observed_at reason_hash)
+    (sha256tree
+      (list
+        ATTESTATION_VERSION
+        PURCHASE_ID
+        ARTIFACT_HASH
+        transition
+        resolution
+        PROVIDER_ID
+        EXTERNAL_REFERENCE_HASH
+        evidence_hash
+        PENDING_ATTESTATION_HASH
+        observed_at
+        reason_hash))
+  )
+
+  (defun-inline delivery-message
+      (PURCHASE_ID ARTIFACT_HASH VAULT_P2_PUZZLE_HASH)
+    (sha256tree
+      (list
+        DELIVERY_DOMAIN
+        PURCHASE_ID
+        ARTIFACT_HASH
+        VAULT_P2_PUZZLE_HASH))
+  )
+
+  (defun resolution-conditions
+      (resolution PROTOCOL_PUZHASH REFUND_PUZHASH my_amount
+       PURCHASE_ID ARTIFACT_HASH VAULT_P2_PUZZLE_HASH)
+    (if (= resolution RESOLUTION_DELIVER)
+      (list
+        (list CREATE_COIN PROTOCOL_PUZHASH my_amount (list PURCHASE_ID ARTIFACT_HASH))
+        (list SEND_MESSAGE 0x10
+          (concat PROTOCOL_PREFIX
+            (delivery-message PURCHASE_ID ARTIFACT_HASH VAULT_P2_PUZZLE_HASH)))
+        (list REMARK PROTOCOL_PREFIX "PAYMENT_DELIVERED"
+          PURCHASE_ID ARTIFACT_HASH VAULT_P2_PUZZLE_HASH))
+      (list
+        (list CREATE_COIN REFUND_PUZHASH my_amount (list PURCHASE_ID ARTIFACT_HASH))
+        (list REMARK PROTOCOL_PREFIX "PAYMENT_REFUNDED"
+          PURCHASE_ID ARTIFACT_HASH REFUND_PUZHASH))
+    )
+  )
+
+  (defun manual-delay-conditions (transition PENDING_AT)
+    (if (= transition TRANSITION_MANUAL_RELEASE)
+      (list (list ASSERT_SECONDS_ABSOLUTE (+ PENDING_AT MANUAL_RELEASE_DELAY)))
+      ()
+    )
+  )
+
+  (assert
+    (= (list-length VALIDATOR_PUBKEYS) 3)
+    (= THRESHOLD 2)
+    (all-bls-g1-pubkeys VALIDATOR_PUBKEYS)
+    (has-no-duplicates VALIDATOR_PUBKEYS ())
+    (is-sorted-strict signer_indices)
+    (not (> THRESHOLD (list-length signer_indices)))
+    (all-indices-in-range signer_indices 3)
+    (is-size-b32 PURCHASE_ID)
+    (is-size-b32 ARTIFACT_HASH)
+    (is-size-b32 PROVIDER_ID)
+    (is-size-b32 EXTERNAL_REFERENCE_HASH)
+    (is-size-b32 PENDING_ATTESTATION_HASH)
+    (is-size-b32 PROTOCOL_PUZHASH)
+    (is-size-b32 REFUND_PUZHASH)
+    (is-size-b32 VAULT_P2_PUZZLE_HASH)
+    (is-size-b32 my_id)
+    (is-size-b32 my_puzzlehash)
+    (is-size-b32 evidence_hash)
+    (is-size-b32 reason_hash)
+    (is-uint64 PENDING_AT)
+    (> PENDING_AT 0)
+    (is-uint64 RAIL)
+    (or (= RAIL RAIL_STRIPE) (= RAIL RAIL_EVM_TEST_USD))
+    (is-uint64 RAIL_AMOUNT)
+    (> RAIL_AMOUNT 0)
+    (is-uint64 my_amount)
+    (= my_amount 1)
+    (is-uint64 observed_at)
+    (> observed_at 0)
+    (or
+      (and
+        (= transition TRANSITION_SUCCEEDED)
+        (= resolution RESOLUTION_DELIVER)
+        (= reason_hash ZERO_B32))
+      (and
+        (= transition TRANSITION_FAILED)
+        (= resolution RESOLUTION_REFUND)
+        (= reason_hash ZERO_B32))
+      (and
+        (= transition TRANSITION_MANUAL_RELEASE)
+        (or
+          (= resolution RESOLUTION_DELIVER)
+          (= resolution RESOLUTION_REFUND))
+        (not (= reason_hash ZERO_B32))
+        (not (> (+ PENDING_AT MANUAL_RELEASE_DELAY) observed_at))))
+    (merge-lists
+      (emit-sigs VALIDATOR_PUBKEYS signer_indices
+        (attestation-hash
+          PURCHASE_ID ARTIFACT_HASH transition resolution PROVIDER_ID
+          EXTERNAL_REFERENCE_HASH evidence_hash PENDING_ATTESTATION_HASH
+          observed_at reason_hash))
+      (merge-lists
+        (manual-delay-conditions transition PENDING_AT)
+        (merge-lists
+          (list
+            (list ASSERT_SECONDS_ABSOLUTE
+              (- observed_at MAX_ATTESTATION_BLOCK_DRIFT))
+            (list ASSERT_BEFORE_SECONDS_ABSOLUTE
+              (+ observed_at MAX_ATTESTATION_BLOCK_DRIFT))
+            (list ASSERT_MY_COIN_ID my_id)
+            (list ASSERT_MY_PUZZLEHASH my_puzzlehash)
+            (list ASSERT_MY_AMOUNT my_amount))
+          (resolution-conditions
+            resolution PROTOCOL_PUZHASH REFUND_PUZHASH my_amount
+            PURCHASE_ID ARTIFACT_HASH VAULT_P2_PUZZLE_HASH))))
+  )
+)

@@ -1,0 +1,399 @@
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; Mint Proposal Singleton v2 (A.1 v2) — MIPS-pluggable per-proposal state machine.
+;;;
+;;; Owner and governance authentication use MIPS member tree hashes so the
+;;; owner / gov can be ANY CHIP-0043 member type — BLS, Eip712Member
+;;; (secp256k1 / EVM), passkey / WebAuthn, etc. — and a single
+;;; deployment can mix curves freely (e.g. BLS gov, EVM owner).
+;;;
+;;; State machine (unchanged from V1):
+;;;
+;;;   ┌─────┐  member==GOV   ┌──────────┐
+;;;   │DRAFT│ ──────────────▶│ APPROVED │
+;;;   └─────┘                └──────────┘
+;;;       │
+;;;       │ member==OWNER
+;;;       ▼
+;;;   ┌─────────┐
+;;;   │CANCELLED│
+;;;   └─────────┘
+;;;
+;;; V1 transitions retained:
+;;;   * DRAFT  → APPROVED   (TRANSITION_APPROVE = 'a' / 0x61, gov-member auth)
+;;;   * DRAFT  → CANCELLED  (TRANSITION_CANCEL  = 'c' / 0x63, owner-member auth)
+;;;
+;;; Solslot V2 execution:
+;;;   * DRAFT → EXECUTED ('x' / 0x78) is permissionless only when the same
+;;;     atomic bundle contains both the canonical governance EXECUTE and the
+;;;     exact pre-committed DID-gated deed launcher spend.
+;;;
+;;; ─── MIPS member dispatch ────────────────────────────────────────────────
+;;;
+;;; The curried OWNER_MEMBER_HASH and GOV_MEMBER_HASH are sha256tree
+;;; values of arbitrary CHIP-0043 member puzzles (Eip712Member,
+;;; BlsMember, PasskeyMember, …).  On a transition the solution
+;;; supplies the matching member's puzzle reveal + a partial solution;
+;;; the puzzle:
+;;;
+;;;   1. Verifies ``sha256tree(member_puzzle_reveal)`` matches the curried
+;;;      hash for the requested transition (gov for APPROVE, owner for
+;;;      CANCEL).  Without this check a caller could swap in a different
+;;;      (more permissive) member they happen to control.
+;;;
+;;;   2. Constructs the **binding hash** the member must commit to:
+;;;
+;;;        binding_hash = sha256tree(list transition_case
+;;;                                       new_state_version
+;;;                                       PROPOSAL_DATA_HASH)
+;;;
+;;;      This locks the signature to a specific transition (case +
+;;;      version) on a specific proposal (data hash).  A signature
+;;;      collected for one transition cannot be replayed against
+;;;      another transition, version, or proposal.
+;;;
+;;;      For CHIP-0043 / CHIP-0037 members the binding hash IS the
+;;;      ``Delegated_Puzzle_Hash`` slot the member's curve-specific
+;;;      verifier signs over (see ``eip712_member.clsp``); the proposal
+;;;      puzzle prepends it to ``member_solution_remainder`` so the
+;;;      caller cannot smuggle in a different binding.
+;;;
+;;;   3. Runs ``(a member_puzzle_reveal (c binding_hash member_solution_remainder))``.
+;;;      The member returns a list of consensus-verified auth
+;;;      conditions (AGG_SIG_ME for BLS members, ASSERT_MY_COIN_ID +
+;;;      softfork+secp256k1_verify for Eip712Member, etc.) which we
+;;;      pass through to consensus.
+;;;
+;;;   4. Merges the member's auth conditions with the proposal's own
+;;;      lifecycle conditions (CREATE_COIN self-recurry,
+;;;      CREATE_PUZZLE_ANNOUNCEMENT for off-chain monitors,
+;;;      ASSERT_MY_AMOUNT identity check).
+;;;
+;;; ─── Curried parameters ──────────────────────────────────────────────────
+;;;
+;;;   SELF_MOD_HASH         — tree hash of THIS module (self-recurry).
+;;;   OWNER_MEMBER_HASH     — sha256tree of owner's MIPS member puzzle.
+;;;                           Required to produce the auth conditions
+;;;                           for CANCEL.  Curve-agnostic.
+;;;   GOV_MEMBER_HASH       — sha256tree of gov's MIPS member puzzle.
+;;;                           Required to produce the auth conditions
+;;;                           for APPROVE.  Curve-agnostic.
+;;;   PROPOSAL_DATA_HASH    — opaque bytes32; off-chain canonical hash
+;;;                           of (property_id, par_value, royalty_bps,
+;;;                           quorum_threshold).  Stored as a hash to
+;;;                           avoid bloating the curried state; the full
+;;;                           data is published off-chain at launch time
+;;;                           and re-derivable from the launcher coin's
+;;;                           spend bundle.  Bound into the binding hash
+;;;                           so signatures cannot replay across proposals.
+;;;   GOVERNANCE_SINGLETON_STRUCT — trusted governance singleton identity.
+;;;   GOVERNANCE_PROPOSAL_HASH — exact SGT governance proposal commitment.
+;;;   DEED_LAUNCHER_ID      — exact pre-created DID-gated launcher coin id.
+;;;   DID_INNER_PUZZLE_HASH — protocol DID inner puzzle used by the launcher.
+;;;   DEED_FULL_PUZZLE_HASH — exact deed singleton puzzle hash to launch.
+;;;   PROPOSAL_STATE        — uint: 1=DRAFT, 2=APPROVED, 3=CANCELLED,
+;;;                           4=EXECUTED.
+;;;   STATE_VERSION         — uint, monotonically increases.
+;;;
+;;; ─── Solution ────────────────────────────────────────────────────────────
+;;;
+;;;   my_amount                  — singleton coin amount (odd).
+;;;   transition_case            — 'a' (0x61) APPROVE | 'c' (0x63) CANCEL.
+;;;   new_state_version          — uint, must be > STATE_VERSION.
+;;;   member_puzzle_reveal       — uncurried reveal of GOV (APPROVE) or
+;;;                                OWNER (CANCEL) MIPS member puzzle; for
+;;;                                EXECUTE this slot is the current trusted
+;;;                                governance inner puzzle hash.
+;;;                                Tree hash MUST match the curried
+;;;                                OWNER_MEMBER_HASH / GOV_MEMBER_HASH.
+;;;   member_solution_remainder  — solution tail consumed by the member;
+;;;                                the puzzle prepends ``binding_hash``
+;;;                                so the member's first solution slot
+;;;                                is always the binding hash regardless
+;;;                                of curve / member type.
+;;;
+;;; ─── Output conditions on a valid spend ──────────────────────────────────
+;;;
+;;;   <member auth conditions>
+;;;     Whatever the member emits when it verifies its curve-specific
+;;;     signature over ``binding_hash``.  Examples:
+;;;       BLS:          AGG_SIG_ME pubkey binding_hash
+;;;       Eip712Member: ASSERT_MY_COIN_ID my_id  (plus softfork+secp256k1)
+;;;
+;;;   CREATE_COIN <new_inner_puzhash> my_amount
+;;;     Recreate self with new state + version.  Singleton wrapper morphs.
+;;;
+;;;   CREATE_PUZZLE_ANNOUNCEMENT <PROTOCOL_PREFIX || transition_msg>
+;;;     Off-chain consumers track this announcement to update cached
+;;;     proposal state.  ``transition_msg`` =
+;;;     sha256tree(list transition_case new_state new_state_version).
+;;;     Canonical transition announcement consumed by Solslot V2 indexers.
+;;;
+;;;   ASSERT_MY_AMOUNT my_amount
+;;;     Defensive identity check.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(mod
+  (
+    SELF_MOD_HASH
+    OWNER_MEMBER_HASH
+    GOV_MEMBER_HASH
+    PROPOSAL_DATA_HASH
+    GOVERNANCE_SINGLETON_STRUCT
+    GOVERNANCE_PROPOSAL_HASH
+    DEED_LAUNCHER_ID
+    DID_INNER_PUZZLE_HASH
+    DEED_FULL_PUZZLE_HASH
+    PROPOSAL_STATE
+    STATE_VERSION
+    ;; --- solution ---
+    my_amount
+    transition_case
+    new_state_version
+    member_puzzle_reveal
+    member_solution_remainder
+  )
+
+  ;; Include order matters: utils.clib must come before utility_macros.clib
+  ;; (matches admin_authority_v2_inner.clsp).  utils.clib transitively pulls
+  ;; in curry.clib + sha256tree.clib; including either of those directly
+  ;; re-defines `TWO` and breaks the compile.
+  (include condition_codes.clib)
+  (include utils.clib)
+  (include utility_macros.clib)
+
+  ;; ─── State + transition constants ────────────────────────────────────
+
+  (defconstant STATE_DRAFT     1)
+  (defconstant STATE_APPROVED  2)
+  (defconstant STATE_CANCELLED 3)
+  (defconstant STATE_EXECUTED  4)
+
+  (defconstant TRANSITION_APPROVE 0x61)  ;; 'a'
+  (defconstant TRANSITION_CANCEL  0x63)  ;; 'c'
+  (defconstant TRANSITION_EXECUTE 0x78)  ;; 'x'
+  (defconstant EXEC_TAG 0x45584543)       ;; "EXEC"
+
+  ;; ─── Self-recurry ────────────────────────────────────────────────────
+
+  ;; Compute the post-transition inner puzzle hash.  Currying order MUST
+  ;; mirror the `(mod (...))` parameter list above so off-chain drivers
+  ;; can recompute it without a fresh compile.
+  (defun-inline new-inner-puzhash
+      (SELF_MOD_HASH OWNER_MEMBER_HASH GOV_MEMBER_HASH PROPOSAL_DATA_HASH
+       GOVERNANCE_SINGLETON_STRUCT GOVERNANCE_PROPOSAL_HASH
+       DEED_LAUNCHER_ID DID_INNER_PUZZLE_HASH DEED_FULL_PUZZLE_HASH
+       new_state new_state_version)
+    (curry_hashes SELF_MOD_HASH
+      (sha256 1 SELF_MOD_HASH)
+      (sha256 1 OWNER_MEMBER_HASH)
+      (sha256 1 GOV_MEMBER_HASH)
+      (sha256 1 PROPOSAL_DATA_HASH)
+      (sha256tree GOVERNANCE_SINGLETON_STRUCT)
+      (sha256 1 GOVERNANCE_PROPOSAL_HASH)
+      (sha256 1 DEED_LAUNCHER_ID)
+      (sha256 1 DID_INNER_PUZZLE_HASH)
+      (sha256 1 DEED_FULL_PUZZLE_HASH)
+      (sha256 1 new_state)
+      (sha256 1 new_state_version)
+    )
+  )
+
+  ;; ─── Binding + announcement messages ─────────────────────────────────
+
+  ;; The 32-byte value the member's curve-specific verifier signs over.
+  ;; Binds the signature to:
+  ;;   * the specific transition_case (replay across cases blocked),
+  ;;   * the specific new_state_version (replay across versions blocked),
+  ;;   * the specific PROPOSAL_DATA_HASH (replay across proposals blocked).
+  ;;
+  ;; Construction is sha256tree of a 3-list — the same shape the v1
+  ;; `signing-message` defun used, extended with PROPOSAL_DATA_HASH so
+  ;; signatures from a copy-paste-shaped sibling proposal can't transit
+  ;; here.  Off-chain drivers build the same value and feed it into the
+  ;; member's signing call.
+  (defun-inline binding-hash
+      (transition_case new_state_version PROPOSAL_DATA_HASH)
+    (sha256tree
+      (list transition_case new_state_version PROPOSAL_DATA_HASH))
+  )
+
+  ;; Off-chain consumers (the API indexer) read this announcement
+  ;; payload to update cached proposal state. It includes new_state so consumers don't need to
+  ;; know the transition_case → new_state map.
+  (defun-inline transition-message
+      (transition_case new_state new_state_version)
+    (sha256tree (list transition_case new_state new_state_version))
+  )
+
+  ;; ─── Lifecycle conditions ────────────────────────────────────────────
+
+  ;; The proposal-puzzle's own conditions (CREATE_COIN self-recurry,
+  ;; off-chain announcement, ASSERT_MY_AMOUNT identity check).  Returned
+  ;; as a 3-condition list to be merged with the member's auth conditions
+  ;; via merge-lists.
+  (defun-inline lifecycle-conditions
+      (SELF_MOD_HASH OWNER_MEMBER_HASH GOV_MEMBER_HASH PROPOSAL_DATA_HASH
+       GOVERNANCE_SINGLETON_STRUCT GOVERNANCE_PROPOSAL_HASH
+       DEED_LAUNCHER_ID DID_INNER_PUZZLE_HASH DEED_FULL_PUZZLE_HASH
+       new_state new_state_version transition_case my_amount)
+    (list
+      (list CREATE_COIN
+        (new-inner-puzhash SELF_MOD_HASH OWNER_MEMBER_HASH GOV_MEMBER_HASH
+          PROPOSAL_DATA_HASH GOVERNANCE_SINGLETON_STRUCT
+          GOVERNANCE_PROPOSAL_HASH DEED_LAUNCHER_ID DID_INNER_PUZZLE_HASH
+          DEED_FULL_PUZZLE_HASH new_state new_state_version)
+        my_amount)
+      (list CREATE_PUZZLE_ANNOUNCEMENT
+        (concat PROTOCOL_PREFIX
+          (transition-message transition_case new_state new_state_version)))
+      (list ASSERT_MY_AMOUNT my_amount)
+    )
+  )
+
+  ;; ─── Per-transition handlers ─────────────────────────────────────────
+
+  ;; APPROVE: gov member authorises, new state = APPROVED.
+  ;;
+  ;; Verifies the supplied member_puzzle_reveal hashes to GOV_MEMBER_HASH,
+  ;; runs it with `(binding_hash . member_solution_remainder)` as solution,
+  ;; and merges its emitted auth conditions with the lifecycle conditions.
+  (defun-inline approve-conditions
+      (SELF_MOD_HASH OWNER_MEMBER_HASH GOV_MEMBER_HASH PROPOSAL_DATA_HASH
+       GOVERNANCE_SINGLETON_STRUCT GOVERNANCE_PROPOSAL_HASH
+       DEED_LAUNCHER_ID DID_INNER_PUZZLE_HASH DEED_FULL_PUZZLE_HASH
+       my_amount new_state_version
+       member_puzzle_reveal member_solution_remainder)
+    (assert
+      ;; Curve-agnostic auth gate: caller must reveal the gov member.
+      (= (sha256tree member_puzzle_reveal) GOV_MEMBER_HASH)
+      (merge-lists
+        (a member_puzzle_reveal
+          (c (binding-hash TRANSITION_APPROVE new_state_version
+                           PROPOSAL_DATA_HASH)
+             member_solution_remainder))
+        (lifecycle-conditions SELF_MOD_HASH OWNER_MEMBER_HASH
+          GOV_MEMBER_HASH PROPOSAL_DATA_HASH GOVERNANCE_SINGLETON_STRUCT
+          GOVERNANCE_PROPOSAL_HASH DEED_LAUNCHER_ID DID_INNER_PUZZLE_HASH
+          DEED_FULL_PUZZLE_HASH
+          STATE_APPROVED new_state_version
+          TRANSITION_APPROVE my_amount))
+    )
+  )
+
+  ;; CANCEL: owner member authorises, new state = CANCELLED.
+  ;;
+  ;; Mirror of approve-conditions; differs only in the expected member
+  ;; hash (OWNER_MEMBER_HASH), the transition_case (TRANSITION_CANCEL),
+  ;; and the new state (STATE_CANCELLED) baked into both the binding
+  ;; hash and the lifecycle conditions.
+  (defun-inline cancel-conditions
+      (SELF_MOD_HASH OWNER_MEMBER_HASH GOV_MEMBER_HASH PROPOSAL_DATA_HASH
+       GOVERNANCE_SINGLETON_STRUCT GOVERNANCE_PROPOSAL_HASH
+       DEED_LAUNCHER_ID DID_INNER_PUZZLE_HASH DEED_FULL_PUZZLE_HASH
+       my_amount new_state_version
+       member_puzzle_reveal member_solution_remainder)
+    (assert
+      (= (sha256tree member_puzzle_reveal) OWNER_MEMBER_HASH)
+      (merge-lists
+        (a member_puzzle_reveal
+          (c (binding-hash TRANSITION_CANCEL new_state_version
+                           PROPOSAL_DATA_HASH)
+             member_solution_remainder))
+        (lifecycle-conditions SELF_MOD_HASH OWNER_MEMBER_HASH
+          GOV_MEMBER_HASH PROPOSAL_DATA_HASH GOVERNANCE_SINGLETON_STRUCT
+          GOVERNANCE_PROPOSAL_HASH DEED_LAUNCHER_ID DID_INNER_PUZZLE_HASH
+          DEED_FULL_PUZZLE_HASH
+          STATE_CANCELLED new_state_version
+          TRANSITION_CANCEL my_amount))
+    )
+  )
+
+  ;; EXECUTE: no member signature is accepted.  The proposal can move to its
+  ;; terminal state only when consensus sees the trusted governance singleton's
+  ;; EXEC announcement and the exact pre-committed deed launcher announcement
+  ;; in the same spend bundle.
+  (defun-inline execute-conditions
+      (SELF_MOD_HASH OWNER_MEMBER_HASH GOV_MEMBER_HASH PROPOSAL_DATA_HASH
+       GOVERNANCE_SINGLETON_STRUCT GOVERNANCE_PROPOSAL_HASH
+       DEED_LAUNCHER_ID DID_INNER_PUZZLE_HASH DEED_FULL_PUZZLE_HASH
+       my_amount new_state_version gov_inner_puzzle_hash witness_remainder)
+    (assert
+      (is-size-b32 gov_inner_puzzle_hash)
+      (not witness_remainder)
+      (c
+        (list ASSERT_PUZZLE_ANNOUNCEMENT
+          (sha256
+            (calculate_full_puzzle_hash
+              GOVERNANCE_SINGLETON_STRUCT gov_inner_puzzle_hash)
+            (concat PROTOCOL_PREFIX
+              (sha256tree (list EXEC_TAG GOVERNANCE_PROPOSAL_HASH)))))
+        (c
+          (list ASSERT_COIN_ANNOUNCEMENT
+            (sha256
+              DEED_LAUNCHER_ID
+              (sha256tree
+                (list DID_INNER_PUZZLE_HASH DEED_FULL_PUZZLE_HASH 1 ()))))
+          (lifecycle-conditions SELF_MOD_HASH OWNER_MEMBER_HASH
+            GOV_MEMBER_HASH PROPOSAL_DATA_HASH GOVERNANCE_SINGLETON_STRUCT
+            GOVERNANCE_PROPOSAL_HASH DEED_LAUNCHER_ID DID_INNER_PUZZLE_HASH
+            DEED_FULL_PUZZLE_HASH STATE_EXECUTED new_state_version
+            TRANSITION_EXECUTE my_amount)))
+    )
+  )
+
+  ;; ─── Main dispatch ───────────────────────────────────────────────────
+
+  (assert
+    (is-uint64 my_amount)
+    (is-size-b32 SELF_MOD_HASH)
+    (is-size-b32 OWNER_MEMBER_HASH)
+    (is-size-b32 GOV_MEMBER_HASH)
+    (is-size-b32 PROPOSAL_DATA_HASH)
+    (is-size-b32 GOVERNANCE_PROPOSAL_HASH)
+    (is-size-b32 DEED_LAUNCHER_ID)
+    (is-size-b32 DID_INNER_PUZZLE_HASH)
+    (is-size-b32 DEED_FULL_PUZZLE_HASH)
+    (is-uint64 new_state_version)
+    (is-uint64 PROPOSAL_STATE)
+    (is-uint64 STATE_VERSION)
+    ;; Replay protection: monotonic version.  Mirrors v1.
+    (> new_state_version STATE_VERSION)
+    ;; Dispatch on transition case.  Note: unlike v1 we do NOT validate
+    ;; pubkey sizes via is-size-bls-g1 — the curve-specific size guards
+    ;; live inside each member puzzle (Eip712Member checks 33-byte
+    ;; secp256k1 pubkey, BlsMember checks 48-byte G1, etc.), and the
+    ;; sha256tree-equality check above ensures we're only running
+    ;; pre-vetted member shapes.
+    (if (= transition_case TRANSITION_APPROVE)
+      (assert
+        (= PROPOSAL_STATE STATE_DRAFT)
+        (approve-conditions
+          SELF_MOD_HASH OWNER_MEMBER_HASH GOV_MEMBER_HASH PROPOSAL_DATA_HASH
+          GOVERNANCE_SINGLETON_STRUCT GOVERNANCE_PROPOSAL_HASH
+          DEED_LAUNCHER_ID DID_INNER_PUZZLE_HASH DEED_FULL_PUZZLE_HASH
+          my_amount new_state_version
+          member_puzzle_reveal member_solution_remainder))
+      (if (= transition_case TRANSITION_CANCEL)
+        (assert
+          (= PROPOSAL_STATE STATE_DRAFT)
+          (cancel-conditions
+            SELF_MOD_HASH OWNER_MEMBER_HASH GOV_MEMBER_HASH PROPOSAL_DATA_HASH
+            GOVERNANCE_SINGLETON_STRUCT GOVERNANCE_PROPOSAL_HASH
+            DEED_LAUNCHER_ID DID_INNER_PUZZLE_HASH DEED_FULL_PUZZLE_HASH
+            my_amount new_state_version
+            member_puzzle_reveal member_solution_remainder))
+        (if (= transition_case TRANSITION_EXECUTE)
+          (assert
+            (= PROPOSAL_STATE STATE_DRAFT)
+            (execute-conditions
+              SELF_MOD_HASH OWNER_MEMBER_HASH GOV_MEMBER_HASH PROPOSAL_DATA_HASH
+              GOVERNANCE_SINGLETON_STRUCT GOVERNANCE_PROPOSAL_HASH
+              DEED_LAUNCHER_ID DID_INNER_PUZZLE_HASH DEED_FULL_PUZZLE_HASH
+              my_amount new_state_version
+              member_puzzle_reveal member_solution_remainder))
+          (x)  ;; unknown transition — refuse
+        )
+      )
+    )
+  )
+)

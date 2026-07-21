@@ -15,12 +15,12 @@ from chia_rs.sized_ints import uint64
 
 PURCHASE_PAYMENT_MOD: Program = load_clvm(
     "purchase_payment.clsp",
-    package_or_requirement="populis_puzzles",
+    package_or_requirement="solslot_puzzles",
     recompile=True,
 )
 MINT_OFFER_MOD: Program = load_clvm(
     "mint_offer_delegate.clsp",
-    package_or_requirement="populis_puzzles",
+    package_or_requirement="solslot_puzzles",
     recompile=True,
 )
 
@@ -32,7 +32,7 @@ BUYER_PUZHASH = bytes32(b"\xcc" * 32)
 DEED_COIN_ID = bytes32(b"\xdd" * 32)
 
 # Protocol prefix
-PROTOCOL_PREFIX = b"\x50"
+PROTOCOL_PREFIX = b"\x53"
 
 # Condition opcodes
 CREATE_COIN = 51

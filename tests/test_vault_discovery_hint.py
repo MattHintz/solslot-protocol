@@ -4,7 +4,7 @@ vaults chain-discoverable from a user's pubkey alone.
 Locking the format here is critical because portal clients re-implement the
 hash off-chain (TypeScript) and any drift breaks login.  The hint is:
 
-    sha256(b"populis-vault-discovery-v1" || auth_type_byte || owner_pubkey)
+    sha256(b"solslot-vault-discovery-v1" || auth_type_byte || owner_pubkey)
 
 These tests pin:
 - The literal domain string.
@@ -19,7 +19,7 @@ import hashlib
 
 import pytest
 
-from populis_puzzles.vault_driver import (
+from solslot_puzzles.vault_driver import (
     AUTH_TYPE_BLS,
     AUTH_TYPE_SECP256K1,
     AUTH_TYPE_SECP256R1,
@@ -39,7 +39,7 @@ def test_domain_string_locked() -> None:
     """The domain string is the public-API contract for clients re-implementing
     the hash in TypeScript / Rust — any change here MUST be coordinated with
     every client."""
-    assert VAULT_HINT_DOMAIN == b"populis-vault-discovery-v1"
+    assert VAULT_HINT_DOMAIN == b"solslot-vault-discovery-v2"
 
 
 # ── Format pinning ───────────────────────────────────────────────────────────
@@ -124,7 +124,7 @@ class TestKnownAnswers:
         h = vault_discovery_hint(AUTH_TYPE_SECP256K1, pubkey)
         # Computed once via the canonical formula; locks the exact hash.
         expected_hex = hashlib.sha256(
-            b"populis-vault-discovery-v1" + bytes([3]) + pubkey
+            b"solslot-vault-discovery-v2" + bytes([3]) + pubkey
         ).hexdigest()
         assert h.hex() == expected_hex
 
@@ -132,6 +132,6 @@ class TestKnownAnswers:
         pubkey = b"\x00" * 48
         h = vault_discovery_hint(AUTH_TYPE_BLS, pubkey)
         expected_hex = hashlib.sha256(
-            b"populis-vault-discovery-v1" + bytes([1]) + pubkey
+            b"solslot-vault-discovery-v2" + bytes([1]) + pubkey
         ).hexdigest()
         assert h.hex() == expected_hex

@@ -1,0 +1,84 @@
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; Solslot v2 pool escrow for a deposited SmartDeed singleton.
+;;;
+;;; The deed commitment is curried into this puzzle.  A caller therefore
+;;; cannot substitute par value, collection, share, or property metadata when
+;;; asking the pool to release the deposited deed.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(mod
+    (
+        SELF_MOD_HASH
+        SINGLETON_MOD_HASH
+        POOL_LAUNCHER_ID
+        LAUNCHER_PUZZLE_HASH
+        DEED_COMMITMENT
+        ;; --- solution ---
+        pool_inner_puzzle_hash
+        pool_coin_id
+        my_id
+        deed_launcher_id
+        deed_amount
+        next_puzzlehash
+    )
+
+    (include condition_codes.clib)
+    (include utils.clib)
+    (include utility_macros.clib)
+
+    (defconstant DEED_SPEND_POOL_REDEEM 0x72)
+
+    (defun-inline current-inner-puzhash
+        (self_mod_hash singleton_mod_hash pool_launcher_id launcher_puzzle_hash deed_commitment)
+        (curry_hashes self_mod_hash
+            (sha256 1 self_mod_hash)
+            (sha256 1 singleton_mod_hash)
+            (sha256 1 pool_launcher_id)
+            (sha256 1 launcher_puzzle_hash)
+            (sha256 1 deed_commitment))
+    )
+
+    (defun-inline release-message (deed_commitment next_puzzlehash)
+        (concat PROTOCOL_PREFIX
+            (sha256tree (list DEED_SPEND_POOL_REDEEM deed_commitment next_puzzlehash)))
+    )
+
+    (assert
+        (is-size-b32 SELF_MOD_HASH)
+        (is-size-b32 SINGLETON_MOD_HASH)
+        (is-size-b32 POOL_LAUNCHER_ID)
+        (is-size-b32 LAUNCHER_PUZZLE_HASH)
+        (is-size-b32 DEED_COMMITMENT)
+        (is-size-b32 pool_inner_puzzle_hash)
+        (is-size-b32 pool_coin_id)
+        (is-size-b32 my_id)
+        (is-size-b32 deed_launcher_id)
+        (is-uint64 deed_amount)
+        (is-size-b32 next_puzzlehash)
+        (> deed_amount 0)
+        (list
+            (list ASSERT_MY_COIN_ID my_id)
+            (list ASSERT_MY_AMOUNT deed_amount)
+            (list ASSERT_MY_PUZZLEHASH
+                (calculate_full_puzzle_hash
+                    (c SINGLETON_MOD_HASH (c deed_launcher_id LAUNCHER_PUZZLE_HASH))
+                    (current-inner-puzhash
+                        SELF_MOD_HASH
+                        SINGLETON_MOD_HASH
+                        POOL_LAUNCHER_ID
+                        LAUNCHER_PUZZLE_HASH
+                        DEED_COMMITMENT)))
+            (list ASSERT_PUZZLE_ANNOUNCEMENT
+                (sha256
+                    (calculate_full_puzzle_hash
+                        (c SINGLETON_MOD_HASH (c POOL_LAUNCHER_ID LAUNCHER_PUZZLE_HASH))
+                        pool_inner_puzzle_hash)
+                    (concat PROTOCOL_PREFIX
+                        (sha256tree
+                            (list pool_coin_id my_id DEED_COMMITMENT next_puzzlehash)))))
+            (list CREATE_COIN next_puzzlehash deed_amount (list next_puzzlehash))
+            (list CREATE_COIN_ANNOUNCEMENT
+                (release-message DEED_COMMITMENT next_puzzlehash))
+        )
+    )
+)

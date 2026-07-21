@@ -1,0 +1,38 @@
+name: Protocol CI
+
+on:
+  pull_request:
+  push:
+
+jobs:
+  protocol-ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-test.lock
+
+      - name: Install hash-locked dependencies
+        run: |
+          python -m pip install --require-hashes -r requirements-test.lock
+          python -m pip install --no-deps -e .
+          python -m pip check
+
+      - run: python scripts/check_namespace.py
+
+      - run: python scripts/check_clsp_hex_drift.py
+
+      - run: python -m pytest tests/test_compile.py tests/test_puzzle_integrity.py -q
+
+      - run: python -m pytest -q
+
+      - name: Audit release dependencies
+        # Chia's chia-puzzles-py 0.20.3 requires pytest <9, while the only
+        # fix for this test-runner advisory is pytest 9.0.3.
+        run: >-
+          pip-audit --require-hashes -r requirements-test.lock
+          --ignore-vuln PYSEC-2026-1845

@@ -10,16 +10,16 @@ class TestCompile:
     def test_singleton_launcher_with_did(self):
         mod: Program = load_clvm(
             "singleton_launcher_with_did.clsp",
-            package_or_requirement="populis_puzzles",
+            package_or_requirement="solslot_puzzles",
             recompile=True,
         )
         assert mod is not None
         assert mod.get_tree_hash() is not None
 
-    def test_smart_deed_inner(self):
+    def test_smart_deed_inner_v2(self):
         mod: Program = load_clvm(
-            "smart_deed_inner.clsp",
-            package_or_requirement="populis_puzzles",
+            "smart_deed_inner_v2.clsp",
+            package_or_requirement="solslot_puzzles",
             recompile=True,
         )
         assert mod is not None
@@ -28,7 +28,7 @@ class TestCompile:
     def test_vault_singleton_inner(self):
         mod: Program = load_clvm(
             "vault_singleton_inner.clsp",
-            package_or_requirement="populis_puzzles",
+            package_or_requirement="solslot_puzzles",
             recompile=True,
         )
         assert mod is not None
@@ -37,16 +37,16 @@ class TestCompile:
     def test_p2_vault(self):
         mod: Program = load_clvm(
             "p2_vault.clsp",
-            package_or_requirement="populis_puzzles",
+            package_or_requirement="solslot_puzzles",
             recompile=True,
         )
         assert mod is not None
         assert mod.get_tree_hash() is not None
 
-    def test_p2_pool(self):
+    def test_p2_pool_v2(self):
         mod: Program = load_clvm(
-            "p2_pool.clsp",
-            package_or_requirement="populis_puzzles",
+            "p2_pool_v2.clsp",
+            package_or_requirement="solslot_puzzles",
             recompile=True,
         )
         assert mod is not None
@@ -55,16 +55,16 @@ class TestCompile:
     def test_pool_token_tail(self):
         mod: Program = load_clvm(
             "pool_token_tail.clsp",
-            package_or_requirement="populis_puzzles",
+            package_or_requirement="solslot_puzzles",
             recompile=True,
         )
         assert mod is not None
         assert mod.get_tree_hash() is not None
 
-    def test_pool_singleton_inner(self):
+    def test_pool_singleton_inner_v3(self):
         mod: Program = load_clvm(
-            "pool_singleton_inner.clsp",
-            package_or_requirement="populis_puzzles",
+            "pool_singleton_inner_v3.clsp",
+            package_or_requirement="solslot_puzzles",
             recompile=True,
         )
         assert mod is not None
@@ -73,7 +73,7 @@ class TestCompile:
     def test_governance_singleton_inner(self):
         mod: Program = load_clvm(
             "governance_singleton_inner.clsp",
-            package_or_requirement="populis_puzzles",
+            package_or_requirement="solslot_puzzles",
             recompile=True,
         )
         assert mod is not None
@@ -82,7 +82,7 @@ class TestCompile:
     def test_quorum_did_inner(self):
         mod: Program = load_clvm(
             "quorum_did_inner.clsp",
-            package_or_requirement="populis_puzzles",
+            package_or_requirement="solslot_puzzles",
             recompile=True,
         )
         assert mod is not None
@@ -91,7 +91,7 @@ class TestCompile:
     def test_mint_offer_delegate(self):
         mod: Program = load_clvm(
             "mint_offer_delegate.clsp",
-            package_or_requirement="populis_puzzles",
+            package_or_requirement="solslot_puzzles",
             recompile=True,
         )
         assert mod is not None
@@ -100,7 +100,25 @@ class TestCompile:
     def test_purchase_payment(self):
         mod: Program = load_clvm(
             "purchase_payment.clsp",
-            package_or_requirement="populis_puzzles",
+            package_or_requirement="solslot_puzzles",
+            recompile=True,
+        )
+        assert mod is not None
+        assert mod.get_tree_hash() is not None
+
+    def test_payment_escrow_v1(self):
+        mod: Program = load_clvm(
+            "payment_escrow_v1.clsp",
+            package_or_requirement="solslot_puzzles",
+            recompile=True,
+        )
+        assert mod is not None
+        assert mod.get_tree_hash() is not None
+
+    def test_mint_offer_delegate_v2(self):
+        mod: Program = load_clvm(
+            "mint_offer_delegate_v2.clsp",
+            package_or_requirement="solslot_puzzles",
             recompile=True,
         )
         assert mod is not None
@@ -109,16 +127,7 @@ class TestCompile:
     def test_protocol_config_inner(self):
         mod: Program = load_clvm(
             "protocol_config_inner.clsp",
-            package_or_requirement="populis_puzzles",
-            recompile=True,
-        )
-        assert mod is not None
-        assert mod.get_tree_hash() is not None
-
-    def test_admin_authority_inner(self):
-        mod: Program = load_clvm(
-            "admin_authority_inner.clsp",
-            package_or_requirement="populis_puzzles",
+            package_or_requirement="solslot_puzzles",
             recompile=True,
         )
         assert mod is not None
@@ -127,7 +136,7 @@ class TestCompile:
     def test_admin_authority_v2_inner(self):
         mod: Program = load_clvm(
             "admin_authority_v2_inner.clsp",
-            package_or_requirement="populis_puzzles",
+            package_or_requirement="solslot_puzzles",
             recompile=True,
         )
         assert mod is not None
@@ -136,16 +145,7 @@ class TestCompile:
     def test_property_registry_inner(self):
         mod: Program = load_clvm(
             "property_registry_inner.clsp",
-            package_or_requirement="populis_puzzles",
-            recompile=True,
-        )
-        assert mod is not None
-        assert mod.get_tree_hash() is not None
-
-    def test_mint_proposal_inner(self):
-        mod: Program = load_clvm(
-            "mint_proposal_inner.clsp",
-            package_or_requirement="populis_puzzles",
+            package_or_requirement="solslot_puzzles",
             recompile=True,
         )
         assert mod is not None

@@ -1,0 +1,1192 @@
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; Admin Authority Singleton v2 — MIPS-based per-admin key bundles.
+;;;
+;;; Delegates authentication to a CHIP-0043
+;;; MIPS m_of_n quorum. Each admin slot holds a OneOfN of personal auth
+;;; methods (BLS, EIP-712, passkey, etc.); the protocol-level admin set is
+;;; an MofN over those slots.
+;;;
+;;; Design reference:
+;;;   research/SOLSLOT_ADMIN_AUTHORITY_V2_DESIGN.md
+;;;
+;;; This commit (C.2e) implements all six spend tags: OPERATIONAL (0x01),
+;;; KEY_ADD_PROPOSE (0x02), KEY_ADD_ACTIVATE (0x03), KEY_ADD_VETO (0x04),
+;;; KEY_REMOVE_QUORUM (0x05), and KEY_REMOVE_EMERGENCY (0x06). The full
+;;; v2 spend-type surface is now on-chain.
+;;;
+;;; Polymorphic ACTIVATE: per design §5.8, KEY_ADD_ACTIVATE (0x03) handles
+;;; activation of BOTH ADD and REMOVE pending ops, dispatching on the
+;;; `op_kind` field carried in each pending-op tuple. This keeps the
+;;; spend-type surface to 6 tags (instead of 8) and reuses the cooldown-
+;;; elapsed code path. The handler internally routes to handle-op-activate-add
+;;; or handle-op-activate-remove based on op_kind.
+;;;
+;;; Encoding decision (resolves design §9.1): admins and pending ops are
+;;; FLAT LISTS whose sha256tree is curried into state. For Solslot's
+;;; expected size (~5-10 admins, MAX_PENDING_OPS=8), flat lists are
+;;; dramatically simpler than Merkle trees with no measurable cost penalty.
+;;; Solutions for KEY_* spends carry the full lists; the shim verifies the
+;;; hash matches the curried value, then mutates and re-hashes.
+;;;
+;;; Curried (immutable across the singleton's life):
+;;;   SELF_MOD_HASH                    — tree hash of THIS module (self-recurry).
+;;;   MAX_ADMINS                       — protocol-wide policy cap (e.g. 25).
+;;;   MAX_KEYS_PER_ADMIN               — policy cap on OneOfN cardinality (e.g. 10).
+;;;   COOLDOWN_BLOCKS                  — blocks before pending ADD activates.
+;;;   RECOVERY_TIMEOUT_BLOCKS          — blocks before emergency REMOVE activates.
+;;;   SGT_GOVERNANCE_PUZZLE_HASH       — for ADMIN_SLOT_* spends (out of scope here).
+;;;
+;;; Curried [STATE] (recurried with new values on every state-changing spend):
+;;;   MIPS_ROOT_HASH                   — tree hash of the active MIPS m_of_n
+;;;                                      tree. The OPERATIONAL spend supplies
+;;;                                      the matching reveal in its solution.
+;;;   ADMINS_HASH                      — sha256tree of the admins list. Each
+;;;                                      admin record is a 3-tuple
+;;;                                      (admin_idx leaves_list m_within),
+;;;                                      where `leaves_list` is the flat list
+;;;                                      of member tree hashes (one per auth
+;;;                                      method this admin can sign with),
+;;;                                      and `m_within` is the within-admin
+;;;                                      removal quorum (default 1).
+;;;                                      n_within is implicit in
+;;;                                      (list-length leaves_list).
+;;;   PENDING_KEY_OPS_HASH             — sha256tree of the pending-ops list.
+;;;                                      Each entry is
+;;;                                      (admin_idx op_kind target_hash
+;;;                                      activates_at). Empty list hashes to
+;;;                                      sha256tree(()) (a known constant)
+;;;                                      — the puzzle treats both nil and
+;;;                                      that constant as valid "empty".
+;;;   AUTHORITY_VERSION                — uint64, exact-increment replay
+;;;                                      protection across ALL spend tags
+;;;                                      (including OPERATIONAL — defence in
+;;;                                      depth so a compromised key shows in
+;;;                                      the version history).
+;;;
+;;; Solution (common prefix):
+;;;   spend_tag                        — single byte, see §4.1 of design.
+;;;   my_amount                        — singleton coin amount (must be odd).
+;;;   new_authority_version            — exactly AUTHORITY_VERSION + 1.
+;;;   spend_args                       — list, type-specific (see below).
+;;;
+;;; Spend tags (C.2a implements 0x01 only; others raise):
+;;;   0x01  OPERATIONAL              — quorum-authorised protocol action.
+;;;   0x02  KEY_ADD_PROPOSE          — propose adding a key (cooldown begins).
+;;;   0x03  KEY_ADD_ACTIVATE         — activate after cooldown elapsed.
+;;;   0x04  KEY_ADD_VETO             — cancel a pending add.
+;;;   0x05  KEY_REMOVE_QUORUM        — remove a key with within-admin quorum.
+;;;   0x06  KEY_REMOVE_EMERGENCY     — single-key remove with long cooldown.
+;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(mod
+  (
+    ;; ── Curried (immutable) ─────────────────────────────────────────────
+    SELF_MOD_HASH
+    MAX_ADMINS
+    MAX_KEYS_PER_ADMIN
+    COOLDOWN_BLOCKS
+    RECOVERY_TIMEOUT_BLOCKS
+    SGT_GOVERNANCE_PUZZLE_HASH
+    ;; ── Curried [STATE] (recurried each spend) ──────────────────────
+    MIPS_ROOT_HASH
+    ADMINS_HASH
+    PENDING_KEY_OPS_HASH
+    AUTHORITY_VERSION
+    ;; ── Solution ────────────────────────────────────────────────────────
+    spend_tag
+    my_amount
+    new_authority_version
+    spend_args
+  )
+
+  ;; Include order matters: utils.clib must come before utility_macros.clib
+  ;; (matches the canonical condition shape). utils.clib transitively pulls
+  ;; in curry.clib + sha256tree.clib; including either of those directly
+  ;; re-defines `TWO` and breaks the compile (project memory).
+  (include condition_codes.clib)
+  (include utils.clib)
+  (include utility_macros.clib)
+
+  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+  ;; Spend tag constants
+  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+  (defconstant SPEND_OPERATIONAL          0x01)
+  (defconstant SPEND_KEY_ADD_PROPOSE      0x02)
+  (defconstant SPEND_KEY_ADD_ACTIVATE     0x03)
+  (defconstant SPEND_KEY_ADD_VETO         0x04)
+  (defconstant SPEND_KEY_REMOVE_QUORUM    0x05)
+  (defconstant SPEND_KEY_REMOVE_EMERGENCY 0x06)
+  (defconstant SPEND_ADMIN_ROSTER_UPDATE  0x07)
+
+  ;; Op-kind tags inside pending-ops entries. Distinct from spend tags so
+  ;; that ACTIVATE handlers can dispatch on the kind that was originally
+  ;; proposed without re-reading the spend tag.
+  (defconstant OP_KIND_ADD                0x01)
+  (defconstant OP_KIND_REMOVE             0x02)
+
+  ;; Confirmation window for PROPOSE spends. Forces the PROPOSE spend's
+  ;; confirmation to land in [current_block, current_block + PROPOSE_WINDOW)
+  ;; so the user-supplied `current_block_height` matches actual chain time
+  ;; ± a few blocks. PROPOSE_WINDOW = 8 ≈ 2 minutes (24-second blocks). The
+  ;; window must be > 1 to avoid spurious failures from natural mempool
+  ;; latency; it must be small enough that the cooldown isn't materially
+  ;; eroded by the window.
+  (defconstant PROPOSE_WINDOW             8)
+
+  ;; Maximum simultaneous pending ops across the whole singleton. Caps the
+  ;; size of the PENDING_KEY_OPS list so a malicious / buggy caller can't
+  ;; DOS the puzzle by inflating it to thousands of entries (each spend
+  ;; reveals the full list, so cost grows linearly).
+  (defconstant MAX_PENDING_OPS            8)
+
+  ;; Tree hash of the empty list (). The puzzle stores this as the
+  ;; PENDING_KEY_OPS_HASH when no ops are pending. Avoids special-casing
+  ;; nil in solution validation.
+  (defconstant EMPTY_LIST_HASH 0x4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a)
+
+  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+  ;; State hash + self-recurry
+  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+  ;; The state hash is the Solslot-protocol-prefixed sha256tree of the new
+  ;; [STATE] tuple. Off-chain monitors decode it via the same struct shape.
+  ;; The protocol prefix prevents collision with announcements emitted by
+  ;; other Solslot singletons.
+  (defun-inline state-hash
+      (new_mips_root new_admins_hash new_pending_ops_hash new_authority_version)
+    (sha256tree
+      (list new_mips_root
+            new_admins_hash
+            new_pending_ops_hash
+            new_authority_version))
+  )
+
+  (defun-inline roster-update-binding-hash
+      (new_admins_hash new_mips_root_hash new_authority_version)
+    (sha256tree
+      (list SPEND_ADMIN_ROSTER_UPDATE
+            MIPS_ROOT_HASH
+            ADMINS_HASH
+            PENDING_KEY_OPS_HASH
+            AUTHORITY_VERSION
+            new_admins_hash
+            new_mips_root_hash
+            new_authority_version))
+  )
+
+  (defun-inline key-op-binding-hash
+      (admin_idx op_kind member_hash activates_at)
+    (sha256tree
+      (list admin_idx op_kind member_hash activates_at))
+  )
+
+  (defun-inline key-remove-quorum-binding-hash
+      (admin_idx removed_member_hash)
+    (sha256tree
+      (list admin_idx OP_KIND_REMOVE removed_member_hash))
+  )
+
+  ;; Compute the puzzle hash of a v2 singleton inner curried with new state.
+  ;; The immutable curried params (MAX_ADMINS, COOLDOWN_BLOCKS, etc.) are
+  ;; folded in via their existing tree-hashes — they don't change across
+  ;; rotations.
+  (defun-inline new-inner-puzhash
+      (new_mips_root new_admins_hash new_pending_ops_hash new_authority_version)
+    (curry_hashes SELF_MOD_HASH
+      (sha256 1 SELF_MOD_HASH)
+      (sha256 1 MAX_ADMINS)
+      (sha256 1 MAX_KEYS_PER_ADMIN)
+      (sha256 1 COOLDOWN_BLOCKS)
+      (sha256 1 RECOVERY_TIMEOUT_BLOCKS)
+      (sha256 1 SGT_GOVERNANCE_PUZZLE_HASH)
+      (sha256 1 new_mips_root)
+      (sha256 1 new_admins_hash)
+      (sha256 1 new_pending_ops_hash)
+      (sha256 1 new_authority_version)
+    )
+  )
+
+  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+  ;; List helpers
+  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+  (defun list-length (lst)
+    (if lst (+ 1 (list-length (r lst))) 0)
+  )
+
+  ;; Append a single element to the END of a list. Order matters for the
+  ;; pending-ops list: appending preserves chronological insertion order so
+  ;; off-chain monitors can decode pending ops in the order they were
+  ;; proposed (helpful for debugging and time-stamping).
+  (defun append-element (lst elem)
+    (if lst
+      (c (f lst) (append-element (r lst) elem))
+      (c elem ())
+    )
+  )
+
+  (defun all-size-b32 (lst)
+    (if lst
+      (if (is-size-b32 (f lst))
+        (all-size-b32 (r lst))
+        ())
+      1)
+  )
+
+  (defun no-duplicate-atoms (lst)
+    (if lst
+      (if (atom-in-list (f lst) (r lst))
+        ()
+        (no-duplicate-atoms (r lst)))
+      1)
+  )
+
+  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+  ;; Admin-record lookup
+  ;;
+  ;; Walks `admins` (a list of (admin_idx leaves m_within) records) and
+  ;; returns the matching record or () if not found. The () → raise check
+  ;; happens at the call site.
+  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+  (defun find-admin-by-idx (admins target_idx)
+    (if admins
+      (if (= (f (f admins)) target_idx)
+        (f admins)
+        (find-admin-by-idx (r admins) target_idx)
+      )
+      ()
+    )
+  )
+
+  (defun max-admin-idx (admins current_max)
+    (if admins
+      (max-admin-idx
+        (r admins)
+        (if (> (f (f admins)) current_max) (f (f admins)) current_max))
+      current_max)
+  )
+
+  ;; Replace the admin record at `target_idx` with `new_record`. Returns the
+  ;; new admins list with the same ordering. Raises (vacuous nil result) if
+  ;; the target_idx is not present — callers must verify presence first.
+  (defun replace-admin-record (admins target_idx new_record)
+    (if admins
+      (if (= (f (f admins)) target_idx)
+        (c new_record (r admins))
+        (c (f admins) (replace-admin-record (r admins) target_idx new_record))
+      )
+      ()
+    )
+  )
+
+  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+  ;; Pending-ops list helpers
+  ;;
+  ;; Pending ops are 4-tuples (admin_idx op_kind target_hash activates_at).
+  ;; ACTIVATE / VETO need to (a) verify a specific tuple is in the list and
+  ;; (b) remove it from the list to produce the new state. Both helpers walk
+  ;; the list once; ACTIVATE / VETO callers reconstruct the target tuple
+  ;; from solution args and the puzzle's known op-kind constant.
+  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+  ;; Returns 1 if the list contains an element whose sha256tree matches
+  ;; `target_hash`, () otherwise. We compare hashes (not the elements
+  ;; directly with `=`) because pending-op entries are cons-pairs, and
+  ;; CLVM's `=` is byte-equality on atoms only.
+  (defun list-contains-tree (lst target_hash)
+    (if lst
+      (if (= (sha256tree (f lst)) target_hash)
+        1
+        (list-contains-tree (r lst) target_hash)
+      )
+      ()
+    )
+  )
+
+  ;; Returns lst with the FIRST occurrence of an element matching
+  ;; `target_hash` (by sha256tree) removed. If no match, returns the
+  ;; original list unchanged — callers MUST verify presence via
+  ;; list-contains-tree first to avoid silent no-ops.
+  (defun remove-first-match (lst target_hash)
+    (if lst
+      (if (= (sha256tree (f lst)) target_hash)
+        (r lst)
+        (c (f lst)
+           (remove-first-match (r lst) target_hash))
+      )
+      ()
+    )
+  )
+
+  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+  ;; Cooldown enforcement helpers
+  ;;
+  ;; PROPOSE binds its confirmation to the user-supplied current_block_height
+  ;; via a [floor, floor + PROPOSE_WINDOW) window. This forces
+  ;; activates_at = current_block_height + COOLDOWN_BLOCKS to be a real
+  ;; chain-time-relative future block, not an arbitrary user choice.
+  ;;
+  ;; A compromised key cannot bypass cooldown by passing a too-small
+  ;; activates_at: the resulting ASSERT_HEIGHT_ABSOLUTE / BEFORE pair would
+  ;; either reject the spend (height already past) or push activation into a
+  ;; legitimate cooldown window.
+  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+  (defun-inline propose-height-bindings (current_block_height)
+    (list
+      (list ASSERT_HEIGHT_ABSOLUTE current_block_height)
+      (list ASSERT_BEFORE_HEIGHT_ABSOLUTE
+            (+ current_block_height PROPOSE_WINDOW))
+    )
+  )
+
+  ;; ACTIVATE binds its confirmation to be at or after the pending op's
+  ;; `activates_at` height. The spend can otherwise confirm at any later
+  ;; block; there is no upper bound (the pending op stays valid until
+  ;; activated or vetoed).
+  (defun-inline activate-height-binding (activates_at)
+    (list ASSERT_HEIGHT_ABSOLUTE activates_at)
+  )
+
+  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+  ;; Conditions emitted on every state-changing spend
+  ;;
+  ;; Bundles the singleton-lifecycle plumbing (CREATE_COIN self-recurry,
+  ;; ASSERT_MY_AMOUNT) and the protocol-prefixed announcement that off-chain
+  ;; monitors watch.
+  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+  ;; defun-inline so the macro-style expansion preserves caller-scope
+  ;; access to the curried mod params (SELF_MOD_HASH, MAX_ADMINS, ...)
+  ;; that new-inner-puzhash transitively needs. Plain defun would
+  ;; create an isolated scope and those references would resolve to nil,
+  ;; silently breaking the recurry hash.
+  (defun-inline emit-shim-conditions
+      (new_mips_root new_admins_hash new_pending_ops_hash new_authority_version
+       my_amount spend_tag)
+    (list
+      (list CREATE_COIN
+        (new-inner-puzhash new_mips_root new_admins_hash new_pending_ops_hash
+                           new_authority_version)
+        my_amount)
+      ;; The announcement payload bundles the spend tag (so monitors can
+      ;; decode the action that just happened) with the new state hash. The
+      ;; PROTOCOL_PREFIX namespaces this announcement away from any other
+      ;; Solslot singleton's announcements (POOL, GOV, etc.).
+      (list CREATE_PUZZLE_ANNOUNCEMENT
+        (concat PROTOCOL_PREFIX
+                spend_tag
+                (state-hash new_mips_root new_admins_hash
+                            new_pending_ops_hash new_authority_version)))
+      (list ASSERT_MY_AMOUNT my_amount)
+    )
+  )
+
+  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+  ;; OPERATIONAL spend (tag 0x01)
+  ;;
+  ;; spend_args = (mips_puzzle_reveal mips_solution)
+  ;;
+  ;; The shim:
+  ;;   1. Verifies sha256tree(mips_puzzle_reveal) == MIPS_ROOT_HASH so the
+  ;;      caller cannot smuggle in a different MIPS tree.
+  ;;   2. Runs (a mips_puzzle_reveal mips_solution) which executes the
+  ;;      curried m_of_n logic over the chosen delegated puzzle. The result
+  ;;      is the conditions list the delegated puzzle (per-admin signature
+  ;;      verifications + the user's actual protocol action) wants emitted.
+  ;;   3. Wraps those conditions with the shim's own (CREATE_COIN self-
+  ;;      recurry, ASSERT_MY_AMOUNT, announcement). The state changes only
+  ;;      in AUTHORITY_VERSION (everything else is unchanged for an
+  ;;      OPERATIONAL spend).
+  ;;
+  ;; The version bump is a defence-in-depth: even non-state-changing actions
+  ;; advance the version, so a compromised key spending the singleton is
+  ;; visible in the chain history rather than silent.
+  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+  ;; defun-inline: handler bodies need caller-scope access to the curried
+  ;; mod params (MIPS_ROOT_HASH, ADMINS_HASH, ...). Plain defun would
+  ;; isolate the scope and those references would resolve to nil.
+  (defun-inline handle-operational (mips_puzzle_reveal mips_solution my_amount
+                                    new_authority_version)
+    (assert
+      ;; Reveal must hash to the curried MIPS root. Without this, a caller
+      ;; could supply a different (more permissive) MIPS tree that wasn't
+      ;; authorised by the current admin quorum.
+      (= (sha256tree mips_puzzle_reveal) MIPS_ROOT_HASH)
+      ;; Run MIPS and wrap its conditions with the shim's own.
+      (merge-lists
+        (a mips_puzzle_reveal mips_solution)
+        (emit-shim-conditions
+          MIPS_ROOT_HASH                 ; unchanged
+          ADMINS_HASH                    ; unchanged
+          PENDING_KEY_OPS_HASH           ; unchanged
+          new_authority_version          ; bumped
+          my_amount
+          SPEND_OPERATIONAL))
+    )
+  )
+
+  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+  ;; KEY_ADD_PROPOSE spend (tag 0x02)
+  ;;
+  ;; spend_args = (
+  ;;   current_admins_list           ; whose sha256tree == ADMINS_HASH
+  ;;   current_pending_ops_list      ; whose sha256tree == PENDING_KEY_OPS_HASH
+  ;;   admin_idx                     ; which admin slot is gaining a key
+  ;;   approving_member_reveal       ; reveal of one leaf in admin's OneOfN
+  ;;   approving_member_solution     ; solution producing signature condition
+  ;;   new_member_hash               ; member tree hash to add
+  ;;   current_block_height          ; user-claimed block height (bound via
+  ;;                                  ; ASSERT_HEIGHT_*)
+  ;; )
+  ;;
+  ;; The shim:
+  ;;   1. Validates the lists hash to the curried state values.
+  ;;   2. Locates the affected admin record; verifies the approving member
+  ;;      is one of its leaves.
+  ;;   3. Verifies new_member_hash isn't already a leaf (no duplicates) and
+  ;;      MAX_KEYS_PER_ADMIN isn't exceeded.
+  ;;   4. Verifies MAX_PENDING_OPS isn't exceeded.
+  ;;   5. Runs the approving member's puzzle. Its emitted conditions
+  ;;      (typically AGG_SIG_ME / AGG_SIG_UNSAFE / SECP256K1_VERIFY) are
+  ;;      passed through to consensus, which validates the signature(s).
+  ;;
+  ;;      The shim prepends the canonical operation hash to the member
+  ;;      solution before running the member puzzle, matching the binding
+  ;;      pattern used by mint_proposal_inner_v2. For BLS-style members,
+  ;;      the first solution argument becomes the AGG_SIG_ME message.
+  ;;
+  ;;   6. Computes activates_at = current_block_height + COOLDOWN_BLOCKS.
+  ;;   7. Appends a new pending-op tuple to the pending-ops list.
+  ;;   8. Recurries with updated PENDING_KEY_OPS_HASH + bumped version.
+  ;;
+  ;; Cooldown enforcement: the shim emits ASSERT_HEIGHT_ABSOLUTE +
+  ;; ASSERT_BEFORE_HEIGHT_ABSOLUTE around current_block_height so the spend
+  ;; can only confirm in [current_block_height, +PROPOSE_WINDOW). This
+  ;; forces activates_at to be a real future block, COOLDOWN_BLOCKS away
+  ;; from the actual confirmation height.
+  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+  ;; Build a new admin record by appending `new_member_hash` to the
+  ;; existing admin's `leaves` list. m_within is preserved. Used by ACTIVATE.
+  (defun-inline admin-record-with-added-leaf (admin_record new_leaf)
+    (list (f admin_record)                                 ; admin_idx
+          (append-element (f (r admin_record)) new_leaf)   ; leaves + new_leaf
+          (f (r (r admin_record))))                        ; m_within unchanged
+  )
+
+  ;; Remove the FIRST occurrence of `target_leaf` from a leaves list.
+  ;; Used by KEY_REMOVE_QUORUM. The leaves are 32-byte member tree hashes
+  ;; (atoms), so byte-equality with `=` works — no sha256tree wrapping.
+  ;; Returns () if `target_leaf` not present — callers must verify presence.
+  (defun remove-leaf-from-list (leaves target_leaf)
+    (if leaves
+      (if (= (f leaves) target_leaf)
+        (r leaves)
+        (c (f leaves) (remove-leaf-from-list (r leaves) target_leaf))
+      )
+      ()
+    )
+  )
+
+  ;; Build a new admin record with `removed_leaf` taken out. m_within is
+  ;; preserved (operators that want to also lower m_within bundle the
+  ;; change into a separate spend). Used by KEY_REMOVE_QUORUM.
+  (defun-inline admin-record-with-removed-leaf (admin_record removed_leaf)
+    (list (f admin_record)                                       ; admin_idx
+          (remove-leaf-from-list (f (r admin_record)) removed_leaf) ; leaves minus removed
+          (f (r (r admin_record))))                              ; m_within unchanged
+  )
+
+  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+  ;; Quorum signature aggregation
+  ;;
+  ;; Walks `approving_pairs` — a list of (member_reveal . member_solution)
+  ;; cons-pairs — verifying each approving member is a leaf of `leaves` and
+  ;; that no member is repeated in the proof set (a duplicate would let one
+  ;; signer count for two quorum slots). Accumulates each member's emitted
+  ;; conditions into the result. Returns (count . merged_conditions).
+  ;;
+  ;; The `seen_hashes` accumulator tracks tree hashes already-presented in
+  ;; this proof set, so we can reject [X X Y] etc. as a quorum of 2.
+  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+  (defun aggregate-quorum-conditions
+      (approving_pairs leaves binding_hash seen_hashes acc)
+    (if approving_pairs
+      (if (atom-in-list (sha256tree (f (f approving_pairs))) leaves)
+        (if (atom-in-list (sha256tree (f (f approving_pairs))) seen_hashes)
+          ;; Duplicate signer in the proof set — reject by returning ().
+          ;; The caller's assert chain treats nil as raise.
+          ()
+          ;; Distinct signer; run them, accumulate conditions, recurse.
+          (aggregate-quorum-conditions
+            (r approving_pairs)
+            leaves
+            binding_hash
+            (c (sha256tree (f (f approving_pairs))) seen_hashes)
+            (merge-lists
+              (a (f (f approving_pairs))
+                 (c binding_hash (r (f approving_pairs))))
+              acc))
+        )
+        ;; Approving member's tree hash isn't a leaf of the OneOfN — reject.
+        ()
+      )
+      ;; Walked the whole proof set without rejection. Return
+      ;; (count . merged_conditions). The caller compares count >= m_within.
+      (c (list-length seen_hashes) acc)
+    )
+  )
+
+  (defun-inline handle-key-add-propose
+      (current_admins_list current_pending_ops_list admin_idx
+       approving_member_reveal approving_member_solution
+       new_member_hash current_block_height
+       my_amount new_authority_version)
+    (assert
+      ;; State-list integrity — the user must reveal the lists whose
+      ;; sha256tree matches the current curried state values. Without
+      ;; this, a caller could provide a forged admins list to bypass the
+      ;; "approving member is in the OneOfN" check below.
+      (= (sha256tree current_admins_list) ADMINS_HASH)
+      (= (sha256tree current_pending_ops_list) PENDING_KEY_OPS_HASH)
+      ;; Solution sanity for the per-spend args.
+      (is-uint64 admin_idx)
+      (is-size-b32 new_member_hash)
+      (is-uint64 current_block_height)
+      ;; Find the affected admin's record. find-admin-by-idx returns () for
+      ;; "not found", which assert treats as raise.
+      (find-admin-by-idx current_admins_list admin_idx)
+      ;; The approving member must be one of the affected admin's leaves.
+      ;; (atom-in-list is from utility_macros.clib; uses byte-equality.)
+      (atom-in-list (sha256tree approving_member_reveal)
+                    (f (r (find-admin-by-idx current_admins_list admin_idx))))
+      ;; No-duplicate guard — the new member hash mustn't already be a leaf.
+      ;; Without this, a malicious / buggy add could re-introduce a key the
+      ;; OneOfN already authorises (no security impact directly, but it
+      ;; pollutes the leaves list and confuses off-chain monitors).
+      (not (atom-in-list new_member_hash
+                         (f (r (find-admin-by-idx current_admins_list admin_idx)))))
+      ;; OneOfN cardinality cap (I-3). Adding this leaf must keep the
+      ;; admin's OneOfN at or below MAX_KEYS_PER_ADMIN. We check
+      ;; len(current_leaves) < MAX_KEYS_PER_ADMIN since the new list is
+      ;; current_leaves + [new_member_hash].
+      (> MAX_KEYS_PER_ADMIN
+         (list-length
+           (f (r (find-admin-by-idx current_admins_list admin_idx)))))
+      ;; Pending-ops cap. Without it the list grows unboundedly and every
+      ;; subsequent spend's CLVM cost grows with it.
+      (> MAX_PENDING_OPS (list-length current_pending_ops_list))
+      ;; Build the conditions list:
+      ;;   1. Cooldown-binding height assertions (PROPOSE confirms in
+      ;;      [current_block_height, +PROPOSE_WINDOW)).
+      ;;   2. The approving member's emitted conditions (signature checks).
+      ;;   3. The shim's own (CREATE_COIN, ASSERT_MY_AMOUNT, announcement).
+      (merge-lists
+        (propose-height-bindings current_block_height)
+        (merge-lists
+          (a approving_member_reveal
+             (c
+               (key-op-binding-hash
+                 admin_idx
+                 OP_KIND_ADD
+                 new_member_hash
+                 (+ current_block_height COOLDOWN_BLOCKS))
+               approving_member_solution))
+          ;; emit-shim-conditions returns a list-of-conditions; we pass the
+          ;; new state in directly. ADMINS_HASH and MIPS_ROOT_HASH are
+          ;; unchanged at PROPOSE — only the pending-ops list grows.
+          (emit-shim-conditions
+            MIPS_ROOT_HASH                ; unchanged
+            ADMINS_HASH                   ; unchanged
+            (sha256tree                   ; new pending ops list hash
+              (append-element
+                current_pending_ops_list
+                (list admin_idx OP_KIND_ADD new_member_hash
+                      (+ current_block_height COOLDOWN_BLOCKS))))
+            new_authority_version         ; bumped
+            my_amount
+            SPEND_KEY_ADD_PROPOSE)))
+    )
+  )
+
+  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+  ;; KEY_ADD_ACTIVATE spend (tag 0x03) — polymorphic on op_kind.
+  ;;
+  ;; Despite the historical name, this tag activates BOTH ADD and REMOVE
+  ;; pending ops. The op_kind discriminator (OP_KIND_ADD or OP_KIND_REMOVE)
+  ;; comes in via the solution and selects the leaf-mutation logic.
+  ;;
+  ;; spend_args = (
+  ;;   current_admins_list           ; whose sha256tree == ADMINS_HASH
+  ;;   current_pending_ops_list      ; whose sha256tree == PENDING_KEY_OPS_HASH
+  ;;   admin_idx                     ; admin slot affected
+  ;;   op_kind                       ; OP_KIND_ADD | OP_KIND_REMOVE
+  ;;   target_member_hash            ; leaf being added or removed
+  ;;   activates_at                  ; cooldown end height (must match pending)
+  ;; )
+  ;;
+  ;; Permissionless spend — no signer authority needed beyond:
+  ;;   1. Proof the matching pending op exists in PENDING_KEY_OPS_HASH.
+  ;;   2. ASSERT_HEIGHT_ABSOLUTE activates_at — cooldown has elapsed.
+  ;;
+  ;; This split (PROPOSE requires auth, ACTIVATE doesn't) is deliberate:
+  ;; the affected admin signed off at PROPOSE / EMERGENCY; ACTIVATE merely
+  ;; enacts what was already authorised. Anyone (the user, a watcher bot,
+  ;; a third-party relayer) can spend the singleton to finalise. Avoids
+  ;; requiring the admin to come back and sign a second time after the
+  ;; cooldown elapses.
+  ;;
+  ;; State changes (op_kind dependent):
+  ;;   OP_KIND_ADD:    target_member_hash appended to admin's leaves.
+  ;;   OP_KIND_REMOVE: target_member_hash removed from admin's leaves.
+  ;; In both cases the matching pending op is removed from the pending list.
+  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+  ;; ADD-activation inner handler. Called by handle-key-add-activate when
+  ;; op_kind == OP_KIND_ADD. Verifies the new leaf isn't already present
+  ;; (defensive against concurrent activation of duplicates) and emits
+  ;; conditions to append it.
+  (defun-inline handle-op-activate-add
+      (current_admins_list current_pending_ops_list admin_idx
+       target_member_hash activates_at
+       my_amount new_authority_version)
+    (assert
+      ;; The exact pending op constructed from solution args must be in
+      ;; the list. If the activates_at the user supplies doesn't match
+      ;; what was recorded at PROPOSE, the tuple-hash differs and lookup
+      ;; fails — a compromised key cannot fast-forward by passing a
+      ;; smaller activates_at than the one that was committed.
+      (list-contains-tree
+        current_pending_ops_list
+        (sha256tree
+          (list admin_idx OP_KIND_ADD target_member_hash activates_at)))
+      ;; Defensive: the new leaf still mustn't already be present. Could
+      ;; have been added concurrently via a different pending op that
+      ;; activated first; in that case this ACTIVATE becomes a no-op
+      ;; and we reject so the caller doesn't lose gas.
+      (not (atom-in-list target_member_hash
+                         (f (r (find-admin-by-idx current_admins_list admin_idx)))))
+      (c (activate-height-binding activates_at)
+         (emit-shim-conditions
+           MIPS_ROOT_HASH                  ; unchanged
+           (sha256tree                     ; new admins hash
+             (replace-admin-record
+               current_admins_list
+               admin_idx
+               (admin-record-with-added-leaf
+                 (find-admin-by-idx current_admins_list admin_idx)
+                 target_member_hash)))
+           (sha256tree                     ; new pending-ops hash
+             (remove-first-match
+               current_pending_ops_list
+               (sha256tree
+                 (list admin_idx OP_KIND_ADD target_member_hash activates_at))))
+           new_authority_version           ; bumped
+           my_amount
+           SPEND_KEY_ADD_ACTIVATE))
+    )
+  )
+
+  ;; REMOVE-activation inner handler. Called by handle-key-add-activate
+  ;; when op_kind == OP_KIND_REMOVE. Verifies the leaf is currently
+  ;; present, that removal won't violate I-2 (post-removal len >= 1),
+  ;; and emits conditions to take it out.
+  (defun-inline handle-op-activate-remove
+      (current_admins_list current_pending_ops_list admin_idx
+       target_member_hash activates_at
+       my_amount new_authority_version)
+    (assert
+      ;; The exact pending REMOVE op must be present.
+      (list-contains-tree
+        current_pending_ops_list
+        (sha256tree
+          (list admin_idx OP_KIND_REMOVE target_member_hash activates_at)))
+      ;; The leaf must still be a member of the admin's OneOfN. Could
+      ;; have been removed concurrently (via KEY_REMOVE_QUORUM or a
+      ;; sibling KEY_REMOVE_EMERGENCY that activated first); in that case
+      ;; we reject the no-op activation.
+      (atom-in-list target_member_hash
+                    (f (r (find-admin-by-idx current_admins_list admin_idx))))
+      ;; I-2 re-check at activation time. Even though EMERGENCY-PROPOSE
+      ;; verified len > 1 at the proposal moment, removals from sibling
+      ;; spends could have reduced the OneOfN to a single leaf since
+      ;; then. Re-checking here prevents activation from emptying it.
+      (> (list-length
+           (f (r (find-admin-by-idx current_admins_list admin_idx))))
+         1)
+      (c (activate-height-binding activates_at)
+         (emit-shim-conditions
+           MIPS_ROOT_HASH                  ; unchanged
+           (sha256tree                     ; new admins hash
+             (replace-admin-record
+               current_admins_list
+               admin_idx
+               (admin-record-with-removed-leaf
+                 (find-admin-by-idx current_admins_list admin_idx)
+                 target_member_hash)))
+           (sha256tree                     ; new pending-ops hash
+             (remove-first-match
+               current_pending_ops_list
+               (sha256tree
+                 (list admin_idx OP_KIND_REMOVE target_member_hash activates_at))))
+           new_authority_version           ; bumped
+           my_amount
+           SPEND_KEY_ADD_ACTIVATE))
+    )
+  )
+
+  ;; Dispatcher entry point for SPEND_KEY_ADD_ACTIVATE. Validates common
+  ;; preconditions, then routes to the op_kind-specific inner handler.
+  (defun-inline handle-key-add-activate
+      (current_admins_list current_pending_ops_list admin_idx op_kind
+       target_member_hash activates_at
+       my_amount new_authority_version)
+    (assert
+      ;; State integrity (common to both branches).
+      (= (sha256tree current_admins_list) ADMINS_HASH)
+      (= (sha256tree current_pending_ops_list) PENDING_KEY_OPS_HASH)
+      (is-uint64 admin_idx)
+      (is-size-b32 target_member_hash)
+      (is-uint64 activates_at)
+      ;; The admin must still exist (could have been removed via SGT
+      ;; governance during the cooldown window).
+      (find-admin-by-idx current_admins_list admin_idx)
+      ;; Dispatch on op_kind.
+      (if (= op_kind OP_KIND_ADD)
+        (handle-op-activate-add
+          current_admins_list current_pending_ops_list admin_idx
+          target_member_hash activates_at my_amount new_authority_version)
+      (if (= op_kind OP_KIND_REMOVE)
+        (handle-op-activate-remove
+          current_admins_list current_pending_ops_list admin_idx
+          target_member_hash activates_at my_amount new_authority_version)
+        ;; Unknown op_kind — raise.
+        (x)))
+    )
+  )
+
+  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+  ;; KEY_ADD_VETO spend (tag 0x04)
+  ;;
+  ;; spend_args = (
+  ;;   current_admins_list           ; whose sha256tree == ADMINS_HASH
+  ;;   current_pending_ops_list      ; whose sha256tree == PENDING_KEY_OPS_HASH
+  ;;   admin_idx                     ; admin slot whose pending add is vetoed
+  ;;   approving_member_reveal       ; ANY leaf of admin's OneOfN can veto
+  ;;   approving_member_solution
+  ;;   target_member_hash            ; the pending member hash to cancel
+  ;;   activates_at                  ; from the pending op
+  ;; )
+  ;;
+  ;; Wide authority: ANY leaf of the affected admin's OneOfN can veto.
+  ;; This maximises the chance a legitimate user catches a malicious add
+  ;; during cooldown — even if the attacker compromised the leaf they used
+  ;; for PROPOSE, the user's other leaves can still cancel the attack.
+  ;;
+  ;; State changes:
+  ;;   - admins_list unchanged.
+  ;;   - The matching pending op is removed from pending-ops list.
+  ;;
+  ;; No height binding — veto can happen any time before activation.
+  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+  (defun-inline handle-key-add-veto
+      (current_admins_list current_pending_ops_list admin_idx
+       approving_member_reveal approving_member_solution
+       target_member_hash activates_at
+       my_amount new_authority_version)
+    (assert
+      ;; State integrity.
+      (= (sha256tree current_admins_list) ADMINS_HASH)
+      (= (sha256tree current_pending_ops_list) PENDING_KEY_OPS_HASH)
+      (is-uint64 admin_idx)
+      (is-size-b32 target_member_hash)
+      (is-uint64 activates_at)
+      ;; Affected admin must still exist.
+      (find-admin-by-idx current_admins_list admin_idx)
+      ;; The approving member must be one of the admin's leaves. Wide
+      ;; authority: ANY leaf can veto (no quorum required, no specific
+      ;; leaf required).
+      (atom-in-list (sha256tree approving_member_reveal)
+                    (f (r (find-admin-by-idx current_admins_list admin_idx))))
+      ;; The target pending op must exist. Constructed from solution args
+      ;; — same shape as ACTIVATE.
+      (list-contains-tree
+        current_pending_ops_list
+        (sha256tree
+          (list admin_idx OP_KIND_ADD target_member_hash activates_at)))
+      ;; Build conditions:
+      ;;   1. The approving member's emitted conditions. The shim prepends
+      ;;      the ADD pending-op binding so the signature is operation-bound.
+      ;;   2. Shim conditions with admins unchanged + pending-ops minus
+      ;;      the vetoed op.
+      (merge-lists
+        (a approving_member_reveal
+           (c
+             (key-op-binding-hash
+               admin_idx
+               OP_KIND_ADD
+               target_member_hash
+               activates_at)
+             approving_member_solution))
+        (emit-shim-conditions
+          MIPS_ROOT_HASH                  ; unchanged
+          ADMINS_HASH                     ; unchanged — veto only touches pending
+          (sha256tree
+            (remove-first-match
+              current_pending_ops_list
+              (sha256tree
+                (list admin_idx OP_KIND_ADD target_member_hash activates_at))))
+          new_authority_version           ; bumped
+          my_amount
+          SPEND_KEY_ADD_VETO))
+    )
+  )
+
+  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+  ;; KEY_REMOVE_QUORUM spend (tag 0x05)
+  ;;
+  ;; spend_args = (
+  ;;   current_admins_list           ; whose sha256tree == ADMINS_HASH
+  ;;   admin_idx                     ; admin slot losing a leaf
+  ;;   removed_member_hash           ; the leaf to remove (must be in leaves)
+  ;;   approving_pairs               ; list of (member_reveal . member_solution)
+  ;;                                  ; cons-pairs — must contain >= m_within
+  ;;                                  ; DISTINCT members of admin's leaves
+  ;; )
+  ;;
+  ;; Removing a leaf is the destructive operation; this spend requires
+  ;; m_within distinct co-signers from the SAME admin's OneOfN. A
+  ;; compromised key alone cannot remove other keys (T-KEY-3 mitigation).
+  ;;
+  ;; Invariant I-2: removing must not empty the OneOfN. We check
+  ;; len(leaves) >= 2 before removing (so post-removal len >= 1). For
+  ;; admins with only one leaf, removal is impossible via this spend —
+  ;; they must add a second leaf (KEY_ADD_PROPOSE) before they can rotate
+  ;; out the first.
+  ;;
+  ;; State changes:
+  ;;   - removed_member_hash is taken out of the affected admin's leaves.
+  ;;   - PENDING_KEY_OPS_HASH unchanged — this is an immediate-effect spend.
+  ;;
+  ;; No cooldown — the m_within quorum requirement is the defence layer.
+  ;; If admins want a cooldown on removals they should use
+  ;; KEY_REMOVE_EMERGENCY (single-key + RECOVERY_TIMEOUT_BLOCKS); that
+  ;; tag lands in C.2e.
+  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+  ;; KEY_REMOVE_EMERGENCY spend (tag 0x06)
+  ;;
+  ;; spend_args = (
+  ;;   current_admins_list           ; whose sha256tree == ADMINS_HASH
+  ;;   current_pending_ops_list      ; whose sha256tree == PENDING_KEY_OPS_HASH
+  ;;   admin_idx                     ; admin slot whose leaf is to be removed
+  ;;   approving_member_reveal       ; ANY leaf of admin's OneOfN can authorise
+  ;;   approving_member_solution
+  ;;   removed_member_hash           ; the leaf to remove
+  ;;   current_block_height          ; user-claimed block height (bound via
+  ;;                                  ; ASSERT_HEIGHT_*)
+  ;; )
+  ;;
+  ;; Single-leaf authority + long cooldown (RECOVERY_TIMEOUT_BLOCKS, e.g.
+  ;; 7 days). Use case: "I lost my passkey, my MetaMask still works,
+  ;; please remove the passkey eventually". The long cooldown gives a
+  ;; vigilant compromised-MetaMask attacker time to be vetoed by other
+  ;; leaves before the removal lands (KEY_ADD_VETO works on any pending
+  ;; op, including REMOVEs).
+  ;;
+  ;; Compared to KEY_REMOVE_QUORUM (which requires m_within co-signers
+  ;; but is instant), this trades immediacy for a single-key UX. An
+  ;; admin with only one leaf cannot use this — I-2 prevents emptying
+  ;; the OneOfN.
+  ;;
+  ;; State changes:
+  ;;   - admins_list unchanged at PROPOSE time. The actual leaf removal
+  ;;     happens at ACTIVATE time (tag 0x03 with op_kind=OP_KIND_REMOVE).
+  ;;   - A new pending REMOVE op is appended:
+  ;;       (admin_idx OP_KIND_REMOVE removed_member_hash
+  ;;        current_block_height + RECOVERY_TIMEOUT_BLOCKS)
+  ;;
+  ;; Cooldown enforcement: the shim emits propose-height-bindings around
+  ;; current_block_height, forcing activates_at to be a real future block,
+  ;; RECOVERY_TIMEOUT_BLOCKS away from actual confirmation height.
+  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+  (defun-inline handle-key-remove-emergency
+      (current_admins_list current_pending_ops_list admin_idx
+       approving_member_reveal approving_member_solution
+       removed_member_hash current_block_height
+       my_amount new_authority_version)
+    (assert
+      ;; State-list integrity.
+      (= (sha256tree current_admins_list) ADMINS_HASH)
+      (= (sha256tree current_pending_ops_list) PENDING_KEY_OPS_HASH)
+      (is-uint64 admin_idx)
+      (is-size-b32 removed_member_hash)
+      (is-uint64 current_block_height)
+      ;; Affected admin must exist.
+      (find-admin-by-idx current_admins_list admin_idx)
+      ;; The approving member must be one of the affected admin's leaves.
+      ;; Wide authority — any leaf can initiate emergency removal. This
+      ;; includes the leaf being removed: "I'm rotating myself out" is a
+      ;; legitimate use case (the cooldown still applies).
+      (atom-in-list (sha256tree approving_member_reveal)
+                    (f (r (find-admin-by-idx current_admins_list admin_idx))))
+      ;; The leaf being removed must currently be present. Otherwise the
+      ;; pending op would activate against a non-existent leaf and fail
+      ;; at ACTIVATE — better to fail fast here.
+      (atom-in-list removed_member_hash
+                    (f (r (find-admin-by-idx current_admins_list admin_idx))))
+      ;; I-2: pre-check at PROPOSE time. Even though ACTIVATE re-checks,
+      ;; we reject obviously-bad proposals here so the cooldown window
+      ;; doesn't waste blockspace tracking impossible removals. Admins
+      ;; with only one leaf can't use this spend at all — they must
+      ;; KEY_ADD_PROPOSE a new leaf first.
+      (> (list-length
+           (f (r (find-admin-by-idx current_admins_list admin_idx))))
+         1)
+      ;; Pending-ops cap.
+      (> MAX_PENDING_OPS (list-length current_pending_ops_list))
+      ;; Build conditions — mirrors KEY_ADD_PROPOSE but with op_kind=REMOVE
+      ;; and the longer RECOVERY_TIMEOUT_BLOCKS cooldown:
+      (merge-lists
+        (propose-height-bindings current_block_height)
+        (merge-lists
+          (a approving_member_reveal
+             (c
+               (key-op-binding-hash
+                 admin_idx
+                 OP_KIND_REMOVE
+                 removed_member_hash
+                 (+ current_block_height RECOVERY_TIMEOUT_BLOCKS))
+               approving_member_solution))
+          (emit-shim-conditions
+            MIPS_ROOT_HASH                  ; unchanged
+            ADMINS_HASH                     ; unchanged — leaf removed at ACTIVATE
+            (sha256tree                     ; new pending-ops hash
+              (append-element
+                current_pending_ops_list
+                (list admin_idx OP_KIND_REMOVE removed_member_hash
+                      (+ current_block_height RECOVERY_TIMEOUT_BLOCKS))))
+            new_authority_version           ; bumped
+            my_amount
+            SPEND_KEY_REMOVE_EMERGENCY)))
+    )
+  )
+
+  (defun-inline handle-key-remove-quorum
+      (current_admins_list admin_idx removed_member_hash approving_pairs
+       my_amount new_authority_version)
+    (assert
+      ;; State integrity. PENDING_KEY_OPS_HASH is read directly from the
+      ;; curried state — no list reveal needed since this spend doesn't
+      ;; mutate it.
+      (= (sha256tree current_admins_list) ADMINS_HASH)
+      (is-uint64 admin_idx)
+      (is-size-b32 removed_member_hash)
+      ;; Affected admin must exist.
+      (find-admin-by-idx current_admins_list admin_idx)
+      ;; The leaf being removed must currently be a leaf. Without this
+      ;; the removal would be a silent no-op.
+      (atom-in-list removed_member_hash
+                    (f (r (find-admin-by-idx current_admins_list admin_idx))))
+      ;; I-2: post-removal OneOfN cannot be empty. Pre-removal
+      ;; len(leaves) must be >= 2. (= operates on uint atoms; > is the
+      ;; only ordered comparison so we use "len > 1" === ">= 2".)
+      (> (list-length
+           (f (r (find-admin-by-idx current_admins_list admin_idx))))
+         1)
+      ;; Aggregate quorum-co-signer conditions and verify cardinality.
+      ;; aggregate-quorum-conditions returns:
+      ;;   ()                         on duplicate / non-member signer
+      ;;   (count . merged_conds)     otherwise
+      (aggregate-quorum-conditions
+        approving_pairs
+        (f (r (find-admin-by-idx current_admins_list admin_idx)))
+        (key-remove-quorum-binding-hash admin_idx removed_member_hash)
+        ()
+        ())
+      ;; Quorum cardinality. The admin's m_within (third element of the
+      ;; record) determines how many distinct co-signers are required.
+      ;; (count >= m_within) iff (NOT (count < m_within)) iff
+      ;; (NOT (m_within > count)).
+      (not (>
+        (f (r (r (find-admin-by-idx current_admins_list admin_idx))))
+        (f (aggregate-quorum-conditions
+             approving_pairs
+             (f (r (find-admin-by-idx current_admins_list admin_idx)))
+             (key-remove-quorum-binding-hash admin_idx removed_member_hash)
+             ()
+             ()))))
+      ;; Build conditions:
+      ;;   1. The merged member-emitted conditions. The shim prepends the
+      ;;      immediate removal binding so every signature is operation-bound.
+      ;;   2. Shim conditions with the affected admin's leaves trimmed.
+      (merge-lists
+        (r (aggregate-quorum-conditions
+             approving_pairs
+             (f (r (find-admin-by-idx current_admins_list admin_idx)))
+             (key-remove-quorum-binding-hash admin_idx removed_member_hash)
+             ()
+             ()))
+        (emit-shim-conditions
+          MIPS_ROOT_HASH                  ; unchanged
+          (sha256tree                     ; new admins hash
+            (replace-admin-record
+              current_admins_list
+              admin_idx
+              (admin-record-with-removed-leaf
+                (find-admin-by-idx current_admins_list admin_idx)
+                removed_member_hash)))
+          PENDING_KEY_OPS_HASH            ; unchanged
+          new_authority_version           ; bumped
+          my_amount
+          SPEND_KEY_REMOVE_QUORUM))
+    )
+  )
+
+  (defun-inline handle-admin-roster-update
+      (current_admins_list current_pending_ops_list current_mips_reveal
+       current_mips_solution new_admin_record new_mips_root_hash
+       my_amount new_authority_version)
+    (assert
+      (= (sha256tree current_admins_list) ADMINS_HASH)
+      (= (sha256tree current_pending_ops_list) PENDING_KEY_OPS_HASH)
+      (= (sha256tree current_mips_reveal) MIPS_ROOT_HASH)
+      current_admins_list
+      (> MAX_ADMINS (list-length current_admins_list))
+      (is-size-b32 new_mips_root_hash)
+      (not (= new_mips_root_hash MIPS_ROOT_HASH))
+      (is-uint64 (f new_admin_record))
+      (= (f new_admin_record) (+ (max-admin-idx current_admins_list 0) 1))
+      (not (find-admin-by-idx current_admins_list (f new_admin_record)))
+      (f (r new_admin_record))
+      (not (> (list-length (f (r new_admin_record))) MAX_KEYS_PER_ADMIN))
+      (all-size-b32 (f (r new_admin_record)))
+      (no-duplicate-atoms (f (r new_admin_record)))
+      (is-uint64 (f (r (r new_admin_record))))
+      (f (r (r new_admin_record)))
+      (not (> (f (r (r new_admin_record)))
+              (list-length (f (r new_admin_record)))))
+      (merge-lists
+        (a current_mips_reveal
+          (c
+            (roster-update-binding-hash
+              (sha256tree (append-element current_admins_list new_admin_record))
+              new_mips_root_hash
+              new_authority_version)
+            current_mips_solution))
+        (emit-shim-conditions
+          new_mips_root_hash
+          (sha256tree (append-element current_admins_list new_admin_record))
+          PENDING_KEY_OPS_HASH
+          new_authority_version
+          my_amount
+          SPEND_ADMIN_ROSTER_UPDATE))
+    )
+  )
+
+  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+  ;; Main: validate common preconditions, then dispatch on spend_tag.
+  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+  (assert
+    ;; Solution sanity.
+    (is-uint64 my_amount)
+    (is-size-b32 SELF_MOD_HASH)
+    (is-uint64 new_authority_version)
+    ;; Curried policy sanity (defence-in-depth — operator-set values).
+    (is-uint64 MAX_ADMINS)
+    (is-uint64 MAX_KEYS_PER_ADMIN)
+    (is-uint64 COOLDOWN_BLOCKS)
+    (is-uint64 RECOVERY_TIMEOUT_BLOCKS)
+    (is-size-b32 SGT_GOVERNANCE_PUZZLE_HASH)
+    ;; Curried state sanity.
+    (is-size-b32 MIPS_ROOT_HASH)
+    (is-size-b32 ADMINS_HASH)
+    (is-size-b32 PENDING_KEY_OPS_HASH)
+    (is-uint64 AUTHORITY_VERSION)
+    ;; I-1: exact one-step version bump.
+    (= new_authority_version (+ AUTHORITY_VERSION 1))
+    ;; Dispatch on spend_tag. Each handler returns the full condition list
+    ;; (its own conditions + the shim's wrapping conditions).
+    (if (= spend_tag SPEND_OPERATIONAL)
+        (handle-operational
+          (f spend_args)               ; mips_puzzle_reveal
+          (f (r spend_args))           ; mips_solution
+          my_amount
+          new_authority_version)
+      (if (= spend_tag SPEND_KEY_ADD_PROPOSE)
+        (handle-key-add-propose
+          (f spend_args)               ; current_admins_list
+          (f (r spend_args))           ; current_pending_ops_list
+          (f (r (r spend_args)))       ; admin_idx
+          (f (r (r (r spend_args))))   ; approving_member_reveal
+          (f (r (r (r (r spend_args))))) ; approving_member_solution
+          (f (r (r (r (r (r spend_args)))))) ; new_member_hash
+          (f (r (r (r (r (r (r spend_args))))))) ; current_block_height
+          my_amount
+          new_authority_version)
+      (if (= spend_tag SPEND_KEY_ADD_ACTIVATE)
+        (handle-key-add-activate
+          (f spend_args)                       ; current_admins_list
+          (f (r spend_args))                   ; current_pending_ops_list
+          (f (r (r spend_args)))               ; admin_idx
+          (f (r (r (r spend_args))))           ; op_kind
+          (f (r (r (r (r spend_args)))))       ; target_member_hash
+          (f (r (r (r (r (r spend_args))))))   ; activates_at
+          my_amount
+          new_authority_version)
+      (if (= spend_tag SPEND_KEY_ADD_VETO)
+        (handle-key-add-veto
+          (f spend_args)               ; current_admins_list
+          (f (r spend_args))           ; current_pending_ops_list
+          (f (r (r spend_args)))       ; admin_idx
+          (f (r (r (r spend_args))))   ; approving_member_reveal
+          (f (r (r (r (r spend_args))))) ; approving_member_solution
+          (f (r (r (r (r (r spend_args)))))) ; target_member_hash
+          (f (r (r (r (r (r (r spend_args))))))) ; activates_at
+          my_amount
+          new_authority_version)
+      (if (= spend_tag SPEND_KEY_REMOVE_QUORUM)
+        (handle-key-remove-quorum
+          (f spend_args)               ; current_admins_list
+          (f (r spend_args))           ; admin_idx
+          (f (r (r spend_args)))       ; removed_member_hash
+          (f (r (r (r spend_args))))   ; approving_pairs
+          my_amount
+          new_authority_version)
+      (if (= spend_tag SPEND_KEY_REMOVE_EMERGENCY)
+        (handle-key-remove-emergency
+          (f spend_args)                       ; current_admins_list
+          (f (r spend_args))                   ; current_pending_ops_list
+          (f (r (r spend_args)))               ; admin_idx
+          (f (r (r (r spend_args))))           ; approving_member_reveal
+          (f (r (r (r (r spend_args)))))       ; approving_member_solution
+          (f (r (r (r (r (r spend_args))))))   ; removed_member_hash
+          (f (r (r (r (r (r (r spend_args)))))))   ; current_block_height
+          my_amount
+          new_authority_version)
+      (if (= spend_tag SPEND_ADMIN_ROSTER_UPDATE)
+        (handle-admin-roster-update
+          (f spend_args)                       ; current_admins_list
+          (f (r spend_args))                   ; current_pending_ops_list
+          (f (r (r spend_args)))               ; current_mips_reveal
+          (f (r (r (r spend_args))))           ; current_mips_solution
+          (f (r (r (r (r spend_args)))))       ; new_admin_record
+          (f (r (r (r (r (r spend_args))))))   ; new_mips_root_hash
+          my_amount
+          new_authority_version)
+        ;; All seven spend tags now have handlers. Any unrecognised tag
+        ;; raises — defends against future protocol-version drift in
+        ;; off-chain construction.
+        (x))))))))
+  )
+)

@@ -7,15 +7,16 @@ the pool and receives freshly minted pool tokens — all 100 % on-chain.
 This test file verifies that the three contracts involved produce matching
 announcements and messages so they can co-spend atomically:
 
-  1. pool_singleton_inner (DEPOSIT case)
+  1. pool_singleton_inner_v3 (DEPOSIT case)
        → SEND_MESSAGE to smart_deed_inner
        → CREATE_PUZZLE_ANNOUNCEMENT authorizing token mint
 
-  2. smart_deed_inner (POOL_DEPOSIT case)
+  2. smart_deed_inner_v2 (POOL_DEPOSIT case)
        → RECEIVE_MESSAGE from pool (must match pool's SEND_MESSAGE)
 
   3. pool_token_tail (mint case)
        → ASSERT_PUZZLE_ANNOUNCEMENT (must match pool's CREATE_PUZZLE_ANNOUNCEMENT)
+       → ASSERT_COIN_ANNOUNCEMENT (must match pool coin's CREATE_COIN_ANNOUNCEMENT)
 """
 import hashlib
 import pytest
@@ -29,23 +30,23 @@ from chia_rs.sized_bytes import bytes32
 
 # ── Load all three puzzles ──
 POOL_INNER_MOD: Program = load_clvm(
-    "pool_singleton_inner.clsp",
-    package_or_requirement="populis_puzzles",
+    "pool_singleton_inner_v3.clsp",
+    package_or_requirement="solslot_puzzles",
     recompile=True,
 )
 SMART_DEED_INNER_MOD: Program = load_clvm(
-    "smart_deed_inner.clsp",
-    package_or_requirement="populis_puzzles",
+    "smart_deed_inner_v2.clsp",
+    package_or_requirement="solslot_puzzles",
     recompile=True,
 )
 POOL_TOKEN_TAIL_MOD: Program = load_clvm(
     "pool_token_tail.clsp",
-    package_or_requirement="populis_puzzles",
+    package_or_requirement="solslot_puzzles",
     recompile=True,
 )
 P2_POOL_MOD: Program = load_clvm(
-    "p2_pool.clsp",
-    package_or_requirement="populis_puzzles",
+    "p2_pool_v2.clsp",
+    package_or_requirement="solslot_puzzles",
     recompile=True,
 )
 
@@ -58,11 +59,25 @@ CAT_MOD_HASH = bytes32(b"\x05" * 32)
 OFFER_MOD_HASH = bytes32(b"\x06" * 32)
 P2_POOL_MOD_HASH = P2_POOL_MOD.get_tree_hash()
 P2_VAULT_MOD_HASH = bytes32(b"\x07" * 32)
-PROTOCOL_PREFIX = b"\x50"
+VAULT_INNER_MOD_HASH = bytes32(b"\x17" * 32)
+NAV_REGISTRY_MOD_HASH = bytes32(b"\x08" * 32)
+NAV_REGISTRY_GOV_PUBKEY = b"\x09" * 48
+NAV_REGISTRY_LAUNCHER_ID = bytes32(b"\x0a" * 32)
+MIN_NAV_REGISTRY_VERSION = 0
+TRUSTED_TREASURY_RESERVE_PUZHASH = bytes32(b"\xf1" * 32)
+TRUSTED_PROTOCOL_TREASURY_PUZHASH = bytes32(b"\xf2" * 32)
+TRUSTED_GOVERNANCE_REWARDS_PUZHASH = bytes32(b"\xf3" * 32)
+TRUSTED_GOVERNANCE_REWARDS_ROOT = bytes32(b"\xf4" * 32)
+TRUSTED_ZKPASSPORT_BRIDGE_POLICY_HASH = bytes32(b"\xf5" * 32)
+PROTOCOL_PREFIX = b"\x53"
 
 # Pool singleton identity
 POOL_LAUNCHER_ID = bytes32(b"\xbb" * 32)
 POOL_SINGLETON_STRUCT = Program.to((SINGLETON_MOD_HASH, (POOL_LAUNCHER_ID, LAUNCHER_PUZZLE_HASH)))
+GOVERNANCE_LAUNCHER_ID = bytes32(b"\xbc" * 32)
+GOVERNANCE_SINGLETON_STRUCT = Program.to(
+    (SINGLETON_MOD_HASH, (GOVERNANCE_LAUNCHER_ID, LAUNCHER_PUZZLE_HASH))
+)
 FP_SCALE = 1000
 POOL_MOD_HASH = POOL_INNER_MOD.get_tree_hash()
 
@@ -73,7 +88,9 @@ DEED_SINGLETON_STRUCT = Program.to((SINGLETON_MOD_HASH, (DEED_LAUNCHER_ID, LAUNC
 # Smart deed metadata
 PAR_VALUE = 100000
 ASSET_CLASS = 1
-PROPERTY_ID = b"PROP-001"
+PROPERTY_ID = bytes32(b"\x08" * 32)
+COLLECTION_ID_CANON = bytes32(b"\x09" * 32)
+SHARE_PPM = 1_000_000
 JURISDICTION = b"US-CA"
 ROYALTY_PUZHASH = bytes32(b"\x04" * 32)
 ROYALTY_BPS = 200
@@ -89,19 +106,38 @@ TOKEN_MELT = -1
 
 
 # ── Helper: curry the pool ──
-def curry_pool(pool_status=POOL_ACTIVE, tvl=0, deed_count=0) -> Program:
+def curry_pool(
+    pool_status=POOL_ACTIVE,
+    tvl=0,
+    deed_count=0,
+    total_pool_token_supply=0,
+    treasury_reserve_tokens=0,
+) -> Program:
     return POOL_INNER_MOD.curry(
         POOL_MOD_HASH,
         POOL_SINGLETON_STRUCT,
+        GOVERNANCE_SINGLETON_STRUCT,
         PROTOCOL_DID_PUZHASH,
         TOKEN_TAIL_HASH,
         CAT_MOD_HASH,
         OFFER_MOD_HASH,
         P2_VAULT_MOD_HASH,
+        VAULT_INNER_MOD_HASH,
+        NAV_REGISTRY_MOD_HASH,
+        NAV_REGISTRY_GOV_PUBKEY,
+        NAV_REGISTRY_LAUNCHER_ID,
+        MIN_NAV_REGISTRY_VERSION,
+        TRUSTED_TREASURY_RESERVE_PUZHASH,
+        TRUSTED_PROTOCOL_TREASURY_PUZHASH,
+        TRUSTED_GOVERNANCE_REWARDS_PUZHASH,
+        TRUSTED_GOVERNANCE_REWARDS_ROOT,
+        TRUSTED_ZKPASSPORT_BRIDGE_POLICY_HASH,
         FP_SCALE,
         pool_status,
         tvl,
         deed_count,
+        total_pool_token_supply,
+        treasury_reserve_tokens,
     )
 
 
@@ -113,10 +149,14 @@ def curry_deed() -> Program:
         PAR_VALUE,
         ASSET_CLASS,
         PROPERTY_ID,
+        COLLECTION_ID_CANON,
+        SHARE_PPM,
         JURISDICTION,
         ROYALTY_PUZHASH,
         ROYALTY_BPS,
         SINGLETON_MOD_HASH,  # POOL_SINGLETON_MOD_HASH = same mod
+        POOL_LAUNCHER_ID,
+        LAUNCHER_PUZZLE_HASH,
         P2_POOL_MOD_HASH,
         P2_VAULT_MOD_HASH,
     )
@@ -131,12 +171,35 @@ def curry_tail() -> Program:
     )
 
 
+def deposit_params(
+    deed_id: bytes32,
+    par_value: int,
+    depositor_puzhash: bytes32,
+    token_coin_id: bytes32,
+) -> list[object]:
+    return [
+        deed_id,
+        DEED_LAUNCHER_ID,
+        par_value,
+        ASSET_CLASS,
+        PROPERTY_ID,
+        COLLECTION_ID_CANON,
+        SHARE_PPM,
+        depositor_puzhash,
+        token_coin_id,
+    ]
+
+
 # ── Helper: compute pool full puzzle hash from inner ──
 def pool_full_puzzle_hash(pool_inner: Program) -> bytes32:
-    """Compute singleton full puzzle hash: sha256tree(singleton_top_layer(struct, inner))"""
-    from chia.wallet.puzzles.singleton_top_layer_v1_1 import SINGLETON_MOD as REAL_SINGLETON_MOD
-    full = REAL_SINGLETON_MOD.curry(POOL_SINGLETON_STRUCT, pool_inner)
-    return full.get_tree_hash()
+    """Compute the singleton full puzzle hash for the test singleton constants."""
+    return bytes32(
+        curry_and_treehash(
+            calculate_hash_of_quoted_mod_hash(SINGLETON_MOD_HASH),
+            bytes32(POOL_SINGLETON_STRUCT.get_tree_hash()),
+            bytes32(pool_inner.get_tree_hash()),
+        )
+    )
 
 
 def extract_condition(conditions: list, opcode: int, index: int = 0) -> list:
@@ -170,7 +233,7 @@ class TestPoolDeedMessageMatch:
         pool_sol = Program.to([
             pool_id, pool_inner.get_tree_hash(), 1,
             POOL_SPEND_DEPOSIT,
-            [deed_id, PAR_VALUE, bytes32(b"\xee" * 32), token_coin_id],
+            deposit_params(deed_id, PAR_VALUE, bytes32(b"\xee" * 32), token_coin_id),
         ])
         pool_conditions = pool_inner.run(pool_sol).as_python()
 
@@ -183,7 +246,7 @@ class TestPoolDeedMessageMatch:
         deed_sol = Program.to([
             deed_id, deed_inner.get_tree_hash(), 1,
             DEED_SPEND_POOL_DEPOSIT,
-            [POOL_LAUNCHER_ID, pool_inner_puzhash, LAUNCHER_PUZZLE_HASH],
+            [pool_inner_puzhash],
         ])
         deed_conditions = deed_inner.run(deed_sol).as_python()
 
@@ -210,7 +273,7 @@ class TestPoolDeedMessageMatch:
         deed_sol = Program.to([
             deed_id, deed_inner.get_tree_hash(), 1,
             DEED_SPEND_POOL_DEPOSIT,
-            [POOL_LAUNCHER_ID, pool_inner_puzhash, LAUNCHER_PUZZLE_HASH],
+            [pool_inner_puzhash],
         ])
         deed_conditions = deed_inner.run(deed_sol).as_python()
 
@@ -218,26 +281,23 @@ class TestPoolDeedMessageMatch:
         deed_recv = extract_condition(deed_conditions, 67)
         expected_sender_ph = bytes32(deed_recv[3])
 
-        # The deed should expect messages from the pool singleton's full puzzle hash
-        # (singleton_mod_hash, (pool_launcher_id, launcher_puzzle_hash)) + pool_inner_puzhash
-        # We compute it the same way the deed does: curry_hashes
-        computed_pool_full_ph = Program.to(SINGLETON_MOD_HASH).curry(
-            POOL_SINGLETON_STRUCT, pool_inner
-        ).get_tree_hash()
-
-        # Note: the deed uses calculate_full_puzzle_hash which wraps with singleton top layer.
-        # We just verify the deed produced a 32-byte puzzle hash and the mode is 0x10.
+        # The deed should expect messages from the sanctioned pool singleton's
+        # full puzzle hash, not from a solution-chosen pool launcher.
+        computed_pool_full_ph = pool_full_puzzle_hash(pool_inner)
         assert len(expected_sender_ph) == 32
         assert deed_recv[1] == bytes([0x10])  # mode: sender commits puzzle_hash
+        assert expected_sender_ph == computed_pool_full_ph
 
 
 class TestPoolTokenAnnouncementMatch:
-    """Verify pool DEPOSIT CREATE_PUZZLE_ANNOUNCEMENT matches token TAIL ASSERT_PUZZLE_ANNOUNCEMENT.
+    """Verify pool DEPOSIT token announcements match token TAIL assertions.
 
     Pool announces:
       (CREATE_PUZZLE_ANNOUNCEMENT (concat PROTOCOL_PREFIX (sha256tree (list 1 token_coin_id token_amount))))
+      (CREATE_COIN_ANNOUNCEMENT (concat PROTOCOL_PREFIX (sha256tree (list 1 token_coin_id token_amount))))
     Token TAIL asserts:
       (ASSERT_PUZZLE_ANNOUNCEMENT (sha256 pool_full_ph (concat PROTOCOL_PREFIX (sha256tree (list 1 my_coin_id amount)))))
+      (ASSERT_COIN_ANNOUNCEMENT (sha256 pool_coin_id (concat PROTOCOL_PREFIX (sha256tree (list 1 my_coin_id amount)))))
 
     The announcement content (after PROTOCOL_PREFIX) must match.
     """
@@ -258,24 +318,36 @@ class TestPoolTokenAnnouncementMatch:
         pool_sol = Program.to([
             pool_id, pool_inner.get_tree_hash(), 1,
             POOL_SPEND_DEPOSIT,
-            [deed_id, PAR_VALUE, depositor_puzhash, token_coin_id],
+            deposit_params(deed_id, PAR_VALUE, depositor_puzhash, token_coin_id),
         ])
         pool_conditions = pool_inner.run(pool_sol).as_python()
 
         # Pool's CREATE_PUZZLE_ANNOUNCEMENT (opcode 62) — content is element [1]
         pool_announce = extract_condition(pool_conditions, 62)
         pool_announce_content = pool_announce[1]
+        pool_coin_announce = extract_condition(pool_conditions, 60)
+        assert pool_coin_announce[1] == pool_announce_content
 
         # --- Run token TAIL (mint) ---
         tail = curry_tail()
         pool_inner_puzhash = pool_inner.get_tree_hash()
 
-        tail_sol = Program.to([pool_inner_puzhash, pool_id, token_coin_id, TOKEN_MINT, expected_token_amount])
+        pool_full_puzhash = pool_full_puzzle_hash(pool_inner)
+        tail_sol = Program.to([
+            pool_full_puzhash,
+            pool_inner_puzhash,
+            pool_id,
+            token_coin_id,
+            TOKEN_MINT,
+            expected_token_amount,
+        ])
         tail_conditions = tail.run(tail_sol).as_python()
 
         # Token TAIL's ASSERT_PUZZLE_ANNOUNCEMENT (opcode 63) — the full hash is element [1]
         tail_assert = extract_condition(tail_conditions, 63)
         tail_expected_announcement_hash = bytes32(tail_assert[1])
+        tail_coin_assert = extract_condition(tail_conditions, 61)
+        tail_expected_coin_announcement_hash = bytes32(tail_coin_assert[1])
 
         # The TAIL computes: sha256(pool_full_puzzle_hash, announcement_content)
         # We need to verify the announcement_content part matches.
@@ -306,7 +378,7 @@ class TestPoolTokenAnnouncementMatch:
             sol = Program.to([
                 pool_id, pool_inner_fresh.get_tree_hash(), 1,
                 POOL_SPEND_DEPOSIT,
-                [deed_id, par_value, depositor_puzhash, token_coin_id],
+                deposit_params(deed_id, par_value, depositor_puzhash, token_coin_id),
             ])
             conditions = pool_inner_fresh.run(sol).as_python()
 
@@ -339,7 +411,7 @@ class TestPoolTokenAnnouncementMatch:
         pool_sol = Program.to([
             pool_id, pool_inner_puzhash, 1,
             POOL_SPEND_DEPOSIT,
-            [deed_id, PAR_VALUE, depositor_puzhash, token_coin_id],
+            deposit_params(deed_id, PAR_VALUE, depositor_puzhash, token_coin_id),
         ])
         pool_conditions = pool_inner.run(pool_sol).as_python()
         pool_announce = extract_condition(pool_conditions, 62)
@@ -347,22 +419,28 @@ class TestPoolTokenAnnouncementMatch:
 
         # --- Get TAIL's expected announcement hash ---
         tail = curry_tail()
-        tail_sol = Program.to([pool_inner_puzhash, pool_id, token_coin_id, TOKEN_MINT, expected_token_amount])
+        pool_full_puzhash = pool_full_puzzle_hash(pool_inner)
+        tail_sol = Program.to([
+            pool_full_puzhash,
+            pool_inner_puzhash,
+            pool_id,
+            token_coin_id,
+            TOKEN_MINT,
+            expected_token_amount,
+        ])
         tail_conditions = tail.run(tail_sol).as_python()
         tail_assert = extract_condition(tail_conditions, 63)
         tail_expected_hash = bytes32(tail_assert[1])
+        tail_coin_assert = extract_condition(tail_conditions, 61)
+        tail_expected_coin_announcement_hash = bytes32(tail_coin_assert[1])
 
         # --- Compute what the TAIL should expect ---
         # ASSERT_PUZZLE_ANNOUNCEMENT hash = sha256(puzzle_hash || message)
-        # The TAIL computes the pool's full puzzle hash via calculate_full_puzzle_hash:
-        #   curry_hashes(f SINGLETON_STRUCT, sha256tree(SINGLETON_STRUCT), inner_puzzle_hash)
-        # We replicate this with curry_and_treehash using our test dummy constants.
-        quoted_mod = calculate_hash_of_quoted_mod_hash(SINGLETON_MOD_HASH)
-        struct_hash = POOL_SINGLETON_STRUCT.get_tree_hash()
-        pool_full_ph = curry_and_treehash(quoted_mod, struct_hash, pool_inner_puzhash)
+        pool_full_ph = pool_full_puzzle_hash(pool_inner)
 
         # The expected announcement hash
         computed_hash = bytes32(hashlib.sha256(bytes(pool_full_ph) + pool_announce_content).digest())
+        computed_coin_hash = bytes32(hashlib.sha256(bytes(pool_id) + pool_announce_content).digest())
 
         assert tail_expected_hash == computed_hash, (
             f"Token TAIL announcement hash mismatch!\n"
@@ -371,6 +449,7 @@ class TestPoolTokenAnnouncementMatch:
             f"  Pool full PH:  {pool_full_ph.hex()}\n"
             f"  Announce data: {pool_announce_content.hex()}"
         )
+        assert tail_expected_coin_announcement_hash == computed_coin_hash
 
 
 class TestFullDepositTokenizeRoundTrip:
@@ -395,7 +474,7 @@ class TestFullDepositTokenizeRoundTrip:
         pool_sol = Program.to([
             pool_id, pool_inner_puzhash, 1,
             POOL_SPEND_DEPOSIT,
-            [deed_id, PAR_VALUE, depositor_puzhash, token_coin_id],
+            deposit_params(deed_id, PAR_VALUE, depositor_puzhash, token_coin_id),
         ])
         pool_conds = pool_inner.run(pool_sol).as_python()
 
@@ -403,21 +482,28 @@ class TestFullDepositTokenizeRoundTrip:
         deed_sol = Program.to([
             deed_id, deed_inner_puzhash, 1,
             DEED_SPEND_POOL_DEPOSIT,
-            [POOL_LAUNCHER_ID, pool_inner_puzhash, LAUNCHER_PUZZLE_HASH],
+            [pool_inner_puzhash],
         ])
         deed_conds = deed_inner.run(deed_sol).as_python()
 
         # --- 3. Run token TAIL (mint) ---
-        tail_sol = Program.to([pool_inner_puzhash, pool_id, token_coin_id, TOKEN_MINT, expected_token_amount])
+        tail_sol = Program.to([
+            pool_full_puzzle_hash(pool_inner),
+            pool_inner_puzhash,
+            pool_id,
+            token_coin_id,
+            TOKEN_MINT,
+            expected_token_amount,
+        ])
         tail_conds = tail.run(tail_sol).as_python()
 
         # --- Verify pool produced expected conditions ---
-        # CREATE_COIN (state recreation)
-        assert pool_conds[0][0] == bytes([51])
-        # CREATE_PUZZLE_ANNOUNCEMENT (token mint auth)
-        assert pool_conds[1][0] == bytes([62])
-        # SEND_MESSAGE (to deed)
-        assert pool_conds[2][0] == bytes([66])
+        state_create = extract_condition(pool_conds, 51)
+        token_puzzle_announcement = extract_condition(pool_conds, 62)
+        token_coin_announcement = extract_condition(pool_conds, 60)
+        assert token_coin_announcement[1] == token_puzzle_announcement[1]
+        assert extract_condition(pool_conds, 66)[0] == bytes([66])
+        assert extract_condition(pool_conds, 61)[0] == bytes([61])
 
         # --- Verify deed produced expected conditions ---
         # CREATE_COIN (send deed to pool escrow)
@@ -433,6 +519,8 @@ class TestFullDepositTokenizeRoundTrip:
         assert tail_conds[0][1] == token_coin_id
         # ASSERT_PUZZLE_ANNOUNCEMENT
         assert tail_conds[1][0] == bytes([63])
+        # ASSERT_COIN_ANNOUNCEMENT
+        assert tail_conds[2][0] == bytes([61])
 
         # --- Cross-contract verification ---
         # Pool SEND_MESSAGE content == Deed RECEIVE_MESSAGE content
@@ -440,9 +528,17 @@ class TestFullDepositTokenizeRoundTrip:
         deed_msg = extract_condition(deed_conds, 67)[2]
         assert pool_msg == deed_msg, "Pool↔Deed message mismatch"
 
+        token_message = extract_condition(pool_conds, 62)[1]
+        assert tail_conds[2][1] == hashlib.sha256(bytes(pool_id) + token_message).digest()
+
         # Pool state recreation matches expected new state
-        expected_new_pool = curry_pool(pool_status=POOL_ACTIVE, tvl=PAR_VALUE, deed_count=1)
-        assert pool_conds[0][1] == expected_new_pool.get_tree_hash(), "Pool state recreation mismatch"
+        expected_new_pool = curry_pool(
+            pool_status=POOL_ACTIVE,
+            tvl=PAR_VALUE,
+            deed_count=1,
+            total_pool_token_supply=expected_token_amount,
+        )
+        assert state_create[1] == expected_new_pool.get_tree_hash(), "Pool state recreation mismatch"
 
         # Token amount = par_value * FP_SCALE / 1000
         assert expected_token_amount == PAR_VALUE, "Token amount should equal par_value at 1:1 scale"

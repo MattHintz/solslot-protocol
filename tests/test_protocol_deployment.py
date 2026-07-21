@@ -19,14 +19,18 @@ import json
 from pathlib import Path
 
 import pytest
+from chia.consensus.condition_tools import (
+    conditions_dict_for_solution,
+    pkm_pairs_for_conditions_dict,
+)
 from chia.types.blockchain_format.coin import Coin
-from chia.types.blockchain_format.program import Program
+from chia.types.blockchain_format.program import INFINITE_COST, Program
 from chia.wallet.cat_wallet.cat_utils import CAT_MOD_HASH
 from chia.wallet.derive_keys import master_sk_to_wallet_sk_unhardened
 from chia.wallet.puzzles.p2_delegated_puzzle_or_hidden_puzzle import (
     DEFAULT_HIDDEN_PUZZLE_HASH,
+    MOD as P2_DELEGATED_MOD,
     calculate_synthetic_secret_key,
-    puzzle_for_pk,
 )
 from chia.wallet.puzzles.singleton_top_layer_v1_1 import (
     SINGLETON_LAUNCHER_HASH,
@@ -36,40 +40,60 @@ from chia_rs import AugSchemeMPL, G2Element
 from chia_rs.sized_bytes import bytes32
 from chia_rs.sized_ints import uint64
 
-from populis_puzzles.protocol_deployment import (
+from solslot_puzzles.protocol_deployment import (
     DEFAULT_MIN_PROPOSAL_STAKE,
-    DEFAULT_PGT_TOTAL_SUPPLY,
+    DEFAULT_MIN_NAV_REGISTRY_VERSION,
+    DEFAULT_SGT_TOTAL_SUPPLY,
     DEFAULT_QUORUM_BPS,
+    POOL_PUZZLE_VERSION,
+    PROTOCOL_VERSION,
+    SMART_DEED_PUZZLE_VERSION,
     ProtocolDeploymentParams,
     ProtocolDeploymentPlan,
     build_deployment_bundle,
-    cat2_puzzle_hash_for_pgt,
+    cat2_puzzle_hash_for_sgt,
     launcher_coin_for_parent,
     plan_from_manifest_dict,
     plan_to_manifest_dict,
     save_manifest,
     load_manifest,
+    load_manifest_dict,
     singleton_full_puzzle_hash,
     singleton_struct,
 )
+from solslot_puzzles.sgt_driver import TEST_KOS_MINT_EXECUTE_PUBKEY
 
 
 # ── Test fixtures ────────────────────────────────────────────────────────────
-PGT_GENESIS = bytes32(b"\xa0" * 32)
+SGT_GENESIS = bytes32(b"\xa0" * 32)
 POOL_GENESIS = bytes32(b"\xb0" * 32)
 DID_GENESIS = bytes32(b"\xc0" * 32)
 GOV_GENESIS = bytes32(b"\xd0" * 32)
+TRUSTED_NAV_REGISTRY_GOV_PUBKEY = b"\x91" * 48
+TRUSTED_NAV_REGISTRY_LAUNCHER_ID = bytes32(b"\x92" * 32)
+TRUSTED_GOVERNANCE_REWARDS_ROOT = bytes32(b"\x93" * 32)
+TRUSTED_ZKPASSPORT_BRIDGE_POLICY_HASH = bytes32(b"\x94" * 32)
+
+
+def trusted_v2_kwargs() -> dict:
+    return {
+        "trusted_nav_registry_gov_pubkey": TRUSTED_NAV_REGISTRY_GOV_PUBKEY,
+        "kos_mint_execute_pubkey": TEST_KOS_MINT_EXECUTE_PUBKEY,
+        "trusted_nav_registry_launcher_id": TRUSTED_NAV_REGISTRY_LAUNCHER_ID,
+        "trusted_governance_rewards_root": TRUSTED_GOVERNANCE_REWARDS_ROOT,
+        "trusted_zkpassport_bridge_policy_hash": TRUSTED_ZKPASSPORT_BRIDGE_POLICY_HASH,
+    }
 
 
 class _FakeFaucet:
     """Minimal Faucet stand-in for unit tests.
 
-    Real Faucet (in populis_api) wraps a BIP32-derived BLS key + a
+    The real Solslot API faucet wraps a BIP32-derived BLS key plus a
     standard ``puzzle_for_pk`` puzzle.  This stand-in mirrors the same
     contract using a deterministic seed.
     """
 
-    def __init__(self, seed: bytes = b"populis-test-deployment-faucet-x" * 1):
+    def __init__(self, seed: bytes = b"solslot-test-deployment-faucet-x" * 1):
         # Pad to 32 bytes deterministic
         seed_bytes = (seed * 4)[:32]
         self.master_sk = AugSchemeMPL.key_gen(seed_bytes)
@@ -77,11 +101,13 @@ class _FakeFaucet:
         synth_sk = calculate_synthetic_secret_key(wallet_sk, DEFAULT_HIDDEN_PUZZLE_HASH)
         wallet_pk = wallet_sk.get_g1()
         self.key = type("FaucetKey", (), {
+            "wallet_sk": wallet_sk,
+            "wallet_pk": wallet_pk,
             "synthetic_sk": synth_sk,
-            "puzzle": puzzle_for_pk(wallet_pk),
+            "puzzle": Program.from_bytes(bytes(P2_DELEGATED_MOD)).curry(wallet_pk),
         })()
         self.address_puzzle_hash = bytes32(self.key.puzzle.get_tree_hash())
-        # testnet11 AGG_SIG_ME data (matches populis_api.faucet)
+        # testnet11 AGG_SIG_ME data (matches the Solslot API faucet)
         self.agg_sig_me_data = bytes.fromhex(
             "37a90eb5185a9c4439a91ddc98bbadce7b4feba060d50116a067de66bf236615"
         )
@@ -98,10 +124,11 @@ def plan(faucet) -> ProtocolDeploymentPlan:
         network="testnet11",
         params=ProtocolDeploymentParams(),
         faucet_inner_puzhash=faucet.address_puzzle_hash,
-        pgt_genesis_coin_id=PGT_GENESIS,
+        sgt_genesis_coin_id=SGT_GENESIS,
         pool_genesis_coin_id=POOL_GENESIS,
         did_genesis_coin_id=DID_GENESIS,
         gov_genesis_coin_id=GOV_GENESIS,
+        **trusted_v2_kwargs(),
     )
 
 
@@ -123,18 +150,19 @@ class TestPlanDerivation:
         assert plan.did_launcher_id == bytes32(expected_did)
         assert plan.tracker_launcher_id == bytes32(expected_gov)
 
-    def test_pgt_tail_hash_depends_on_pgt_genesis(self, plan, faucet):
-        """A different PGT genesis coin produces a different tail hash."""
+    def test_sgt_tail_hash_depends_on_sgt_genesis(self, plan, faucet):
+        """A different SGT genesis coin produces a different tail hash."""
         other = ProtocolDeploymentPlan(
             network="testnet11",
             params=ProtocolDeploymentParams(),
             faucet_inner_puzhash=faucet.address_puzzle_hash,
-            pgt_genesis_coin_id=bytes32(b"\xee" * 32),  # different
+            sgt_genesis_coin_id=bytes32(b"\xee" * 32),  # different
             pool_genesis_coin_id=POOL_GENESIS,
             did_genesis_coin_id=DID_GENESIS,
             gov_genesis_coin_id=GOV_GENESIS,
+            **trusted_v2_kwargs(),
         )
-        assert plan.pgt_tail_hash != other.pgt_tail_hash
+        assert plan.sgt_tail_hash != other.sgt_tail_hash
 
     def test_did_full_ph_uses_singleton_struct(self, plan):
         """DID lives at calculate_full_puzzle_hash(DID_STRUCT, did_inner_ph)."""
@@ -155,15 +183,15 @@ class TestPlanDerivation:
         )
         assert plan.pool_full_puzhash == expected
 
-    def test_pgt_full_ph_is_cat2_wrapped(self, plan):
-        """The 1M PGT lands at a CAT2-wrapped pgt_free_inner curried for the
+    def test_sgt_full_ph_is_cat2_wrapped(self, plan):
+        """The 1M SGT lands at a CAT2-wrapped sgt_free_inner curried for the
         faucet — the 'protocol treasury' bag."""
-        expected = cat2_puzzle_hash_for_pgt(
+        expected = cat2_puzzle_hash_for_sgt(
             plan.tracker_launcher_id,
-            plan.pgt_genesis_coin_id,
+            plan.sgt_genesis_coin_id,
             plan.faucet_inner_puzhash,
         )
-        assert plan.pgt_full_puzhash == expected
+        assert plan.sgt_full_puzhash == expected
 
     def test_changing_governance_params_changes_tracker_hash(self, faucet):
         """Different MIN_PROPOSAL_STAKE → different tracker inner ph."""
@@ -171,44 +199,143 @@ class TestPlanDerivation:
             network="testnet11",
             params=ProtocolDeploymentParams(min_proposal_stake=10_000),
             faucet_inner_puzhash=faucet.address_puzzle_hash,
-            pgt_genesis_coin_id=PGT_GENESIS,
+            sgt_genesis_coin_id=SGT_GENESIS,
             pool_genesis_coin_id=POOL_GENESIS,
             did_genesis_coin_id=DID_GENESIS,
             gov_genesis_coin_id=GOV_GENESIS,
+            **trusted_v2_kwargs(),
         )
         b = ProtocolDeploymentPlan(
             network="testnet11",
             params=ProtocolDeploymentParams(min_proposal_stake=20_000),
             faucet_inner_puzhash=faucet.address_puzzle_hash,
-            pgt_genesis_coin_id=PGT_GENESIS,
+            sgt_genesis_coin_id=SGT_GENESIS,
             pool_genesis_coin_id=POOL_GENESIS,
             did_genesis_coin_id=DID_GENESIS,
             gov_genesis_coin_id=GOV_GENESIS,
+            **trusted_v2_kwargs(),
         )
         assert a.tracker_inner_puzhash != b.tracker_inner_puzhash
+
+    def test_mint_execute_cosigner_is_curried_into_tracker_hash(self, faucet):
+        """Replacing the dedicated MINT key changes the live governance puzzle."""
+        first = ProtocolDeploymentPlan(
+            network="testnet11",
+            params=ProtocolDeploymentParams(),
+            faucet_inner_puzhash=faucet.address_puzzle_hash,
+            sgt_genesis_coin_id=SGT_GENESIS,
+            pool_genesis_coin_id=POOL_GENESIS,
+            did_genesis_coin_id=DID_GENESIS,
+            gov_genesis_coin_id=GOV_GENESIS,
+            **trusted_v2_kwargs(),
+        )
+        changed = trusted_v2_kwargs()
+        changed["kos_mint_execute_pubkey"] = bytes(
+            AugSchemeMPL.key_gen(b"solslot-other-mint-execute-cosigner").get_g1()
+        )
+        second = ProtocolDeploymentPlan(
+            network="testnet11",
+            params=ProtocolDeploymentParams(),
+            faucet_inner_puzhash=faucet.address_puzzle_hash,
+            sgt_genesis_coin_id=SGT_GENESIS,
+            pool_genesis_coin_id=POOL_GENESIS,
+            did_genesis_coin_id=DID_GENESIS,
+            gov_genesis_coin_id=GOV_GENESIS,
+            **changed,
+        )
+        assert first.tracker_inner_puzhash != second.tracker_inner_puzhash
+
+    def test_changing_nav_registry_floor_changes_pool_hash(self, faucet):
+        """Different minimum NAV registry versions commit different pool inners."""
+        a = ProtocolDeploymentPlan(
+            network="testnet11",
+            params=ProtocolDeploymentParams(min_nav_registry_version=7),
+            faucet_inner_puzhash=faucet.address_puzzle_hash,
+            sgt_genesis_coin_id=SGT_GENESIS,
+            pool_genesis_coin_id=POOL_GENESIS,
+            did_genesis_coin_id=DID_GENESIS,
+            gov_genesis_coin_id=GOV_GENESIS,
+            **trusted_v2_kwargs(),
+        )
+        b = ProtocolDeploymentPlan(
+            network="testnet11",
+            params=ProtocolDeploymentParams(min_nav_registry_version=8),
+            faucet_inner_puzhash=faucet.address_puzzle_hash,
+            sgt_genesis_coin_id=SGT_GENESIS,
+            pool_genesis_coin_id=POOL_GENESIS,
+            did_genesis_coin_id=DID_GENESIS,
+            gov_genesis_coin_id=GOV_GENESIS,
+            **trusted_v2_kwargs(),
+        )
+        assert a.pool_inner_puzhash != b.pool_inner_puzhash
+
+    def test_pool_commits_to_governance_launcher(self, faucet):
+        a = ProtocolDeploymentPlan(
+            network="testnet11",
+            params=ProtocolDeploymentParams(),
+            faucet_inner_puzhash=faucet.address_puzzle_hash,
+            sgt_genesis_coin_id=SGT_GENESIS,
+            pool_genesis_coin_id=POOL_GENESIS,
+            did_genesis_coin_id=DID_GENESIS,
+            gov_genesis_coin_id=GOV_GENESIS,
+            **trusted_v2_kwargs(),
+        )
+        b = ProtocolDeploymentPlan(
+            network="testnet11",
+            params=ProtocolDeploymentParams(),
+            faucet_inner_puzhash=faucet.address_puzzle_hash,
+            sgt_genesis_coin_id=SGT_GENESIS,
+            pool_genesis_coin_id=POOL_GENESIS,
+            did_genesis_coin_id=DID_GENESIS,
+            gov_genesis_coin_id=bytes32(b"\xde" * 32),
+            **trusted_v2_kwargs(),
+        )
+        assert a.governance_singleton_struct_hash != b.governance_singleton_struct_hash
+        assert a.pool_inner_puzhash != b.pool_inner_puzhash
+
+    def test_empty_v2_trust_anchors_rejected(self, faucet):
+        """Deployment plans must not silently curry sentinel V2 trust anchors."""
+        with pytest.raises(ValueError, match="trusted_nav_registry_gov_pubkey"):
+            ProtocolDeploymentPlan(
+                network="testnet11",
+                params=ProtocolDeploymentParams(),
+                faucet_inner_puzhash=faucet.address_puzzle_hash,
+                sgt_genesis_coin_id=SGT_GENESIS,
+                pool_genesis_coin_id=POOL_GENESIS,
+                did_genesis_coin_id=DID_GENESIS,
+                gov_genesis_coin_id=GOV_GENESIS,
+            )
 
 
 # ── Manifest round-trip ──────────────────────────────────────────────────────
 class TestManifestRoundtrip:
     def test_to_dict_contains_all_fields(self, plan):
         m = plan_to_manifest_dict(plan)
+        assert m["protocol_version"] == PROTOCOL_VERSION
+        assert m["pool_puzzle_version"] == POOL_PUZZLE_VERSION
+        assert m["smart_deed_puzzle_version"] == SMART_DEED_PUZZLE_VERSION
+        assert m["params"]["min_nav_registry_version"] == DEFAULT_MIN_NAV_REGISTRY_VERSION
         for required in [
             "network", "params", "faucet_inner_puzhash",
-            "pgt_genesis_coin_id", "pool_genesis_coin_id",
+            "sgt_genesis_coin_id", "pool_genesis_coin_id",
             "did_genesis_coin_id", "gov_genesis_coin_id",
             "pool_launcher_id", "did_launcher_id", "tracker_launcher_id",
-            "pgt_tail_hash", "pgt_full_puzhash",
+            "sgt_tail_hash", "sgt_full_puzhash",
             "pool_token_tail_hash", "pool_inner_puzhash", "pool_full_puzhash",
+            "pool_inner_mod_hash", "p2_pool_mod_hash", "smart_deed_inner_mod_hash",
+            "governance_singleton_struct_hash",
             "did_inner_puzhash", "did_full_puzhash",
             "tracker_inner_puzhash", "tracker_full_puzhash",
+            "kos_mint_execute_pubkey",
         ]:
             assert required in m, f"manifest missing {required}"
 
     def test_to_dict_uses_0x_hex_for_bytes(self, plan):
         m = plan_to_manifest_dict(plan)
-        for key in ["pgt_tail_hash", "pool_launcher_id", "tracker_full_puzhash"]:
+        for key in ["sgt_tail_hash", "pool_launcher_id", "tracker_full_puzhash"]:
             assert m[key].startswith("0x")
             assert len(m[key]) == 66  # 0x + 64 hex chars
+        assert len(m["kos_mint_execute_pubkey"]) == 98  # 0x + 96 hex chars
 
     def test_from_dict_reconstructs_identical_plan(self, plan):
         m = plan_to_manifest_dict(plan)
@@ -216,7 +343,7 @@ class TestManifestRoundtrip:
         # All derived hashes match
         for field in [
             "pool_launcher_id", "did_launcher_id", "tracker_launcher_id",
-            "pgt_tail_hash", "pgt_full_puzhash",
+            "sgt_tail_hash", "sgt_full_puzhash",
             "pool_full_puzhash", "did_full_puzhash", "tracker_full_puzhash",
         ]:
             assert getattr(restored, field) == getattr(plan, field)
@@ -227,6 +354,25 @@ class TestManifestRoundtrip:
         # Corrupt the stored pool_full_puzhash
         m["pool_full_puzhash"] = "0x" + ("00" * 32)
         with pytest.raises(ValueError, match="Manifest corruption"):
+            plan_from_manifest_dict(m)
+
+    def test_zero_mint_execute_cosigner_is_rejected(self, plan, tmp_path):
+        m = plan_to_manifest_dict(plan)
+        m["kos_mint_execute_pubkey"] = "0x" + ("00" * 48)
+        with pytest.raises(ValueError, match="kos_mint_execute_pubkey"):
+            plan_from_manifest_dict(m)
+
+        path = tmp_path / "deployment.json"
+        path.write_text(json.dumps(m), encoding="utf-8")
+        with pytest.raises(ValueError, match="must be nonzero"):
+            load_manifest_dict(path)
+        with pytest.raises(ValueError, match="must be configured"):
+            load_manifest(path)
+
+    def test_retired_manifest_rejected(self, plan):
+        m = plan_to_manifest_dict(plan)
+        m["protocol_version"] = "solslot-v1"
+        with pytest.raises(ValueError, match="retired protocol_version"):
             plan_from_manifest_dict(m)
 
     def test_save_load_round_trip(self, plan, tmp_path):
@@ -259,12 +405,12 @@ def _make_faucet_coin(faucet: _FakeFaucet, name: bytes32, amount: int) -> Coin:
 class TestBundleBuilder:
     def test_bundle_has_7_coin_spends(self, faucet):
         """The atomic deployment bundle contains:
-        - 4 faucet parent spends (PGT, pool, DID, gov)
-        - 3 launcher spends (pool, DID, gov; PGT has no launcher)
+        - 4 faucet parent spends (SGT, pool, DID, gov)
+        - 3 launcher spends (pool, DID, gov; SGT has no launcher)
         Total: 7
         """
         # Build coins, then derive plan FROM their actual names
-        pgt_coin = _make_faucet_coin(faucet, PGT_GENESIS, DEFAULT_PGT_TOTAL_SUPPLY)
+        sgt_coin = _make_faucet_coin(faucet, SGT_GENESIS, DEFAULT_SGT_TOTAL_SUPPLY)
         pool_coin = _make_faucet_coin(faucet, POOL_GENESIS, 100)
         did_coin = _make_faucet_coin(faucet, DID_GENESIS, 100)
         gov_coin = _make_faucet_coin(faucet, GOV_GENESIS, 100)
@@ -273,16 +419,17 @@ class TestBundleBuilder:
             network="testnet11",
             params=ProtocolDeploymentParams(),
             faucet_inner_puzhash=faucet.address_puzzle_hash,
-            pgt_genesis_coin_id=pgt_coin.name(),
+            sgt_genesis_coin_id=sgt_coin.name(),
             pool_genesis_coin_id=pool_coin.name(),
             did_genesis_coin_id=did_coin.name(),
             gov_genesis_coin_id=gov_coin.name(),
+            **trusted_v2_kwargs(),
         )
 
         result = build_deployment_bundle(
             plan=plan,
             faucet=faucet,
-            pgt_coin=pgt_coin,
+            sgt_coin=sgt_coin,
             pool_coin=pool_coin,
             did_coin=did_coin,
             gov_coin=gov_coin,
@@ -292,7 +439,7 @@ class TestBundleBuilder:
         assert len(result.spend_bundle.coin_spends) == 7
 
     def test_bundle_has_aggregated_signature(self, faucet):
-        pgt_coin = _make_faucet_coin(faucet, PGT_GENESIS, DEFAULT_PGT_TOTAL_SUPPLY)
+        sgt_coin = _make_faucet_coin(faucet, SGT_GENESIS, DEFAULT_SGT_TOTAL_SUPPLY)
         pool_coin = _make_faucet_coin(faucet, POOL_GENESIS, 100)
         did_coin = _make_faucet_coin(faucet, DID_GENESIS, 100)
         gov_coin = _make_faucet_coin(faucet, GOV_GENESIS, 100)
@@ -300,14 +447,15 @@ class TestBundleBuilder:
             network="testnet11",
             params=ProtocolDeploymentParams(),
             faucet_inner_puzhash=faucet.address_puzzle_hash,
-            pgt_genesis_coin_id=pgt_coin.name(),
+            sgt_genesis_coin_id=sgt_coin.name(),
             pool_genesis_coin_id=pool_coin.name(),
             did_genesis_coin_id=did_coin.name(),
             gov_genesis_coin_id=gov_coin.name(),
+            **trusted_v2_kwargs(),
         )
         result = build_deployment_bundle(
             plan=plan, faucet=faucet,
-            pgt_coin=pgt_coin, pool_coin=pool_coin,
+            sgt_coin=sgt_coin, pool_coin=pool_coin,
             did_coin=did_coin, gov_coin=gov_coin,
         )
         # Aggregated sig is non-empty G2 (96 bytes serialised)
@@ -316,9 +464,8 @@ class TestBundleBuilder:
         # And not the zero element (real signatures from 4 spends)
         assert bytes(result.spend_bundle.aggregated_signature) != bytes(G2Element())
 
-    def test_bundle_coin_mismatch_rejected(self, faucet):
-        """Bundle builder must reject coins whose name doesn't match the plan."""
-        pgt_coin = _make_faucet_coin(faucet, PGT_GENESIS, DEFAULT_PGT_TOTAL_SUPPLY)
+    def test_bundle_aggregate_signature_verifies_against_emitted_conditions(self, faucet):
+        sgt_coin = _make_faucet_coin(faucet, SGT_GENESIS, DEFAULT_SGT_TOTAL_SUPPLY)
         pool_coin = _make_faucet_coin(faucet, POOL_GENESIS, 100)
         did_coin = _make_faucet_coin(faucet, DID_GENESIS, 100)
         gov_coin = _make_faucet_coin(faucet, GOV_GENESIS, 100)
@@ -326,22 +473,69 @@ class TestBundleBuilder:
             network="testnet11",
             params=ProtocolDeploymentParams(),
             faucet_inner_puzhash=faucet.address_puzzle_hash,
-            pgt_genesis_coin_id=bytes32(b"\xff" * 32),  # WRONG
+            sgt_genesis_coin_id=sgt_coin.name(),
             pool_genesis_coin_id=pool_coin.name(),
             did_genesis_coin_id=did_coin.name(),
             gov_genesis_coin_id=gov_coin.name(),
+            **trusted_v2_kwargs(),
         )
-        with pytest.raises(ValueError, match="pgt_coin name does not match"):
+        result = build_deployment_bundle(
+            plan=plan, faucet=faucet,
+            sgt_coin=sgt_coin, pool_coin=pool_coin,
+            did_coin=did_coin, gov_coin=gov_coin,
+        )
+
+        pks = []
+        messages = []
+        for coin_spend in result.spend_bundle.coin_spends:
+            conditions = conditions_dict_for_solution(
+                Program.from_bytes(bytes(coin_spend.puzzle_reveal)),
+                Program.from_bytes(bytes(coin_spend.solution)),
+                INFINITE_COST,
+            )
+            for pk, message in pkm_pairs_for_conditions_dict(
+                conditions,
+                coin_spend.coin,
+                faucet.agg_sig_me_data,
+            ):
+                pks.append(pk)
+                messages.append(message)
+
+        assert len(pks) == 4
+        assert all(pk == faucet.key.wallet_pk for pk in pks)
+        assert AugSchemeMPL.aggregate_verify(
+            pks,
+            messages,
+            result.spend_bundle.aggregated_signature,
+        )
+
+    def test_bundle_coin_mismatch_rejected(self, faucet):
+        """Bundle builder must reject coins whose name doesn't match the plan."""
+        sgt_coin = _make_faucet_coin(faucet, SGT_GENESIS, DEFAULT_SGT_TOTAL_SUPPLY)
+        pool_coin = _make_faucet_coin(faucet, POOL_GENESIS, 100)
+        did_coin = _make_faucet_coin(faucet, DID_GENESIS, 100)
+        gov_coin = _make_faucet_coin(faucet, GOV_GENESIS, 100)
+        plan = ProtocolDeploymentPlan(
+            network="testnet11",
+            params=ProtocolDeploymentParams(),
+            faucet_inner_puzhash=faucet.address_puzzle_hash,
+            sgt_genesis_coin_id=bytes32(b"\xff" * 32),  # WRONG
+            pool_genesis_coin_id=pool_coin.name(),
+            did_genesis_coin_id=did_coin.name(),
+            gov_genesis_coin_id=gov_coin.name(),
+            **trusted_v2_kwargs(),
+        )
+        with pytest.raises(ValueError, match="sgt_coin name does not match"):
             build_deployment_bundle(
                 plan=plan, faucet=faucet,
-                pgt_coin=pgt_coin, pool_coin=pool_coin,
+                sgt_coin=sgt_coin, pool_coin=pool_coin,
                 did_coin=did_coin, gov_coin=gov_coin,
             )
 
     def test_bundle_insufficient_amount_rejected(self, faucet):
         """A faucet coin smaller than (target + fee) must fail."""
-        # Only 100 mojos, but PGT needs 1_000_000
-        pgt_coin = _make_faucet_coin(faucet, PGT_GENESIS, 100)
+        # Only 100 mojos, but SGT needs 1_000_000
+        sgt_coin = _make_faucet_coin(faucet, SGT_GENESIS, 100)
         pool_coin = _make_faucet_coin(faucet, POOL_GENESIS, 100)
         did_coin = _make_faucet_coin(faucet, DID_GENESIS, 100)
         gov_coin = _make_faucet_coin(faucet, GOV_GENESIS, 100)
@@ -349,15 +543,16 @@ class TestBundleBuilder:
             network="testnet11",
             params=ProtocolDeploymentParams(),
             faucet_inner_puzhash=faucet.address_puzzle_hash,
-            pgt_genesis_coin_id=pgt_coin.name(),
+            sgt_genesis_coin_id=sgt_coin.name(),
             pool_genesis_coin_id=pool_coin.name(),
             did_genesis_coin_id=did_coin.name(),
             gov_genesis_coin_id=gov_coin.name(),
+            **trusted_v2_kwargs(),
         )
         with pytest.raises(ValueError, match="amount.*<.*required"):
             build_deployment_bundle(
                 plan=plan, faucet=faucet,
-                pgt_coin=pgt_coin, pool_coin=pool_coin,
+                sgt_coin=sgt_coin, pool_coin=pool_coin,
                 did_coin=did_coin, gov_coin=gov_coin,
             )
 
@@ -373,10 +568,11 @@ class TestPostFixGovernance:
         kwargs = dict(
             network="testnet11",
             faucet_inner_puzhash=faucet.address_puzzle_hash,
-            pgt_genesis_coin_id=PGT_GENESIS,
+            sgt_genesis_coin_id=SGT_GENESIS,
             pool_genesis_coin_id=POOL_GENESIS,
             did_genesis_coin_id=DID_GENESIS,
             gov_genesis_coin_id=GOV_GENESIS,
+            **trusted_v2_kwargs(),
         )
         a = ProtocolDeploymentPlan(params=params_default, **kwargs)
         b = ProtocolDeploymentPlan(params=params_doubled, **kwargs)

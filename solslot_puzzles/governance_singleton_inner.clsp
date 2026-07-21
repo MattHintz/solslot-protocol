@@ -1,0 +1,539 @@
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; Solslot governance proposal tracker singleton.
+;;;
+;;; This is the v2 governance puzzle.  The legacy `vote_weight` raw-atom
+;;; parameter (CRITICAL-3 in the 2026-04-19 audit) is replaced with SGT-backed
+;;; voting: every vote increment is bound to a real SGT CAT spend whose
+;;; LOCK announcement is asserted here.  The CAT2 conservation invariant
+;;; together with the genesis-by-coin-id SGT TAIL bounds the maximum vote
+;;; weight at SGT_TOTAL_SUPPLY, and the QUORUM_BPS check enforces the
+;;; minimum aggregate weight before EXECUTE can dispatch a bill.
+;;;
+;;; State machine:
+;;;
+;;;             ┌── PROPOSE ──┐
+;;;     IDLE ───┤             ├──> OPEN ─── VOTE ───> OPEN ─┐
+;;;             └─────────────┘                 ↑           │
+;;;                                             │           ▼
+;;;                                             ├── deadline+quorum ─> EXECUTE ─> IDLE
+;;;                                             └── deadline+!quorum ─> EXPIRE  ─> IDLE
+;;;
+;;; Curried parameters (immutable across protocol lifetime):
+;;;   MOD_HASH                — self-reference for state recreation
+;;;   SINGLETON_STRUCT        — standard singleton struct (this tracker)
+;;;   SGT_FREE_MOD_HASH       — sgt_free_inner.clsp tree hash
+;;;   SGT_LOCKED_MOD_HASH     — sgt_locked_inner.clsp tree hash
+;;;   CAT_MOD_HASH            — chia CAT2 outer mod tree hash
+;;;   SGT_TAIL_HASH           — SGT TAIL puzzle hash
+;;;   PROTOCOL_DID_PUZHASH    — DID full puzzle hash (kept for future MINT routing)
+;;;   POOL_SINGLETON_STRUCT   — pool singleton struct (FREEZE / SETTLE target)
+;;;   QUORUM_BPS              — minimum vote weight in basis points (e.g. 5000)
+;;;   VOTING_WINDOW_SECONDS   — voting window (e.g. 300 = 5 min)
+;;;   SGT_TOTAL_SUPPLY        — fixed SGT supply (denominator for quorum check)
+;;;   MIN_PROPOSAL_STAKE      — minimum first-vote SGT mojos to open a proposal
+;;;                            (anti-spam; locked SGT is returned on EXEC/EXPIRE
+;;;                             so this is a stake-deposit, not a fee)
+;;;   KOS_MINT_EXECUTE_PUBKEY — dedicated mint-execute co-signer. This key can
+;;;                            satisfy only the MINT-only AGG_SIG_ME condition
+;;;                            emitted below; it has no authority over votes,
+;;;                            custody, settlement, or any other spend case.
+;;;
+;;; Curried state (changes each spend via curry_hashes recreation):
+;;;   PROPOSAL_HASH    — 0 when idle, else the hashed bill operation
+;;;   BILL_OPERATION   — 0 when idle, else the bill tuple (MINT/FREEZE/SETTLE)
+;;;   VOTE_TALLY       — accumulated SGT mojos voted so far
+;;;   VOTING_DEADLINE  — absolute seconds when voting closes
+;;;
+;;; Bill operation tuples:
+;;;   (M deed_full_puzhash property_id_canon property_registry_puzzle_hash)
+;;;                                                       ; MINT  (tag 'M' = 0x4d)
+;;;   (F new_pool_status)                               ; FREEZE (tag 'F' = 0x46)
+;;;   (S splitxch_root_hash total_amount num_deeds deed_releases_hash)
+;;;                                                       ; SETTLE (tag 'S' = 0x53)
+;;;   (V new_code_hash new_params_hash new_version)      ; VAULT_VERSION (tag 'V' = 0x56)
+;;;
+;;; Spend cases:
+;;;   1 — PROPOSE : open a new proposal.  Requires:
+;;;                  - tracker is idle (PROPOSAL_HASH = 0)
+;;;                  - first SGT lock announcement covering at least MIN_PROPOSAL_STAKE
+;;;                  - now ≤ deadline; deadline ≤ now + VOTING_WINDOW_SECONDS
+;;;                  (Note: v2 governance is fully SGT-stake-gated.  The legacy
+;;;                   DID PROP gate was unsatisfiable — quorum_did_inner only
+;;;                   handles MINT — and was removed.  Anyone holding
+;;;                   MIN_PROPOSAL_STAKE SGT can propose.)
+;;;
+;;;   2 — VOTE    : add weight to existing proposal.  Requires:
+;;;                  - PROPOSAL_HASH matches
+;;;                  - now < VOTING_DEADLINE (still open)
+;;;                  - SGT lock announcement covering the new weight
+;;;
+;;;   3 — EXECUTE : dispatch the bill.  Requires:
+;;;                  - PROPOSAL_HASH != 0
+;;;                  - now ≥ VOTING_DEADLINE
+;;;                  - VOTE_TALLY * 10000 ≥ QUORUM_BPS * SGT_TOTAL_SUPPLY
+;;;                  - sha256tree(BILL_OPERATION) == PROPOSAL_HASH
+;;;                  - sends SEND_MESSAGE to DID/pool per bill type
+;;;                  - emits EXEC announcement to release locked SGT
+;;;                  - state resets to IDLE
+;;;
+;;;   4 — EXPIRE  : abandon a failed proposal.  Requires:
+;;;                  - PROPOSAL_HASH != 0
+;;;                  - now ≥ VOTING_DEADLINE
+;;;                  - VOTE_TALLY * 10000 < QUORUM_BPS * SGT_TOTAL_SUPPLY
+;;;                  - emits EXEC announcement so locked SGT can release
+;;;                  - state resets to IDLE
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(mod (
+        MOD_HASH
+        SINGLETON_STRUCT
+        SGT_FREE_MOD_HASH
+        SGT_LOCKED_MOD_HASH
+        CAT_MOD_HASH
+        SGT_TAIL_HASH
+        PROTOCOL_DID_PUZHASH
+        POOL_SINGLETON_STRUCT
+        QUORUM_BPS
+        VOTING_WINDOW_SECONDS
+        SGT_TOTAL_SUPPLY
+        MIN_PROPOSAL_STAKE
+        KOS_MINT_EXECUTE_PUBKEY
+        ;; --- curried state (recreated each spend) ---
+        PROPOSAL_HASH
+        BILL_OPERATION
+        VOTE_TALLY
+        VOTING_DEADLINE
+        ;; --- solution ---
+        my_id
+        my_inner_puzzlehash
+        my_amount
+        spend_case
+        params
+     )
+
+    (include condition_codes.clib)
+    (include utils.clib)
+    (include utility_macros.clib)
+
+    ;; Spend case constants
+    (defconstant TRK_PROPOSE 1)
+    (defconstant TRK_VOTE 2)
+    (defconstant TRK_EXECUTE 3)
+    (defconstant TRK_EXPIRE 4)
+
+    ;; SGT LOCK announcement tag (matches sgt_free_inner.clsp)
+    (defconstant LOCK_TAG 0x4c4f434b)
+
+    ;; Tracker EXEC release tag (matches sgt_locked_inner.clsp)
+    (defconstant EXEC_TAG 0x45584543)
+
+    ;; Bill operation tags (single ASCII bytes)
+    (defconstant BILL_MINT 0x4d)          ; 'M'
+    (defconstant BILL_FREEZE 0x46)        ; 'F'
+    (defconstant BILL_SETTLE 0x53)        ; 'S'
+    (defconstant BILL_VAULT_VERSION 0x56) ; 'V' — ratify a vault_version_registry code change
+
+    ;; vault_version_registry_inner.clsp routine-path approval tag ("RT").  The
+    ;; registry's SPEND_CODE_ROUTINE asserts a PUZZLE_ANNOUNCEMENT keyed by the
+    ;; governance coin's full puzzle hash with message
+    ;;   PROTOCOL_PREFIX || REGISTRY_TAG_ROUTINE || content_hash(new_state)
+    ;; so EXECUTE of a VAULT_VERSION bill emits exactly that announcement.
+    ;; MUST equal vault_version_registry_inner.clsp `TAG_ROUTINE`.
+    (defconstant REGISTRY_TAG_ROUTINE 0x5254)
+
+    ;; Dedicated MINT execution co-signer tag. The visible condition message is
+    ;;   PROTOCOL_PREFIX || "KOSM" || sha256tree(
+    ;;     governance_singleton_struct_hash, live_tracker_coin_id, proposal_hash)
+    ;; AGG_SIG_ME appends the network-specific additional data at consensus.
+    (defconstant KOS_MINT_EXECUTE_TAG 0x4b4f534d)
+
+    ;; Pool message tags (matches pool_singleton_inner_v3.clsp existing format)
+    (defconstant POOL_GOV_TAG 0x474f5620)   ; "GOV "
+    (defconstant POOL_SETT_TAG 0x53455454)  ; "SETT"
+    (defconstant DID_MINT_TAG 0x4d494e54)   ; "MINT"
+
+    ;; ─────────────────────────────────────────────────────────────────────
+    ;;  Inline helpers — must remain inline so curried mod-level args resolve
+    ;; ─────────────────────────────────────────────────────────────────────
+
+    ;; Compute the tracker's own next inner puzzle hash from a state tuple.
+    (defun-inline next_inner_ph
+            (mod_hash singleton_struct
+             sgt_free_mh sgt_locked_mh cat_mh sgt_tail_h
+             did_ph pool_struct quorum voting_window total_supply min_stake kos_mint_execute_pubkey
+             proposal_hash bill_op vote_tally voting_deadline)
+        (curry_hashes mod_hash
+            (sha256 1 mod_hash)
+            (sha256tree singleton_struct)
+            (sha256 1 sgt_free_mh)
+            (sha256 1 sgt_locked_mh)
+            (sha256 1 cat_mh)
+            (sha256 1 sgt_tail_h)
+            (sha256 1 did_ph)
+            (sha256tree pool_struct)
+            (sha256 1 quorum)
+            (sha256 1 voting_window)
+            (sha256 1 total_supply)
+            (sha256 1 min_stake)
+            (sha256 1 kos_mint_execute_pubkey)
+            (sha256 1 proposal_hash)
+            (sha256tree bill_op)
+            (sha256 1 vote_tally)
+            (sha256 1 voting_deadline))
+    )
+
+    ;; Compute the puzzle hash of the CAT-wrapped SGT free coin owned by a
+    ;; given user (their voter_inner_puzhash).  Used to verify LOCK
+    ;; announcements: only a real SGT spend can produce a matching announce.
+    (defun-inline cat_sgt_free_puzhash
+            (mod_hash singleton_struct
+             sgt_free_mh sgt_locked_mh cat_mh sgt_tail_h
+             voter_inner_puzhash)
+        (curry_hashes cat_mh
+            (sha256 1 cat_mh)
+            (sha256 1 sgt_tail_h)
+            (curry_hashes sgt_free_mh
+                (sha256 1 sgt_free_mh)
+                (sha256 1 sgt_locked_mh)
+                (sha256tree singleton_struct)
+                (sha256 1 voter_inner_puzhash)))
+    )
+
+    ;; Identity self-checks every tracker spend asserts.
+    (defun-inline identity_conditions (singleton_struct my_id my_ph my_amount)
+        (list
+            (list ASSERT_MY_COIN_ID my_id)
+            (list ASSERT_MY_AMOUNT my_amount)
+            (list ASSERT_MY_PUZZLEHASH (calculate_full_puzzle_hash singleton_struct my_ph)))
+    )
+
+    ;; Build the LOCK announcement id that a SGT free coin emits when locking.
+    ;; Format must match sgt_free_inner.clsp exactly:
+    ;;   sender_ph = CAT(CAT_MOD, SGT_TAIL, sgt_free_inner.curry(...))
+    ;;   message   = PROTOCOL_PREFIX || sha256tree(LOCK_TAG proposal_hash amount deadline)
+    (defun-inline lock_announcement_id
+            (mod_hash singleton_struct
+             sgt_free_mh sgt_locked_mh cat_mh sgt_tail_h
+             voter_inner_puzhash proposal_hash amount deadline)
+        (sha256
+            (cat_sgt_free_puzhash mod_hash singleton_struct
+                sgt_free_mh sgt_locked_mh cat_mh sgt_tail_h
+                voter_inner_puzhash)
+            (concat PROTOCOL_PREFIX
+                (sha256tree (list LOCK_TAG proposal_hash amount deadline))))
+    )
+
+    ;; SETTLE bill message body:
+    ;;   sha256tree(SETT splitxch_root total_amount num_deeds deed_releases_hash)
+    (defun-inline settle-message-hash (bill_op)
+        (sha256tree (list POOL_SETT_TAG
+            (f (r bill_op))
+            (f (r (r bill_op)))
+            (f (r (r (r bill_op))))
+            (f (r (r (r (r bill_op)))))))
+    )
+
+    (defun-inline kos-mint-execute-message (singleton_struct my_id proposal_hash)
+        (concat PROTOCOL_PREFIX KOS_MINT_EXECUTE_TAG
+            (sha256tree (list (sha256tree singleton_struct) my_id proposal_hash)))
+    )
+
+    ;; This list is intentionally empty for every bill other than MINT. The
+    ;; co-signer has no general wallet or governance authority.
+    (defun-inline kos-mint-execute-conditions
+            (kos_mint_execute_pubkey singleton_struct my_id proposal_hash bill_op)
+        (if (= (f bill_op) BILL_MINT)
+            (list
+                (list AGG_SIG_ME kos_mint_execute_pubkey
+                    (kos-mint-execute-message singleton_struct my_id proposal_hash)))
+            ())
+    )
+
+    (defun-inline known-bill-tag (bill_op)
+        (if (= (f bill_op) BILL_MINT)
+            1
+            (if (= (f bill_op) BILL_FREEZE)
+                1
+                (if (= (f bill_op) BILL_SETTLE)
+                    1
+                    (if (= (f bill_op) BILL_VAULT_VERSION)
+                        1
+                        0))))
+    )
+
+    ;; ─────────────────────────────────────────────────────────────────────
+    ;;  Spend handlers
+    ;; ─────────────────────────────────────────────────────────────────────
+
+    ;; SPEND CASE 1 — PROPOSE
+    ;; params = (proposal_hash bill_operation voter_inner_puzhash first_vote_amount voting_deadline)
+    ;; bill_operation must be a tagged tuple whose sha256tree equals proposal_hash.
+    (defun spend_propose
+            (mod_hash singleton_struct
+             sgt_free_mh sgt_locked_mh cat_mh sgt_tail_h
+             did_ph pool_struct quorum voting_window total_supply min_stake kos_mint_execute_pubkey
+             my_id my_ph my_amount
+             proposal_hash bill_op voter_inner_puzhash first_vote_amount voting_deadline)
+        (assert
+            ;; Schema validation
+            (is-size-b32 proposal_hash)
+            (is-size-b32 voter_inner_puzhash)
+            (is-uint64 first_vote_amount)
+            (is-uint64 voting_deadline)
+            ;; Anti-spam: first vote must meet MIN_PROPOSAL_STAKE.  This stake
+            ;; is locked for the voting window and returned on EXEC/EXPIRE
+            ;; (via the EXEC announcement that sgt_locked_inner watches).
+            (gte first_vote_amount min_stake)
+            (= proposal_hash (sha256tree bill_op))
+            (known-bill-tag bill_op)
+            ;; Time bound: voting must close within VOTING_WINDOW_SECONDS of now.
+            ;; We assert that "now" is within window via paired height/time bounds:
+            ;;   ASSERT_BEFORE_SECONDS_ABSOLUTE deadline       (now < deadline)
+            ;;   ASSERT_SECONDS_ABSOLUTE (deadline - window)   (now >= deadline - window)
+            ;; Together these pin the voting window to within ±0 of (now, now+window).
+            (c
+                ;; Recreate the tracker singleton in OPEN state.
+                (list CREATE_COIN
+                    (next_inner_ph mod_hash singleton_struct
+                        sgt_free_mh sgt_locked_mh cat_mh sgt_tail_h
+                        did_ph pool_struct quorum voting_window total_supply min_stake kos_mint_execute_pubkey
+                        proposal_hash bill_op first_vote_amount voting_deadline)
+                    my_amount)
+                (c
+                    ;; First voter's SGT lock announcement.  Anyone holding
+                    ;; >= MIN_PROPOSAL_STAKE SGT can satisfy this.
+                    (list ASSERT_PUZZLE_ANNOUNCEMENT
+                        (lock_announcement_id mod_hash singleton_struct
+                            sgt_free_mh sgt_locked_mh cat_mh sgt_tail_h
+                            voter_inner_puzhash proposal_hash first_vote_amount voting_deadline))
+                    (c
+                        ;; Voting window upper bound.
+                        (list ASSERT_BEFORE_SECONDS_ABSOLUTE voting_deadline)
+                        (c
+                            ;; Voting window lower bound: deadline-window <= now.
+                            (list ASSERT_SECONDS_ABSOLUTE (- voting_deadline voting_window))
+                            (c
+                                (list REMARK PROTOCOL_PREFIX TRK_PROPOSE proposal_hash first_vote_amount voting_deadline)
+                                (identity_conditions singleton_struct my_id my_ph my_amount)))))))
+    )
+
+    ;; SPEND CASE 2 — VOTE
+    ;; params = (voter_inner_puzhash additional_vote_amount)
+    ;; Requires SGT lock announcement matching the active PROPOSAL_HASH and VOTING_DEADLINE.
+    (defun spend_vote
+            (mod_hash singleton_struct
+             sgt_free_mh sgt_locked_mh cat_mh sgt_tail_h
+             did_ph pool_struct quorum voting_window total_supply min_stake kos_mint_execute_pubkey
+             proposal_hash bill_op vote_tally voting_deadline
+             my_id my_ph my_amount
+             voter_inner_puzhash additional_vote_amount)
+        (assert
+            (is-size-b32 voter_inner_puzhash)
+            (is-uint64 additional_vote_amount)
+            (> additional_vote_amount 0)
+            proposal_hash                        ; tracker is open (truthy)
+            (c
+                ;; Recreate the tracker with increased tally.
+                (list CREATE_COIN
+                    (next_inner_ph mod_hash singleton_struct
+                        sgt_free_mh sgt_locked_mh cat_mh sgt_tail_h
+                        did_ph pool_struct quorum voting_window total_supply min_stake kos_mint_execute_pubkey
+                        proposal_hash bill_op (+ vote_tally additional_vote_amount) voting_deadline)
+                    my_amount)
+                (c
+                    ;; SGT lock announcement for the new vote weight.
+                    (list ASSERT_PUZZLE_ANNOUNCEMENT
+                        (lock_announcement_id mod_hash singleton_struct
+                            sgt_free_mh sgt_locked_mh cat_mh sgt_tail_h
+                            voter_inner_puzhash proposal_hash additional_vote_amount voting_deadline))
+                    (c
+                        ;; Voting window: must still be open.
+                        (list ASSERT_BEFORE_SECONDS_ABSOLUTE voting_deadline)
+                        (c
+                            (list REMARK PROTOCOL_PREFIX TRK_VOTE proposal_hash additional_vote_amount)
+                            (identity_conditions singleton_struct my_id my_ph my_amount))))))
+    )
+
+    ;; Dispatch a bill operation to its target contract.  Returns a LIST of
+    ;; conditions so callers can splice with merge-lists.
+    ;;
+    ;; All SEND_MESSAGE conditions use mode 0x10 (sender-puzzle, receiver-none)
+    ;; matching the DID's RECEIVE_MESSAGE 0x10 in quorum_did_inner.clsp and the
+    ;; pool's RECEIVE_MESSAGE 0x10 in pool_singleton_inner_v3.clsp.  Per CHIP-25,
+    ;; modes must be identical on both sides for the message to pair.
+    ;;
+    ;; For MINT, the dispatch ALSO asserts the DID's puzzle announcement of
+    ;; the deed_full_ph.  This is defense-in-depth: the SEND/RECEIVE pairing
+    ;; alone already guarantees the DID was co-spent (consensus rejects
+    ;; orphan SENDs/RECEIVEs), but the explicit assertion makes the
+    ;; gov→DID coupling explicit and binds the gov spend to the same
+    ;; announcement the launcher asserts.  If the DID puzzle ever changed
+    ;; to skip the announcement, gov would fail, preventing rogue mints.
+    (defun dispatch_bill (bill_op did_ph)
+        (if (= (f bill_op) BILL_MINT)
+            ;; MINT: SEND to DID, ASSERT DID announces the deed full ph, and
+            ;; require the committed property registry state to register the
+            ;; committed property id in this same atomic bundle.
+            (list
+                (list SEND_MESSAGE 0x10
+                    (concat PROTOCOL_PREFIX
+                        (sha256tree (list DID_MINT_TAG (f (r bill_op))))))
+                (list ASSERT_PUZZLE_ANNOUNCEMENT
+                    (sha256 did_ph (f (r bill_op))))
+                (list ASSERT_PUZZLE_ANNOUNCEMENT
+                    (sha256
+                        (f (r (r (r bill_op))))
+                        (concat PROTOCOL_PREFIX (f (r (r bill_op)))))))
+            (if (= (f bill_op) BILL_FREEZE)
+                ;; FREEZE: pool's RECEIVE_MESSAGE 0x10 + sender check via
+                ;; curried gov struct enforces routing.
+                (list
+                    (list SEND_MESSAGE 0x10
+                        (concat PROTOCOL_PREFIX
+                            (sha256tree (list POOL_GOV_TAG (f (r bill_op)))))))
+                (if (= (f bill_op) BILL_SETTLE)
+                    ;; SETTLE: bind governance approval to the exact release set
+                    ;; hash, not just root/amount/count.  The pool recomputes
+                    ;; sha256tree(deed_releases) locally before receiving this
+                    ;; message.
+                    (list
+                        (list SEND_MESSAGE 0x10
+                            (concat PROTOCOL_PREFIX
+                                (settle-message-hash bill_op))))
+                    (if (= (f bill_op) BILL_VAULT_VERSION)
+                        ;; VAULT_VERSION: ratify a vault_version_registry CODE change.
+                        ;; Emit the routine-path approval the registry's
+                        ;; SPEND_CODE_ROUTINE asserts, keyed by THIS gov coin's full
+                        ;; puzzle hash:
+                        ;;   PROTOCOL_PREFIX || REGISTRY_TAG_ROUTINE || content_hash
+                        ;; where content_hash = sha256tree(new_code new_params new_version).
+                        ;; No SEND_MESSAGE — the registry is the asserter and governance
+                        ;; the announcer (same shape as the admin fast-track path).
+                        (list
+                            (list CREATE_PUZZLE_ANNOUNCEMENT
+                                (concat PROTOCOL_PREFIX REGISTRY_TAG_ROUTINE
+                                    (sha256tree (list (f (r bill_op)) (f (r (r bill_op))) (f (r (r (r bill_op)))))))))
+                        (x)))))
+    )
+
+    ;; SPEND CASE 3 — EXECUTE
+    ;; params = ()  (no extra args; bill_op + recipient identity all live in
+    ;;               curried state or in the bill's own contents).
+    ;; Quorum check: VOTE_TALLY * 10000 ≥ QUORUM_BPS * SGT_TOTAL_SUPPLY.
+    (defun spend_execute
+            (mod_hash singleton_struct
+             sgt_free_mh sgt_locked_mh cat_mh sgt_tail_h
+             did_ph pool_struct quorum voting_window total_supply min_stake kos_mint_execute_pubkey
+             proposal_hash bill_op vote_tally voting_deadline
+             my_id my_ph my_amount)
+        (assert
+            proposal_hash                        ; tracker is open (truthy)
+            (gte (* vote_tally 10000) (* quorum total_supply))
+            (= proposal_hash (sha256tree bill_op))
+            (c
+                ;; Reset the tracker to IDLE.
+                (list CREATE_COIN
+                    (next_inner_ph mod_hash singleton_struct
+                        sgt_free_mh sgt_locked_mh cat_mh sgt_tail_h
+                        did_ph pool_struct quorum voting_window total_supply min_stake kos_mint_execute_pubkey
+                        0 0 0 0)
+                    my_amount)
+                (c
+                    ;; Voting window must have passed.
+                    (list ASSERT_SECONDS_ABSOLUTE voting_deadline)
+                    (c
+                        ;; EXEC release announcement so locked SGT can return early.
+                        (list CREATE_PUZZLE_ANNOUNCEMENT
+                            (concat PROTOCOL_PREFIX
+                                (sha256tree (list EXEC_TAG proposal_hash))))
+                        (c
+                            (list REMARK PROTOCOL_PREFIX TRK_EXECUTE proposal_hash)
+                            (merge-lists
+                                (dispatch_bill bill_op did_ph)
+                                (merge-lists
+                                    (kos-mint-execute-conditions
+                                        kos_mint_execute_pubkey singleton_struct my_id proposal_hash bill_op)
+                                    (identity_conditions singleton_struct my_id my_ph my_amount))))))))
+    )
+
+    ;; SPEND CASE 4 — EXPIRE
+    ;; params = ()  (no extra args needed; tracker state has everything)
+    (defun spend_expire
+            (mod_hash singleton_struct
+             sgt_free_mh sgt_locked_mh cat_mh sgt_tail_h
+             did_ph pool_struct quorum voting_window total_supply min_stake kos_mint_execute_pubkey
+             proposal_hash bill_op vote_tally voting_deadline
+             my_id my_ph my_amount)
+        (assert
+            proposal_hash                        ; tracker is open (truthy)
+            ;; Quorum NOT met: VOTE_TALLY * 10000 < QUORUM_BPS * SGT_TOTAL_SUPPLY
+            (> (* quorum total_supply) (* vote_tally 10000))
+            (c
+                ;; Reset to IDLE.
+                (list CREATE_COIN
+                    (next_inner_ph mod_hash singleton_struct
+                        sgt_free_mh sgt_locked_mh cat_mh sgt_tail_h
+                        did_ph pool_struct quorum voting_window total_supply min_stake kos_mint_execute_pubkey
+                        0 0 0 0)
+                    my_amount)
+                (c
+                    (list ASSERT_SECONDS_ABSOLUTE voting_deadline)
+                    (c
+                        ;; EXEC announcement for early release of failed-vote locks.
+                        (list CREATE_PUZZLE_ANNOUNCEMENT
+                            (concat PROTOCOL_PREFIX
+                                (sha256tree (list EXEC_TAG proposal_hash))))
+                        (c
+                            (list REMARK PROTOCOL_PREFIX TRK_EXPIRE proposal_hash vote_tally)
+                            (identity_conditions singleton_struct my_id my_ph my_amount))))))
+    )
+
+    ;; ─────────────────────────────────────────────────────────────────────
+    ;;  Main dispatcher (mod-level args available here)
+    ;; ─────────────────────────────────────────────────────────────────────
+    (assert
+        (is-size-b32 my_id)
+        (is-size-b32 my_inner_puzzlehash)
+        (is-uint64 my_amount)
+        (is-size-bls-g1 KOS_MINT_EXECUTE_PUBKEY)
+        (if (= spend_case TRK_PROPOSE)
+            (assert
+                (not PROPOSAL_HASH)        ; tracker must be idle to propose
+                (spend_propose
+                    MOD_HASH SINGLETON_STRUCT
+                    SGT_FREE_MOD_HASH SGT_LOCKED_MOD_HASH CAT_MOD_HASH SGT_TAIL_HASH
+                    PROTOCOL_DID_PUZHASH POOL_SINGLETON_STRUCT
+                    QUORUM_BPS VOTING_WINDOW_SECONDS SGT_TOTAL_SUPPLY MIN_PROPOSAL_STAKE KOS_MINT_EXECUTE_PUBKEY
+                    my_id my_inner_puzzlehash my_amount
+                    (f params)            ; proposal_hash
+                    (f (r params))        ; bill_op
+                    (f (r (r params)))    ; voter_inner_puzhash
+                    (f (r (r (r params))))    ; first_vote_amount
+                    (f (r (r (r (r params)))))))    ; voting_deadline
+            (if (= spend_case TRK_VOTE)
+                (spend_vote
+                    MOD_HASH SINGLETON_STRUCT
+                    SGT_FREE_MOD_HASH SGT_LOCKED_MOD_HASH CAT_MOD_HASH SGT_TAIL_HASH
+                    PROTOCOL_DID_PUZHASH POOL_SINGLETON_STRUCT
+                    QUORUM_BPS VOTING_WINDOW_SECONDS SGT_TOTAL_SUPPLY MIN_PROPOSAL_STAKE KOS_MINT_EXECUTE_PUBKEY
+                    PROPOSAL_HASH BILL_OPERATION VOTE_TALLY VOTING_DEADLINE
+                    my_id my_inner_puzzlehash my_amount
+                    (f params)            ; voter_inner_puzhash
+                    (f (r params)))       ; additional_vote_amount
+                (if (= spend_case TRK_EXECUTE)
+                    (spend_execute
+                        MOD_HASH SINGLETON_STRUCT
+                        SGT_FREE_MOD_HASH SGT_LOCKED_MOD_HASH CAT_MOD_HASH SGT_TAIL_HASH
+                    PROTOCOL_DID_PUZHASH POOL_SINGLETON_STRUCT
+                    QUORUM_BPS VOTING_WINDOW_SECONDS SGT_TOTAL_SUPPLY MIN_PROPOSAL_STAKE KOS_MINT_EXECUTE_PUBKEY
+                        PROPOSAL_HASH BILL_OPERATION VOTE_TALLY VOTING_DEADLINE
+                        my_id my_inner_puzzlehash my_amount)
+                    (if (= spend_case TRK_EXPIRE)
+                        (spend_expire
+                            MOD_HASH SINGLETON_STRUCT
+                            SGT_FREE_MOD_HASH SGT_LOCKED_MOD_HASH CAT_MOD_HASH SGT_TAIL_HASH
+                    PROTOCOL_DID_PUZHASH POOL_SINGLETON_STRUCT
+                    QUORUM_BPS VOTING_WINDOW_SECONDS SGT_TOTAL_SUPPLY MIN_PROPOSAL_STAKE KOS_MINT_EXECUTE_PUBKEY
+                            PROPOSAL_HASH BILL_OPERATION VOTE_TALLY VOTING_DEADLINE
+                            my_id my_inner_puzzlehash my_amount)
+                        (x))))))
+)

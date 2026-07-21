@@ -1,0 +1,308 @@
+{
+  "constants": {
+    "mod_hash": "0x9842657d7ecb74760e5cce485d2ea4e22afb24b213e22279f272b932e28985d2",
+    "empty_list_hash": "0x4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a",
+    "default_max_admins": 25,
+    "default_max_keys_per_admin": 10,
+    "default_cooldown_blocks": 1024,
+    "default_recovery_timeout_blocks": 5040,
+    "default_sgt_governance_puzzle_hash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+    "singleton_mod_hash": "0x7faa3253bfddd1e0decb0906b2dc6247bbc4cf608f58345d173adb63e8b47c9f",
+    "singleton_launcher_hash": "0xeff07522495060c066f66f32acc2a77e3a3e737aca8baea4d1a64ea4cdc13da9"
+  },
+  "state_hash": [
+    {
+      "label": "fresh-launch-default",
+      "input": {
+        "mips_root_hash": "0x1111111111111111111111111111111111111111111111111111111111111111",
+        "admins_hash": "0x2222222222222222222222222222222222222222222222222222222222222222",
+        "pending_ops_hash": "0x4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a",
+        "authority_version": 1
+      },
+      "expected": "0x3134b0e5f413e3bfc8e6e1a771bf369fd810779be5e7ff736f7eef229206c984"
+    },
+    {
+      "label": "version-bumped",
+      "input": {
+        "mips_root_hash": "0x1111111111111111111111111111111111111111111111111111111111111111",
+        "admins_hash": "0x2222222222222222222222222222222222222222222222222222222222222222",
+        "pending_ops_hash": "0x4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a",
+        "authority_version": 7
+      },
+      "expected": "0xfdb505be7a117652db0aa57922d9ac8548559228037c382bb04e4a63ffbe59c4"
+    },
+    {
+      "label": "with-pending-op",
+      "input": {
+        "mips_root_hash": "0x1111111111111111111111111111111111111111111111111111111111111111",
+        "admins_hash": "0x2222222222222222222222222222222222222222222222222222222222222222",
+        "pending_ops_hash": "0x3333333333333333333333333333333333333333333333333333333333333333",
+        "authority_version": 1
+      },
+      "expected": "0xf8827d19143dbbb20b9935b12b18afd9fb3e5d70f0a409663f8afc287cfcaa43"
+    },
+    {
+      "label": "swapped-mips-and-admins",
+      "input": {
+        "mips_root_hash": "0x2222222222222222222222222222222222222222222222222222222222222222",
+        "admins_hash": "0x1111111111111111111111111111111111111111111111111111111111111111",
+        "pending_ops_hash": "0x4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a",
+        "authority_version": 1
+      },
+      "expected": "0x5b81c047551e874453660f9ad871a59a9ec4576a9e3a0f259d68dfca57bd725a"
+    },
+    {
+      "label": "all-distinct-fields",
+      "input": {
+        "mips_root_hash": "0x4444444444444444444444444444444444444444444444444444444444444444",
+        "admins_hash": "0x3333333333333333333333333333333333333333333333333333333333333333",
+        "pending_ops_hash": "0x2222222222222222222222222222222222222222222222222222222222222222",
+        "authority_version": 99
+      },
+      "expected": "0x883df93589a28f12e5c950dccb5d9a30916dc7568bfbc42a9a5745f223fd6f07"
+    }
+  ],
+  "admins_hash": [
+    {
+      "label": "empty",
+      "input": [],
+      "expected": "0x4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a"
+    },
+    {
+      "label": "single-one-leaf",
+      "input": [
+        {
+          "admin_idx": 0,
+          "leaves": [
+            "0x1111111111111111111111111111111111111111111111111111111111111111"
+          ],
+          "m_within": 1
+        }
+      ],
+      "expected": "0xa6e089268049e9ebdbeb13867e6d30f9576f2b26bd7f2030aeb710c9859b07f0"
+    },
+    {
+      "label": "two-with-two-leaves",
+      "input": [
+        {
+          "admin_idx": 0,
+          "leaves": [
+            "0x1111111111111111111111111111111111111111111111111111111111111111",
+            "0x2222222222222222222222222222222222222222222222222222222222222222"
+          ],
+          "m_within": 2
+        },
+        {
+          "admin_idx": 1,
+          "leaves": [
+            "0x3333333333333333333333333333333333333333333333333333333333333333",
+            "0x4444444444444444444444444444444444444444444444444444444444444444"
+          ],
+          "m_within": 1
+        }
+      ],
+      "expected": "0x449a70d2098d10d070fefbcb42fb968d13b30291862f1153d68be7421f655544"
+    }
+  ],
+  "pending_ops_hash": [
+    {
+      "label": "empty",
+      "input": [],
+      "expected": "0x4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a"
+    },
+    {
+      "label": "single-add",
+      "input": [
+        {
+          "admin_idx": 0,
+          "op_kind": 1,
+          "target_hash": "0x1111111111111111111111111111111111111111111111111111111111111111",
+          "activates_at": 1024
+        }
+      ],
+      "expected": "0xa0d5b1459702eecd2a18d6b6296f6e87023c5400149cb9ca84ab536c964cc8aa"
+    },
+    {
+      "label": "single-remove",
+      "input": [
+        {
+          "admin_idx": 2,
+          "op_kind": 2,
+          "target_hash": "0x2222222222222222222222222222222222222222222222222222222222222222",
+          "activates_at": 5040
+        }
+      ],
+      "expected": "0x8613c08e9f263e9b3a66818e5d96d34c368e5f51d8d80b2f27960ba81a838133"
+    },
+    {
+      "label": "mixed-add-and-remove",
+      "input": [
+        {
+          "admin_idx": 0,
+          "op_kind": 1,
+          "target_hash": "0x1111111111111111111111111111111111111111111111111111111111111111",
+          "activates_at": 1024
+        },
+        {
+          "admin_idx": 1,
+          "op_kind": 2,
+          "target_hash": "0x2222222222222222222222222222222222222222222222222222222222222222",
+          "activates_at": 2048
+        }
+      ],
+      "expected": "0x84486f18e37aa0df885ae482cee6c37417843e32a046e85193a64cfb886fe30b"
+    }
+  ],
+  "inner_puzzle_hash": [
+    {
+      "label": "default-policy-fresh-launch",
+      "input": {
+        "mips_root_hash": "0x1111111111111111111111111111111111111111111111111111111111111111",
+        "admins_hash": "0x2222222222222222222222222222222222222222222222222222222222222222",
+        "pending_ops_hash": "0x4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a",
+        "authority_version": 1
+      },
+      "expected": "0xcdc58e020833f574854847471bf11b4b065c66461f1d40b52084f91d6428e5d6"
+    },
+    {
+      "label": "custom-policy-with-pending-op",
+      "input": {
+        "mips_root_hash": "0x2222222222222222222222222222222222222222222222222222222222222222",
+        "admins_hash": "0x3333333333333333333333333333333333333333333333333333333333333333",
+        "pending_ops_hash": "0x4444444444444444444444444444444444444444444444444444444444444444",
+        "authority_version": 42,
+        "max_admins": 7,
+        "max_keys_per_admin": 5,
+        "cooldown_blocks": 100,
+        "recovery_timeout_blocks": 1000,
+        "sgt_governance_puzzle_hash": "0x1111111111111111111111111111111111111111111111111111111111111111"
+      },
+      "expected": "0x549399d0c4b498d92d95a79dec40b85316c85c5d9ceb60acdb925d8dade93248"
+    }
+  ],
+  "roster_update_binding_hash": [
+    {
+      "label": "fresh-slot-add-empty-pending",
+      "input": {
+        "current_mips_root_hash": "0x1111111111111111111111111111111111111111111111111111111111111111",
+        "current_admins_hash": "0x2222222222222222222222222222222222222222222222222222222222222222",
+        "current_pending_ops_hash": "0x4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a",
+        "current_authority_version": 1,
+        "new_admins_hash": "0x3333333333333333333333333333333333333333333333333333333333333333",
+        "new_mips_root_hash": "0x4444444444444444444444444444444444444444444444444444444444444444",
+        "new_authority_version": 2
+      },
+      "expected": "0xac3788bd37d975c65f4cad97dab597c58ebe2af0e92af786d297f3d1a5aa0d8b"
+    },
+    {
+      "label": "with-pending-op-version-bump",
+      "input": {
+        "current_mips_root_hash": "0x4444444444444444444444444444444444444444444444444444444444444444",
+        "current_admins_hash": "0x3333333333333333333333333333333333333333333333333333333333333333",
+        "current_pending_ops_hash": "0x2222222222222222222222222222222222222222222222222222222222222222",
+        "current_authority_version": 7,
+        "new_admins_hash": "0x1111111111111111111111111111111111111111111111111111111111111111",
+        "new_mips_root_hash": "0x2222222222222222222222222222222222222222222222222222222222222222",
+        "new_authority_version": 8
+      },
+      "expected": "0xc3b64c878a4765a66cee208b858d41851f93a9a6fd1dc3f0313cfab1407599bd"
+    },
+    {
+      "label": "all-distinct-roster-update-fields",
+      "input": {
+        "current_mips_root_hash": "0x2222222222222222222222222222222222222222222222222222222222222222",
+        "current_admins_hash": "0x1111111111111111111111111111111111111111111111111111111111111111",
+        "current_pending_ops_hash": "0x4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a",
+        "current_authority_version": 41,
+        "new_admins_hash": "0x4444444444444444444444444444444444444444444444444444444444444444",
+        "new_mips_root_hash": "0x3333333333333333333333333333333333333333333333333333333333333333",
+        "new_authority_version": 42
+      },
+      "expected": "0xfcb7074586c44078b11b6df7d5204a587171b772339a859507fdc4e13d8dabbd"
+    }
+  ],
+  "singleton_full_puzzle_hash": [
+    {
+      "label": "h1-h2",
+      "input": {
+        "launcher_id": "0x1111111111111111111111111111111111111111111111111111111111111111",
+        "inner_puzzle_hash": "0x2222222222222222222222222222222222222222222222222222222222222222"
+      },
+      "expected": "0x3034ecfafb1efe19be520b1e6669b518b159d9130fcf036a7dbe3bb4ac67b5d0"
+    },
+    {
+      "label": "swapped-h1-h2",
+      "input": {
+        "launcher_id": "0x2222222222222222222222222222222222222222222222222222222222222222",
+        "inner_puzzle_hash": "0x1111111111111111111111111111111111111111111111111111111111111111"
+      },
+      "expected": "0xd4f969abcf2f6af362692b61a859407aabe7d2a48021143e7f3f59e3eb91626b"
+    },
+    {
+      "label": "h3-h4",
+      "input": {
+        "launcher_id": "0x3333333333333333333333333333333333333333333333333333333333333333",
+        "inner_puzzle_hash": "0x4444444444444444444444444444444444444444444444444444444444444444"
+      },
+      "expected": "0x81e4285af46ed839f2242d5ceff116dab9affca1d5cc2496f287bc43afeb9d1b"
+    }
+  ],
+  "launch_outputs": [
+    {
+      "label": "default-fresh-launch",
+      "input": {
+        "parent_coin_id": "0x1111111111111111111111111111111111111111111111111111111111111111",
+        "eve_inner_puzzle_hash": "0xcdc58e020833f574854847471bf11b4b065c66461f1d40b52084f91d6428e5d6",
+        "eve_amount": 1
+      },
+      "expected": {
+        "launcher_id": "0x573d41c79e81a15e499d6ee1994c4ef939443f3d4eeee67f9132634ce2131c58",
+        "eve_full_puzzle_hash": "0x92be802bb457979562ab57dd725043e24ca9ed0061b80d738b030e046cd8964e",
+        "launcher_announcement_message": "0x76a53fbce00e3f702c4443d29fe7127a029b8b68909378b9b1cfb02dca791abf",
+        "launcher_announcement_id": "0xa824dce021c3106dd57550abba38a3d1c2e9777e1ee5ee32b9021112000468d3"
+      }
+    },
+    {
+      "label": "different-funding-coin",
+      "input": {
+        "parent_coin_id": "0x2222222222222222222222222222222222222222222222222222222222222222",
+        "eve_inner_puzzle_hash": "0xcdc58e020833f574854847471bf11b4b065c66461f1d40b52084f91d6428e5d6",
+        "eve_amount": 1
+      },
+      "expected": {
+        "launcher_id": "0xe9fb9d0439f55099c232c41c179232c96a2fe58453ec0abc49caa723a384607f",
+        "eve_full_puzzle_hash": "0xaea6c8b55652064882fd345d4df718fce2ef92b69a997f443acd9ace97ce6c12",
+        "launcher_announcement_message": "0x38aeda5b889c40cdc620c5db459d722c12b0046bea61be276a9d94d960a1f815",
+        "launcher_announcement_id": "0xd5abf963057d99521bc4a37c62bde8b81a056b6ac7827f5cc66a394b5c6531ae"
+      }
+    },
+    {
+      "label": "different-eve-state",
+      "input": {
+        "parent_coin_id": "0x1111111111111111111111111111111111111111111111111111111111111111",
+        "eve_inner_puzzle_hash": "0x3333333333333333333333333333333333333333333333333333333333333333",
+        "eve_amount": 1
+      },
+      "expected": {
+        "launcher_id": "0x573d41c79e81a15e499d6ee1994c4ef939443f3d4eeee67f9132634ce2131c58",
+        "eve_full_puzzle_hash": "0xc2f8aec6e97a5ebb9f3518c3930819e2c5cd0a9420698ad2c5fa12bc939545ac",
+        "launcher_announcement_message": "0xd65e5919df4d3cedb7ce00dd6447108ef8a76ebdd7cc97edc02a6b09d5854448",
+        "launcher_announcement_id": "0xcaedac488ffdeedbd18197d69c5bdd24a552339d8544320d4e975b57fe4dbced"
+      }
+    },
+    {
+      "label": "non-default-eve-amount",
+      "input": {
+        "parent_coin_id": "0x1111111111111111111111111111111111111111111111111111111111111111",
+        "eve_inner_puzzle_hash": "0xcdc58e020833f574854847471bf11b4b065c66461f1d40b52084f91d6428e5d6",
+        "eve_amount": 3
+      },
+      "expected": {
+        "launcher_id": "0x573d41c79e81a15e499d6ee1994c4ef939443f3d4eeee67f9132634ce2131c58",
+        "eve_full_puzzle_hash": "0x92be802bb457979562ab57dd725043e24ca9ed0061b80d738b030e046cd8964e",
+        "launcher_announcement_message": "0xe5ad3f6e333fe0a09da42f2265a148f1fabce78c3e1a04601dbdc0412ccbdcfb",
+        "launcher_announcement_id": "0x8d07848cb2d1528797eb6351d36a0f2b3072a776acce436ed842d21738c670da"
+      }
+    }
+  ]
+}

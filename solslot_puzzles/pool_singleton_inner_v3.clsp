@@ -1,0 +1,1579 @@
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; Solslot pool singleton inner puzzle v3.
+;;; Central state machine managing deposited deeds and token supply.
+;;;
+;;; Security boundary:
+;;;   * legacy spend cases 2 and 5 are permanently disabled;
+;;;   * settlement and freeze authority is pinned to GOV_SINGLETON_STRUCT;
+;;;   * every successor state commits to that governance identity.
+;;;
+;;; Curried parameters (immutable across protocol lifetime):
+;;;   MOD_HASH — self-reference for state recreation via curry_hashes
+;;;   SINGLETON_STRUCT — standard singleton struct
+;;;   GOV_SINGLETON_STRUCT — trusted governance singleton struct
+;;;   PROTOCOL_DID_PUZHASH — protocol DID puzzle hash (for governance gating)
+;;;   TOKEN_TAIL_HASH — puzzle hash of the pool_token_tail program
+;;;   CAT_MOD_HASH — tree hash of the standard CAT2 outer puzzle
+;;;   OFFER_MOD_HASH — tree hash of Chia settlement_payments puzzle
+;;;   P2_VAULT_MOD_HASH — tree hash of p2_vault module (for vault containment)
+;;;   VAULT_INNER_MOD_HASH — trusted vault singleton inner module hash used to
+;;;     bind KYC authorization to the canonical buyer vault puzzle.
+;;;   NAV_REGISTRY_MOD_HASH — trusted collection NAV registry inner mod hash
+;;;   NAV_REGISTRY_GOV_PUBKEY — trusted NAV registry governor pubkey
+;;;   NAV_REGISTRY_LAUNCHER_ID — trusted NAV registry singleton launcher id
+;;;     Assumes the NAV registry is launched by the standard Chia singleton
+;;;     launcher puzzle hash carried in SINGLETON_STRUCT.
+;;;   MIN_NAV_REGISTRY_VERSION — lowest accepted NAV registry version
+;;;   TRUSTED_TREASURY_RESERVE_PUZHASH — canonical pool reserve CAT receiver
+;;;   TRUSTED_PROTOCOL_TREASURY_PUZHASH — canonical protocol fee receiver
+;;;   TRUSTED_GOVERNANCE_REWARDS_PUZHASH — canonical governance rewards receiver
+;;;   TRUSTED_GOVERNANCE_REWARDS_ROOT — canonical governance rewards claim root
+;;;   TRUSTED_ZKPASSPORT_BRIDGE_POLICY_HASH — sanctioned bridge policy that may
+;;;     attest vault identity roots accepted for case-6 acquisition.
+;;;   FP_SCALE — fixed-point scale (1000 = 1.000 tokens per dollar of par)
+;;;
+;;; Curried state (changes each spend via curry_hashes recreation):
+;;;   POOL_STATUS — 1=ACTIVE, 0=FROZEN
+;;;   TOTAL_VALUE_LOCKED — V1 par sum / V2 governed NAV locked
+;;;   DEED_COUNT — number of deeds currently in pool
+;;;   TOTAL_POOL_TOKEN_SUPPLY — total outstanding pool CAT supply
+;;;   TREASURY_RESERVE_TOKENS — pool CATs locked in treasury reserve
+;;;
+;;; Spend cases:
+;;;   1 — DEPOSIT: accept deed, mint tokens to depositor
+;;;   2 — REDEEM: burn tokens, release deed to redeemer's vault
+;;;   3 — SETTLEMENT: batch settlement (splitxch distribution + deed releases)
+;;;   4 — GOVERNANCE: change pool parameters (freeze/unfreeze)
+;;;   5 — GENERATE_OFFER: accept token payment via Chia offer settlement, release deed
+;;;   6 — V2_SPECIFIC_DEED_SWAP: NAV-priced token payment and deed release
+;;;   7 — V2_TRUE_REDEMPTION: NAV-priced CAT melt and deed release
+;;;   8 — V2_RESERVE_ACQUISITION: treasury reserve pays seller before minting shortfall
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(mod
+    (
+        MOD_HASH
+        SINGLETON_STRUCT
+        GOV_SINGLETON_STRUCT
+        PROTOCOL_DID_PUZHASH
+        TOKEN_TAIL_HASH
+        CAT_MOD_HASH
+        OFFER_MOD_HASH
+        P2_VAULT_MOD_HASH
+        VAULT_INNER_MOD_HASH
+        NAV_REGISTRY_MOD_HASH
+        NAV_REGISTRY_GOV_PUBKEY
+        NAV_REGISTRY_LAUNCHER_ID
+        MIN_NAV_REGISTRY_VERSION
+        TRUSTED_TREASURY_RESERVE_PUZHASH
+        TRUSTED_PROTOCOL_TREASURY_PUZHASH
+        TRUSTED_GOVERNANCE_REWARDS_PUZHASH
+        TRUSTED_GOVERNANCE_REWARDS_ROOT
+        TRUSTED_ZKPASSPORT_BRIDGE_POLICY_HASH
+        FP_SCALE
+        POOL_STATUS
+        TOTAL_VALUE_LOCKED
+        DEED_COUNT
+        TOTAL_POOL_TOKEN_SUPPLY
+        TREASURY_RESERVE_TOKENS
+        ;; --- solution ---
+        my_id
+        my_inner_puzzlehash
+        my_amount
+        spend_case
+        params
+    )
+
+    (include condition_codes.clib)
+    (include utils.clib)
+    (include utility_macros.clib)
+
+    ;; Spend case constants
+    (defconstant POOL_SPEND_DEPOSIT 1)
+    (defconstant POOL_SPEND_REDEEM 2)
+    (defconstant POOL_SPEND_SETTLEMENT 3)
+    (defconstant POOL_SPEND_GOVERNANCE 4)
+    (defconstant POOL_SPEND_GENERATE_OFFER 5)
+    (defconstant POOL_SPEND_V2_SPECIFIC_DEED_SWAP 6)
+    (defconstant POOL_SPEND_V2_TRUE_REDEMPTION 7)
+    (defconstant POOL_SPEND_V2_RESERVE_ACQUISITION 8)
+
+    ;; Pool Economic V2 tags/messages (must match pool_economics_v2.py)
+    (defconstant SHARE_PPM_DENOMINATOR 1000000)
+    (defconstant FEE_BPS_DENOMINATOR 10000)
+    (defconstant DEFAULT_SWAP_FEE_BPS 100)
+    (defconstant DEFAULT_PROTOCOL_FEE_BPS 30)
+    (defconstant NAV_EVIDENCE_TAG 0x4e415645)              ;; "NAVE"
+    (defconstant DEED_SPEND_POOL_DEPOSIT 0x64)
+    (defconstant DEED_SPEND_POOL_REDEEM 0x72)
+    (defconstant POOL_V2_SPECIFIC_DEED_SWAP_TAG 0x53574150);; "SWAP"
+    (defconstant POOL_V2_TRUE_REDEMPTION_TAG 0x5244454d)   ;; "RDEM"
+    (defconstant POOL_V2_RESERVE_ACQUISITION_TAG 0x41435152);; "ACQR"
+    (defconstant VAULT_SPEND_ACCEPT_OFFER 0x61)            ;; "a"
+    (defconstant ZKPASSPORT_EMPTY_ATTEST_ROOT 0x4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a)
+    (defconstant ZERO_B32 0x0000000000000000000000000000000000000000000000000000000000000000)
+
+    ;; Pool status
+    (defconstant POOL_ACTIVE 1)
+    (defconstant POOL_FROZEN 0)
+
+    ;; Compute inner puzzle hash from curried params + state
+    (defun compute_inner_ph (MOD_HASH SINGLETON_STRUCT GOV_SINGLETON_STRUCT PROTOCOL_DID_PUZHASH
+                              TOKEN_TAIL_HASH CAT_MOD_HASH OFFER_MOD_HASH P2_VAULT_MOD_HASH
+                              VAULT_INNER_MOD_HASH
+                              NAV_REGISTRY_MOD_HASH NAV_REGISTRY_GOV_PUBKEY NAV_REGISTRY_LAUNCHER_ID
+                              MIN_NAV_REGISTRY_VERSION
+                              TRUSTED_TREASURY_RESERVE_PUZHASH TRUSTED_PROTOCOL_TREASURY_PUZHASH
+                              TRUSTED_GOVERNANCE_REWARDS_PUZHASH TRUSTED_GOVERNANCE_REWARDS_ROOT
+                              TRUSTED_ZKPASSPORT_BRIDGE_POLICY_HASH
+                              FP_SCALE
+                              status tvl count supply reserve)
+        (curry_hashes MOD_HASH
+            (sha256 1 MOD_HASH)
+            (sha256tree SINGLETON_STRUCT)
+            (sha256tree GOV_SINGLETON_STRUCT)
+            (sha256 1 PROTOCOL_DID_PUZHASH)
+            (sha256 1 TOKEN_TAIL_HASH)
+            (sha256 1 CAT_MOD_HASH)
+            (sha256 1 OFFER_MOD_HASH)
+            (sha256 1 P2_VAULT_MOD_HASH)
+            (sha256 1 VAULT_INNER_MOD_HASH)
+            (sha256 1 NAV_REGISTRY_MOD_HASH)
+            (sha256 1 NAV_REGISTRY_GOV_PUBKEY)
+            (sha256 1 NAV_REGISTRY_LAUNCHER_ID)
+            (sha256 1 MIN_NAV_REGISTRY_VERSION)
+            (sha256 1 TRUSTED_TREASURY_RESERVE_PUZHASH)
+            (sha256 1 TRUSTED_PROTOCOL_TREASURY_PUZHASH)
+            (sha256 1 TRUSTED_GOVERNANCE_REWARDS_PUZHASH)
+            (sha256 1 TRUSTED_GOVERNANCE_REWARDS_ROOT)
+            (sha256 1 TRUSTED_ZKPASSPORT_BRIDGE_POLICY_HASH)
+            (sha256 1 FP_SCALE)
+            (sha256 1 status)
+            (sha256 1 tvl)
+            (sha256 1 count)
+            (sha256 1 supply)
+            (sha256 1 reserve))
+    )
+
+    ;; Identity conditions — every spend asserts self
+    (defun identity_conditions (SINGLETON_STRUCT my_id my_inner_puzzlehash my_amount)
+        (list
+            (list ASSERT_MY_COIN_ID my_id)
+            (list ASSERT_MY_AMOUNT my_amount)
+            (list ASSERT_MY_PUZZLEHASH (calculate_full_puzzle_hash SINGLETON_STRUCT my_inner_puzzlehash))
+        )
+    )
+
+    ;; Token mint constants (must match pool_token_tail.clsp)
+    (defconstant TOKEN_MINT 1)
+    (defconstant TOKEN_MELT -1)
+
+    ;; Compute token amount from par value and fixed-point scale
+    ;; token_amount = deed_par_value * FP_SCALE / 1000
+    (defun-inline compute_token_amount (deed_par_value FP_SCALE)
+        (/ (* deed_par_value FP_SCALE) 1000)
+    )
+
+    (defun nth (n lst)
+        (if n
+            (nth (- n 1) (r lst))
+            (f lst))
+    )
+
+    (defun-inline ceil_div (numerator denominator)
+        (/ (+ numerator (- denominator 1)) denominator)
+    )
+
+    (defun-inline compute_deed_nav (collection_nav_mojos share_ppm)
+        (ceil_div (* collection_nav_mojos share_ppm) SHARE_PPM_DENOMINATOR)
+    )
+
+    (defun-inline compute_principal_tokens (deed_nav circulating_supply total_nav_locked)
+        (ceil_div (* deed_nav circulating_supply) total_nav_locked)
+    )
+
+    (defun-inline min_value (a b)
+        (if (> a b) b a)
+    )
+
+    (defun-inline compute_reserve_paid (TREASURY_RESERVE_TOKENS seller_token_price)
+        (min_value TREASURY_RESERVE_TOKENS seller_token_price)
+    )
+
+    (defun-inline compute_fresh_mint (TREASURY_RESERVE_TOKENS seller_token_price)
+        (- seller_token_price (compute_reserve_paid TREASURY_RESERVE_TOKENS seller_token_price))
+    )
+
+    (defun-inline compute_total_swap_fee (principal_tokens)
+        (ceil_div (* principal_tokens DEFAULT_SWAP_FEE_BPS) FEE_BPS_DENOMINATOR)
+    )
+
+    (defun-inline compute_protocol_fee (principal_tokens)
+        (ceil_div (* principal_tokens DEFAULT_PROTOCOL_FEE_BPS) FEE_BPS_DENOMINATOR)
+    )
+
+    (defun-inline compute_governance_fee (principal_tokens)
+        (- (compute_total_swap_fee principal_tokens) (compute_protocol_fee principal_tokens))
+    )
+
+    (defun-inline compute_p2_vault_hash (P2_VAULT_MOD_HASH SINGLETON_STRUCT vault_launcher_id launcher_puzzle_hash)
+        (curry_hashes P2_VAULT_MOD_HASH
+            (sha256 1 (f SINGLETON_STRUCT))
+            (sha256 1 vault_launcher_id)
+            (sha256 1 launcher_puzzle_hash))
+    )
+
+    (defun-inline singleton_struct_for (SINGLETON_STRUCT launcher_id launcher_puzzle_hash)
+        (c (f SINGLETON_STRUCT) (c launcher_id launcher_puzzle_hash))
+    )
+
+    (defun-inline canonical_vault_inner_hash
+        (VAULT_INNER_MOD_HASH SINGLETON_STRUCT vault_launcher_id launcher_puzzle_hash
+         owner_pubkey auth_type members_merkle_root identity_attest_root bridge_policy_hash)
+        (curry_hashes VAULT_INNER_MOD_HASH
+            (sha256tree (singleton_struct_for SINGLETON_STRUCT vault_launcher_id launcher_puzzle_hash))
+            (sha256 1 owner_pubkey)
+            (sha256 1 auth_type)
+            (sha256 1 members_merkle_root)
+            (sha256 1 identity_attest_root)
+            (sha256 1 bridge_policy_hash)
+            ;; The vault's curried pool identity must point back to this pool singleton.
+            (sha256 1 (f SINGLETON_STRUCT))
+            (sha256 1 (f (r SINGLETON_STRUCT)))
+            (sha256 1 (r (r SINGLETON_STRUCT))))
+    )
+
+    (defun-inline canonical_vault_full_hash
+        (VAULT_INNER_MOD_HASH SINGLETON_STRUCT vault_launcher_id launcher_puzzle_hash
+         owner_pubkey auth_type members_merkle_root identity_attest_root bridge_policy_hash)
+        (calculate_full_puzzle_hash
+            (singleton_struct_for SINGLETON_STRUCT vault_launcher_id launcher_puzzle_hash)
+            (canonical_vault_inner_hash
+                VAULT_INNER_MOD_HASH SINGLETON_STRUCT vault_launcher_id launcher_puzzle_hash
+                owner_pubkey auth_type members_merkle_root identity_attest_root bridge_policy_hash))
+    )
+
+    (defun-inline pool_v2_kyc_offer_message (deed_launcher_id principal_tokens)
+        (concat PROTOCOL_PREFIX
+            (sha256tree
+                (list POOL_SPEND_V2_SPECIFIC_DEED_SWAP deed_launcher_id principal_tokens)))
+    )
+
+    (defun-inline vault_accept_offer_message (deed_launcher_id principal_tokens vault_coin_id)
+        (concat PROTOCOL_PREFIX
+            (sha256tree
+                (list VAULT_SPEND_ACCEPT_OFFER deed_launcher_id principal_tokens vault_coin_id)))
+    )
+
+    (defun-inline nav_evidence_message (collection_id_canon nav_value_mojos nav_root registry_version)
+        (concat PROTOCOL_PREFIX
+            (sha256tree
+                (list NAV_EVIDENCE_TAG
+                    collection_id_canon
+                    nav_value_mojos
+                    nav_root
+                    registry_version)))
+    )
+
+    (defun-inline nav_registry_struct (SINGLETON_STRUCT NAV_REGISTRY_LAUNCHER_ID)
+        ;; The NAV registry uses the same singleton top layer and standard
+        ;; launcher puzzle hash as the pool. Future registry variants with a
+        ;; custom launcher puzzle must curry that hash separately.
+        (c (f SINGLETON_STRUCT) (c NAV_REGISTRY_LAUNCHER_ID (r (r SINGLETON_STRUCT))))
+    )
+
+    (defun-inline nav_registry_inner_ph (NAV_REGISTRY_MOD_HASH NAV_REGISTRY_GOV_PUBKEY nav_root registry_version)
+        (curry_hashes NAV_REGISTRY_MOD_HASH
+            (sha256 1 NAV_REGISTRY_MOD_HASH)
+            (sha256 1 NAV_REGISTRY_GOV_PUBKEY)
+            (sha256 1 nav_root)
+            (sha256 1 registry_version))
+    )
+
+    (defun-inline trusted_nav_registry_puzzle_hash
+        (SINGLETON_STRUCT NAV_REGISTRY_MOD_HASH NAV_REGISTRY_GOV_PUBKEY NAV_REGISTRY_LAUNCHER_ID nav_root registry_version)
+        (calculate_full_puzzle_hash
+            (nav_registry_struct SINGLETON_STRUCT NAV_REGISTRY_LAUNCHER_ID)
+            (nav_registry_inner_ph NAV_REGISTRY_MOD_HASH NAV_REGISTRY_GOV_PUBKEY nav_root registry_version))
+    )
+
+    (defun-inline token_melt_message (token_coin_id principal_tokens)
+        (concat PROTOCOL_PREFIX (sha256tree (list TOKEN_MELT token_coin_id principal_tokens)))
+    )
+
+    (defun-inline token_mint_message (token_coin_id amount)
+        (concat PROTOCOL_PREFIX (sha256tree (list TOKEN_MINT token_coin_id amount)))
+    )
+
+    (defun token_authorization_conditions (token_message tail_conditions)
+        (c
+            (list CREATE_PUZZLE_ANNOUNCEMENT token_message)
+            (c
+                (list CREATE_COIN_ANNOUNCEMENT token_message)
+                tail_conditions))
+    )
+
+    (defun-inline cat_offer_puzzle_hash (CAT_MOD_HASH TOKEN_TAIL_HASH OFFER_MOD_HASH)
+        (curry_hashes CAT_MOD_HASH
+            (sha256 1 CAT_MOD_HASH)
+            (sha256 1 TOKEN_TAIL_HASH)
+            OFFER_MOD_HASH)
+    )
+
+    (defun-inline token_swap_payment_message
+        (pool_coin_id treasury_reserve_puzhash principal_tokens protocol_treasury_puzhash protocol_fee_tokens
+         governance_rewards_puzhash governance_fee_tokens governance_rewards_root)
+        (sha256tree
+            (c pool_coin_id
+                (list
+                    (list treasury_reserve_puzhash
+                          principal_tokens
+                          (list treasury_reserve_puzhash))
+                    (list protocol_treasury_puzhash
+                          protocol_fee_tokens
+                          (list protocol_treasury_puzhash))
+                    (list governance_rewards_puzhash
+                          governance_fee_tokens
+                          (list governance_rewards_puzhash governance_rewards_root)))))
+    )
+
+    (defun-inline token_reserve_seller_payment_message (pool_coin_id seller_puzhash reserve_paid)
+        (sha256tree
+            (c pool_coin_id
+                (list
+                    (list seller_puzhash
+                          reserve_paid
+                          (list seller_puzhash)))))
+    )
+
+    (defun-inline deed_commitment
+        (deed_launcher_id par_value_mojos asset_class property_id_canon collection_id_canon share_ppm)
+        (sha256tree
+            (list deed_launcher_id par_value_mojos asset_class property_id_canon collection_id_canon share_ppm))
+    )
+
+    (defun-inline deed_v3_deposit_message
+        (deed_coin_id deed_metadata_commitment par_value_mojos asset_class property_id_canon collection_id_canon share_ppm)
+        (concat PROTOCOL_PREFIX
+            (sha256tree
+                (list DEED_SPEND_POOL_DEPOSIT
+                    deed_coin_id
+                    deed_metadata_commitment
+                    par_value_mojos
+                    asset_class
+                    property_id_canon
+                    collection_id_canon
+                    share_ppm)))
+    )
+
+    (defun-inline deed_v3_redeem_message (deed_metadata_commitment p2_vault_hash)
+        (concat PROTOCOL_PREFIX
+            (sha256tree
+                (list DEED_SPEND_POOL_REDEEM
+                    deed_metadata_commitment
+                    p2_vault_hash)))
+    )
+
+    (defun-inline pool_deed_release_message
+        (pool_coin_id deed_coin_id deed_metadata_commitment p2_vault_hash)
+        (concat PROTOCOL_PREFIX
+            (sha256tree
+                (list pool_coin_id deed_coin_id deed_metadata_commitment p2_vault_hash)))
+    )
+
+    (defconstant SETTLEMENT_CLAIM_AUTH 0x53434c4d)  ;; "SCLM"
+
+    (defun-inline settlement_claim_message
+        (deed_coin_id deed_metadata_commitment burn_puzhash target_puzzle_hash)
+        (concat PROTOCOL_PREFIX
+            (sha256tree
+                (list SETTLEMENT_CLAIM_AUTH
+                    deed_coin_id
+                    deed_metadata_commitment
+                    burn_puzhash
+                    target_puzzle_hash)))
+    )
+
+    (defun-inline pool_v2_true_redemption_message
+        (deed_id deed_metadata_commitment p2_vault_hash collection_id_canon share_ppm collection_nav_mojos nav_root nav_registry_version
+         nav_registry_coin_id nav_registry_puzzle_hash deed_nav principal_tokens token_coin_id)
+        (concat PROTOCOL_PREFIX
+            (sha256tree
+                (list POOL_V2_TRUE_REDEMPTION_TAG
+                    deed_id
+                    deed_metadata_commitment
+                    p2_vault_hash
+                    collection_id_canon
+                    share_ppm
+                    collection_nav_mojos
+                    nav_root
+                    nav_registry_version
+                    nav_registry_coin_id
+                    nav_registry_puzzle_hash
+                    deed_nav
+                    principal_tokens
+                    token_coin_id)))
+    )
+
+    (defun-inline pool_v2_specific_deed_swap_message
+        (deed_id deed_metadata_commitment p2_vault_hash collection_id_canon share_ppm collection_nav_mojos nav_root nav_registry_version
+         nav_registry_coin_id nav_registry_puzzle_hash deed_nav principal_tokens protocol_fee_tokens governance_fee_tokens
+         treasury_reserve_puzhash protocol_treasury_puzhash governance_rewards_puzhash governance_rewards_root)
+        (concat PROTOCOL_PREFIX
+            (sha256tree
+                (list POOL_V2_SPECIFIC_DEED_SWAP_TAG
+                    deed_id
+                    deed_metadata_commitment
+                    p2_vault_hash
+                    collection_id_canon
+                    share_ppm
+                    collection_nav_mojos
+                    nav_root
+                    nav_registry_version
+                    nav_registry_coin_id
+                    nav_registry_puzzle_hash
+                    deed_nav
+                    principal_tokens
+                    protocol_fee_tokens
+                    governance_fee_tokens
+                    treasury_reserve_puzhash
+                    protocol_treasury_puzhash
+                    governance_rewards_puzhash
+                    governance_rewards_root)))
+    )
+
+    (defun-inline pool_v2_reserve_acquisition_message
+        (deed_id deed_metadata_commitment property_id_canon par_value_mojos asset_class collection_id_canon share_ppm collection_nav_mojos
+         nav_root nav_registry_version nav_registry_coin_id nav_registry_puzzle_hash deed_nav seller_token_price
+         reserve_paid fresh_mint seller_puzhash mint_token_coin_id)
+        (concat PROTOCOL_PREFIX
+            (sha256tree
+                (list POOL_V2_RESERVE_ACQUISITION_TAG
+                    deed_id
+                    deed_metadata_commitment
+                    property_id_canon
+                    par_value_mojos
+                    asset_class
+                    collection_id_canon
+                    share_ppm
+                    collection_nav_mojos
+                    nav_root
+                    nav_registry_version
+                    nav_registry_coin_id
+                    nav_registry_puzzle_hash
+                    deed_nav
+                    seller_token_price
+                    reserve_paid
+                    fresh_mint
+                    seller_puzhash
+                    mint_token_coin_id)))
+    )
+
+    (defun maybe_reserve_payment_condition
+        (CAT_MOD_HASH TOKEN_TAIL_HASH OFFER_MOD_HASH my_id seller_puzhash reserve_paid tail_conditions)
+        (if (> reserve_paid 0)
+            (c
+                (list ASSERT_PUZZLE_ANNOUNCEMENT
+                    (sha256
+                        (cat_offer_puzzle_hash CAT_MOD_HASH TOKEN_TAIL_HASH OFFER_MOD_HASH)
+                        (token_reserve_seller_payment_message my_id seller_puzhash reserve_paid)))
+                tail_conditions)
+            tail_conditions)
+    )
+
+    (defun maybe_fresh_mint_condition (mint_token_coin_id fresh_mint tail_conditions)
+        (if (> fresh_mint 0)
+            (token_authorization_conditions
+                (token_mint_message mint_token_coin_id fresh_mint)
+                tail_conditions)
+            tail_conditions)
+    )
+
+    ;; SPEND CASE 1 — DEPOSIT
+    ;; params =
+    ;;   (deed_coin_id deed_launcher_id deed_par_value asset_class
+    ;;    property_id_canon collection_id_canon share_ppm
+    ;;    depositor_puzhash token_coin_id)
+    (defun spend_deposit (MOD_HASH SINGLETON_STRUCT GOV_SINGLETON_STRUCT PROTOCOL_DID_PUZHASH TOKEN_TAIL_HASH CAT_MOD_HASH OFFER_MOD_HASH P2_VAULT_MOD_HASH VAULT_INNER_MOD_HASH NAV_REGISTRY_MOD_HASH NAV_REGISTRY_GOV_PUBKEY NAV_REGISTRY_LAUNCHER_ID MIN_NAV_REGISTRY_VERSION TRUSTED_TREASURY_RESERVE_PUZHASH TRUSTED_PROTOCOL_TREASURY_PUZHASH TRUSTED_GOVERNANCE_REWARDS_PUZHASH TRUSTED_GOVERNANCE_REWARDS_ROOT TRUSTED_ZKPASSPORT_BRIDGE_POLICY_HASH FP_SCALE
+                          POOL_STATUS TOTAL_VALUE_LOCKED DEED_COUNT TOTAL_POOL_TOKEN_SUPPLY TREASURY_RESERVE_TOKENS
+                          my_id my_inner_puzzlehash my_amount
+                          deed_coin_id deed_launcher_id deed_par_value asset_class
+                          property_id_canon collection_id_canon share_ppm
+                          depositor_puzhash token_coin_id)
+        (assert
+            (= POOL_STATUS POOL_ACTIVE)
+            (is-size-b32 deed_coin_id)
+            (is-size-b32 deed_launcher_id)
+            (is-uint64 deed_par_value)
+            (is-uint64 asset_class)
+            (is-size-b32 property_id_canon)
+            (is-size-b32 collection_id_canon)
+            (is-uint64 share_ppm)
+            (is-size-b32 depositor_puzhash)
+            (is-size-b32 token_coin_id)
+            (> deed_par_value 0)
+            (> share_ppm 0)
+            (gte SHARE_PPM_DENOMINATOR share_ppm)
+            (> (compute_token_amount deed_par_value FP_SCALE) 0)
+            (is-uint64 TOTAL_POOL_TOKEN_SUPPLY)
+            (is-uint64 TREASURY_RESERVE_TOKENS)
+            (gte TOTAL_POOL_TOKEN_SUPPLY TREASURY_RESERVE_TOKENS)
+            (is-uint64 (+ TOTAL_POOL_TOKEN_SUPPLY (compute_token_amount deed_par_value FP_SCALE)))
+            (c
+                (list CREATE_COIN
+                    (compute_inner_ph MOD_HASH SINGLETON_STRUCT GOV_SINGLETON_STRUCT PROTOCOL_DID_PUZHASH TOKEN_TAIL_HASH CAT_MOD_HASH OFFER_MOD_HASH P2_VAULT_MOD_HASH VAULT_INNER_MOD_HASH NAV_REGISTRY_MOD_HASH NAV_REGISTRY_GOV_PUBKEY NAV_REGISTRY_LAUNCHER_ID MIN_NAV_REGISTRY_VERSION TRUSTED_TREASURY_RESERVE_PUZHASH TRUSTED_PROTOCOL_TREASURY_PUZHASH TRUSTED_GOVERNANCE_REWARDS_PUZHASH TRUSTED_GOVERNANCE_REWARDS_ROOT TRUSTED_ZKPASSPORT_BRIDGE_POLICY_HASH FP_SCALE
+                                      POOL_STATUS
+                                      (+ TOTAL_VALUE_LOCKED deed_par_value)
+                                      (+ DEED_COUNT 1)
+                                      (+ TOTAL_POOL_TOKEN_SUPPLY (compute_token_amount deed_par_value FP_SCALE))
+                                      TREASURY_RESERVE_TOKENS)
+                    my_amount)
+                (c
+                    (list ASSERT_COIN_ANNOUNCEMENT
+                        (sha256 deed_coin_id
+                            (deed_v3_deposit_message
+                                deed_coin_id
+                                (deed_commitment
+                                    deed_launcher_id deed_par_value asset_class
+                                    property_id_canon collection_id_canon share_ppm)
+                                deed_par_value asset_class property_id_canon collection_id_canon share_ppm)))
+                    (token_authorization_conditions
+                        (token_mint_message token_coin_id (compute_token_amount deed_par_value FP_SCALE))
+                        (c
+                            (list SEND_MESSAGE 0x10
+                                (concat PROTOCOL_PREFIX (sha256tree (list POOL_SPEND_DEPOSIT deed_coin_id deed_par_value))))
+                            (c
+                                (list REMARK
+                                    PROTOCOL_PREFIX
+                                    POOL_STATUS
+                                    (+ TOTAL_VALUE_LOCKED deed_par_value)
+                                    (+ DEED_COUNT 1)
+                                    (+ TOTAL_POOL_TOKEN_SUPPLY (compute_token_amount deed_par_value FP_SCALE))
+                                    TREASURY_RESERVE_TOKENS)
+                                (identity_conditions SINGLETON_STRUCT my_id my_inner_puzzlehash my_amount)
+                            )
+                        )
+                    )
+                )
+            )
+        )
+    )
+
+    ;; SPEND CASE 2 — REDEEM
+    ;; Computes p2_vault destination from vault_launcher_id — vault containment enforced.
+    ;; params = (deed_id deed_par_value vault_launcher_id launcher_puzzle_hash token_coin_id)
+    (defun spend_redeem (MOD_HASH SINGLETON_STRUCT GOV_SINGLETON_STRUCT PROTOCOL_DID_PUZHASH TOKEN_TAIL_HASH CAT_MOD_HASH OFFER_MOD_HASH P2_VAULT_MOD_HASH VAULT_INNER_MOD_HASH NAV_REGISTRY_MOD_HASH NAV_REGISTRY_GOV_PUBKEY NAV_REGISTRY_LAUNCHER_ID MIN_NAV_REGISTRY_VERSION TRUSTED_TREASURY_RESERVE_PUZHASH TRUSTED_PROTOCOL_TREASURY_PUZHASH TRUSTED_GOVERNANCE_REWARDS_PUZHASH TRUSTED_GOVERNANCE_REWARDS_ROOT TRUSTED_ZKPASSPORT_BRIDGE_POLICY_HASH FP_SCALE
+                         POOL_STATUS TOTAL_VALUE_LOCKED DEED_COUNT TOTAL_POOL_TOKEN_SUPPLY TREASURY_RESERVE_TOKENS
+                         my_id my_inner_puzzlehash my_amount
+                         deed_id deed_par_value vault_launcher_id launcher_puzzle_hash token_coin_id)
+        (assert
+            (= POOL_STATUS POOL_ACTIVE)
+            (is-size-b32 deed_id)
+            (is-uint64 deed_par_value)
+            (is-size-b32 vault_launcher_id)
+            (is-size-b32 launcher_puzzle_hash)
+            (is-size-b32 token_coin_id)
+            (> DEED_COUNT 0)
+            (gte TOTAL_VALUE_LOCKED deed_par_value)
+            (> (compute_token_amount deed_par_value FP_SCALE) 0)
+            (is-uint64 TOTAL_POOL_TOKEN_SUPPLY)
+            (is-uint64 TREASURY_RESERVE_TOKENS)
+            (gte TOTAL_POOL_TOKEN_SUPPLY TREASURY_RESERVE_TOKENS)
+            (gte TOTAL_POOL_TOKEN_SUPPLY (compute_token_amount deed_par_value FP_SCALE))
+            (gte (- TOTAL_POOL_TOKEN_SUPPLY (compute_token_amount deed_par_value FP_SCALE)) TREASURY_RESERVE_TOKENS)
+            (c
+                (list CREATE_COIN
+                    (compute_inner_ph MOD_HASH SINGLETON_STRUCT GOV_SINGLETON_STRUCT PROTOCOL_DID_PUZHASH TOKEN_TAIL_HASH CAT_MOD_HASH OFFER_MOD_HASH P2_VAULT_MOD_HASH VAULT_INNER_MOD_HASH NAV_REGISTRY_MOD_HASH NAV_REGISTRY_GOV_PUBKEY NAV_REGISTRY_LAUNCHER_ID MIN_NAV_REGISTRY_VERSION TRUSTED_TREASURY_RESERVE_PUZHASH TRUSTED_PROTOCOL_TREASURY_PUZHASH TRUSTED_GOVERNANCE_REWARDS_PUZHASH TRUSTED_GOVERNANCE_REWARDS_ROOT TRUSTED_ZKPASSPORT_BRIDGE_POLICY_HASH FP_SCALE
+                                      POOL_STATUS
+                                      (- TOTAL_VALUE_LOCKED deed_par_value)
+                                      (- DEED_COUNT 1)
+                                      (- TOTAL_POOL_TOKEN_SUPPLY (compute_token_amount deed_par_value FP_SCALE))
+                                      TREASURY_RESERVE_TOKENS)
+                    my_amount)
+                (token_authorization_conditions
+                    (token_melt_message token_coin_id (compute_token_amount deed_par_value FP_SCALE))
+                    (c
+                        ;; Send the computed p2_vault puzzle hash (not a free param)
+                        (list SEND_MESSAGE 0x10
+                            (concat PROTOCOL_PREFIX (sha256tree (list POOL_SPEND_REDEEM deed_id
+                                (curry_hashes P2_VAULT_MOD_HASH
+                                    (sha256 1 (f SINGLETON_STRUCT))
+                                    (sha256 1 vault_launcher_id)
+                                    (sha256 1 launcher_puzzle_hash))))))
+                        (c
+                            (list REMARK
+                                PROTOCOL_PREFIX
+                                POOL_STATUS
+                                (- TOTAL_VALUE_LOCKED deed_par_value)
+                                (- DEED_COUNT 1)
+                                (- TOTAL_POOL_TOKEN_SUPPLY (compute_token_amount deed_par_value FP_SCALE))
+                                TREASURY_RESERVE_TOKENS)
+                            (identity_conditions SINGLETON_STRUCT my_id my_inner_puzzlehash my_amount)
+                        )
+                    )
+                )
+            )
+        )
+    )
+
+    ;; SPEND CASE 3 — SETTLEMENT (batch)
+    ;; params = (splitxch_root_hash total_settlement_amount deed_releases gov_inner_puzhash)
+    ;; deed_releases =
+    ;;   ((deed_coin_id_1 deed_commitment_1 burn_ph_1 target_ph_1)
+    ;;    (deed_coin_id_2 deed_commitment_2 burn_ph_2 target_ph_2) ...)
+    ;; Batch settles entire collection: creates splitxch root coin (funded by
+    ;; external deposit in same bundle), creates per-deed release announcements
+    ;; so each p2_pool coin can be spent.  State → (POOL_ACTIVE, 0, 0).
+    ;; Governance message embeds DEED_COUNT and sha256tree(deed_releases) —
+    ;; pool verifies both by recomputing the release-set hash locally and
+    ;; matching the RECEIVE_MESSAGE body.
+
+    ;; Helper: count list length (verify deed_releases matches DEED_COUNT)
+    (defun count_list (lst)
+        (if lst (+ 1 (count_list (r lst))) 0)
+    )
+
+    (defun valid_settlement_release (release)
+        (and
+            (is-size-b32 (nth 0 release))
+            (is-size-b32 (nth 1 release))
+            (is-size-b32 (nth 2 release))
+            (is-size-b32 (nth 3 release)))
+    )
+
+    (defun valid_settlement_releases (releases)
+        (if releases
+            (and
+                (valid_settlement_release (f releases))
+                (valid_settlement_releases (r releases)))
+            1)
+    )
+
+    ;; Helper: pair every release with the exact deposited deed coin.  The
+    ;; pool announcement authorizes p2_pool_v2, while the coin-announcement
+    ;; assertion proves that escrow coin was actually co-spent.
+    ;; When deed_releases is exhausted, returns tail_conditions (identity + remark).
+    ;; Format matches p2_pool's ASSERT_PUZZLE_ANNOUNCEMENT expectation.
+    (defun build_release_and_tail (my_id deed_releases tail_conditions)
+        (if deed_releases
+            (c
+                (list CREATE_PUZZLE_ANNOUNCEMENT
+                    (pool_deed_release_message
+                        my_id
+                        (nth 0 (f deed_releases))
+                        (nth 1 (f deed_releases))
+                        (nth 2 (f deed_releases))))
+                (c
+                    (list CREATE_COIN_ANNOUNCEMENT
+                        (settlement_claim_message
+                            (nth 0 (f deed_releases))
+                            (nth 1 (f deed_releases))
+                            (nth 2 (f deed_releases))
+                            (nth 3 (f deed_releases))))
+                    (c
+                        (list ASSERT_COIN_ANNOUNCEMENT
+                            (sha256
+                                (nth 0 (f deed_releases))
+                                (deed_v3_redeem_message
+                                    (nth 1 (f deed_releases))
+                                    (nth 2 (f deed_releases)))))
+                        (build_release_and_tail my_id (r deed_releases) tail_conditions)))
+            )
+            tail_conditions
+        )
+    )
+
+    (defun spend_settlement (MOD_HASH SINGLETON_STRUCT GOV_SINGLETON_STRUCT PROTOCOL_DID_PUZHASH TOKEN_TAIL_HASH CAT_MOD_HASH OFFER_MOD_HASH P2_VAULT_MOD_HASH VAULT_INNER_MOD_HASH NAV_REGISTRY_MOD_HASH NAV_REGISTRY_GOV_PUBKEY NAV_REGISTRY_LAUNCHER_ID MIN_NAV_REGISTRY_VERSION TRUSTED_TREASURY_RESERVE_PUZHASH TRUSTED_PROTOCOL_TREASURY_PUZHASH TRUSTED_GOVERNANCE_REWARDS_PUZHASH TRUSTED_GOVERNANCE_REWARDS_ROOT TRUSTED_ZKPASSPORT_BRIDGE_POLICY_HASH FP_SCALE
+                             DEED_COUNT TOTAL_POOL_TOKEN_SUPPLY TREASURY_RESERVE_TOKENS
+                             my_id my_inner_puzzlehash my_amount
+                             splitxch_root_hash total_settlement_amount deed_releases
+                             gov_inner_puzhash)
+        (assert
+            (is-size-b32 splitxch_root_hash)
+            (is-uint64 total_settlement_amount)
+            (is-size-b32 gov_inner_puzhash)
+            (> DEED_COUNT 0)
+            (> total_settlement_amount 0)
+            (is-uint64 TOTAL_POOL_TOKEN_SUPPLY)
+            (is-uint64 TREASURY_RESERVE_TOKENS)
+            (gte TOTAL_POOL_TOKEN_SUPPLY TREASURY_RESERVE_TOKENS)
+            (= (count_list deed_releases) DEED_COUNT)
+            (valid_settlement_releases deed_releases)
+            ;; ── V1-CANON-019: reject duplicate deed_id in releases ───────
+            ;; Without this guard, a settlement orchestrator could submit
+            ;; deed_releases = [(D1, C1, B1, T1), (D1, C1, B1, T1), ...] for a
+            ;; 3-deed pool: length check passes, but the two D1 entries
+            ;; produce byte-identical CREATE_PUZZLE_ANNOUNCEMENT bodies,
+            ;; which Chia consensus deduplicates by announcement_id.
+            ;; D3 then has no matching announcement and is permanently
+            ;; stranded (DEED_COUNT resets to 0 and no future settlement
+            ;; can re-emit D3's release).  Governance now also signs
+            ;; sha256tree(deed_releases), so any post-approval mutation fails
+            ;; the RECEIVE_MESSAGE pairing below.  This duplicate guard remains
+            ;; as a direct pool-side invariant and clearer failure mode.
+            (has-no-duplicate-firsts deed_releases ())
+            (c
+                ;; State recreation: pool fully settled
+                (list CREATE_COIN
+                    (compute_inner_ph MOD_HASH SINGLETON_STRUCT GOV_SINGLETON_STRUCT PROTOCOL_DID_PUZHASH TOKEN_TAIL_HASH CAT_MOD_HASH OFFER_MOD_HASH P2_VAULT_MOD_HASH VAULT_INNER_MOD_HASH NAV_REGISTRY_MOD_HASH NAV_REGISTRY_GOV_PUBKEY NAV_REGISTRY_LAUNCHER_ID MIN_NAV_REGISTRY_VERSION TRUSTED_TREASURY_RESERVE_PUZHASH TRUSTED_PROTOCOL_TREASURY_PUZHASH TRUSTED_GOVERNANCE_REWARDS_PUZHASH TRUSTED_GOVERNANCE_REWARDS_ROOT TRUSTED_ZKPASSPORT_BRIDGE_POLICY_HASH FP_SCALE
+                                      POOL_ACTIVE 0 0 TOTAL_POOL_TOKEN_SUPPLY TREASURY_RESERVE_TOKENS)
+                    my_amount)
+                (c
+                    ;; Create the splitxch distribution root coin (funded by external deposit)
+                    (list CREATE_COIN splitxch_root_hash total_settlement_amount)
+                    (c
+                        ;; Receive batch settlement message from governance
+                        (list RECEIVE_MESSAGE 0x10
+                            (concat PROTOCOL_PREFIX
+                                (sha256tree (list 0x53455454
+                                    splitxch_root_hash
+                                    total_settlement_amount
+                                    DEED_COUNT
+                                    (sha256tree deed_releases))))
+                            (calculate_full_puzzle_hash GOV_SINGLETON_STRUCT gov_inner_puzhash))
+                        (c
+                            (list CREATE_PUZZLE_ANNOUNCEMENT
+                                (concat PROTOCOL_PREFIX
+                                    (sha256tree (list POOL_SPEND_SETTLEMENT
+                                        splitxch_root_hash
+                                        total_settlement_amount
+                                        DEED_COUNT
+                                        (sha256tree deed_releases)))))
+                            (c
+                                (list REMARK PROTOCOL_PREFIX POOL_ACTIVE 0 0 TOTAL_POOL_TOKEN_SUPPLY TREASURY_RESERVE_TOKENS)
+                                (build_release_and_tail my_id deed_releases
+                                    (identity_conditions SINGLETON_STRUCT my_id my_inner_puzzlehash my_amount))
+                            )
+                        )
+                    )
+                )
+            )
+        )
+    )
+
+    ;; SPEND CASE 4 — GOVERNANCE
+    ;; params = (new_status gov_inner_puzhash)
+    ;;
+    ;; LOW-10 fix (2026-04-26): validate new_status is in the canonical set
+    ;; {0=FROZEN, 1=ACTIVE}.  Pre-fix, governance could write any integer
+    ;; into POOL_STATUS, permanently bricking spend cases that check
+    ;; (= POOL_STATUS POOL_ACTIVE).
+    (defun spend_governance (MOD_HASH SINGLETON_STRUCT GOV_SINGLETON_STRUCT PROTOCOL_DID_PUZHASH TOKEN_TAIL_HASH CAT_MOD_HASH OFFER_MOD_HASH P2_VAULT_MOD_HASH VAULT_INNER_MOD_HASH NAV_REGISTRY_MOD_HASH NAV_REGISTRY_GOV_PUBKEY NAV_REGISTRY_LAUNCHER_ID MIN_NAV_REGISTRY_VERSION TRUSTED_TREASURY_RESERVE_PUZHASH TRUSTED_PROTOCOL_TREASURY_PUZHASH TRUSTED_GOVERNANCE_REWARDS_PUZHASH TRUSTED_GOVERNANCE_REWARDS_ROOT TRUSTED_ZKPASSPORT_BRIDGE_POLICY_HASH FP_SCALE
+                             TOTAL_VALUE_LOCKED DEED_COUNT TOTAL_POOL_TOKEN_SUPPLY TREASURY_RESERVE_TOKENS
+                             my_id my_inner_puzzlehash my_amount
+                             new_status gov_inner_puzhash)
+        (assert
+            (is-size-b32 gov_inner_puzhash)
+            ;; LOW-10 fix: new_status MUST be 0 (FROZEN) or 1 (ACTIVE).
+            (any (= new_status 0) (= new_status 1))
+            (is-uint64 TOTAL_POOL_TOKEN_SUPPLY)
+            (is-uint64 TREASURY_RESERVE_TOKENS)
+            (gte TOTAL_POOL_TOKEN_SUPPLY TREASURY_RESERVE_TOKENS)
+            (c
+                (list CREATE_COIN
+                    (compute_inner_ph MOD_HASH SINGLETON_STRUCT GOV_SINGLETON_STRUCT PROTOCOL_DID_PUZHASH TOKEN_TAIL_HASH CAT_MOD_HASH OFFER_MOD_HASH P2_VAULT_MOD_HASH VAULT_INNER_MOD_HASH NAV_REGISTRY_MOD_HASH NAV_REGISTRY_GOV_PUBKEY NAV_REGISTRY_LAUNCHER_ID MIN_NAV_REGISTRY_VERSION TRUSTED_TREASURY_RESERVE_PUZHASH TRUSTED_PROTOCOL_TREASURY_PUZHASH TRUSTED_GOVERNANCE_REWARDS_PUZHASH TRUSTED_GOVERNANCE_REWARDS_ROOT TRUSTED_ZKPASSPORT_BRIDGE_POLICY_HASH FP_SCALE
+                                      new_status TOTAL_VALUE_LOCKED DEED_COUNT TOTAL_POOL_TOKEN_SUPPLY TREASURY_RESERVE_TOKENS)
+                    my_amount)
+                (c
+                    (list RECEIVE_MESSAGE 0x10
+                        (concat PROTOCOL_PREFIX (sha256tree (list 0x474f5620 new_status)))
+                        (calculate_full_puzzle_hash GOV_SINGLETON_STRUCT gov_inner_puzhash))
+                    (c
+                        (list REMARK PROTOCOL_PREFIX new_status TOTAL_VALUE_LOCKED DEED_COUNT TOTAL_POOL_TOKEN_SUPPLY TREASURY_RESERVE_TOKENS)
+                        (identity_conditions SINGLETON_STRUCT my_id my_inner_puzzlehash my_amount)
+                    )
+                )
+            )
+        )
+    )
+
+    ;; SPEND CASE 5 — GENERATE_OFFER (secondary sale via Chia native offer settlement)
+    ;; Accepts token payment via ASSERT_PUZZLE_ANNOUNCEMENT against CAT(TOKEN_TAIL, OFFER_MOD),
+    ;; releases deed to buyer's p2_vault, decrements pool state.
+    ;; Tokens always go to PROTOCOL_DID_PUZHASH (protocol treasury) — enforced on-chain.
+    ;; Buyer destination computed from P2_VAULT_MOD_HASH — vault containment enforced.
+    ;; params = (deed_id deed_par_value buyer_vault_launcher_id launcher_puzzle_hash)
+    (defun spend_generate_offer (MOD_HASH SINGLETON_STRUCT GOV_SINGLETON_STRUCT PROTOCOL_DID_PUZHASH TOKEN_TAIL_HASH CAT_MOD_HASH OFFER_MOD_HASH P2_VAULT_MOD_HASH VAULT_INNER_MOD_HASH NAV_REGISTRY_MOD_HASH NAV_REGISTRY_GOV_PUBKEY NAV_REGISTRY_LAUNCHER_ID MIN_NAV_REGISTRY_VERSION TRUSTED_TREASURY_RESERVE_PUZHASH TRUSTED_PROTOCOL_TREASURY_PUZHASH TRUSTED_GOVERNANCE_REWARDS_PUZHASH TRUSTED_GOVERNANCE_REWARDS_ROOT TRUSTED_ZKPASSPORT_BRIDGE_POLICY_HASH FP_SCALE
+                                 POOL_STATUS TOTAL_VALUE_LOCKED DEED_COUNT TOTAL_POOL_TOKEN_SUPPLY TREASURY_RESERVE_TOKENS
+                                 my_id my_inner_puzzlehash my_amount
+                                 deed_id deed_par_value buyer_vault_launcher_id launcher_puzzle_hash)
+        (assert
+            (= POOL_STATUS POOL_ACTIVE)
+            (is-size-b32 deed_id)
+            (is-uint64 deed_par_value)
+            (is-size-b32 buyer_vault_launcher_id)
+            (is-size-b32 launcher_puzzle_hash)
+            (> deed_par_value 0)
+            (> DEED_COUNT 0)
+            (gte TOTAL_VALUE_LOCKED deed_par_value)
+            (is-uint64 TOTAL_POOL_TOKEN_SUPPLY)
+            (is-uint64 TREASURY_RESERVE_TOKENS)
+            (gte TOTAL_POOL_TOKEN_SUPPLY TREASURY_RESERVE_TOKENS)
+            (c
+                ;; State recreation: deed leaves pool
+                (list CREATE_COIN
+                    (compute_inner_ph MOD_HASH SINGLETON_STRUCT GOV_SINGLETON_STRUCT PROTOCOL_DID_PUZHASH TOKEN_TAIL_HASH CAT_MOD_HASH OFFER_MOD_HASH P2_VAULT_MOD_HASH VAULT_INNER_MOD_HASH NAV_REGISTRY_MOD_HASH NAV_REGISTRY_GOV_PUBKEY NAV_REGISTRY_LAUNCHER_ID MIN_NAV_REGISTRY_VERSION TRUSTED_TREASURY_RESERVE_PUZHASH TRUSTED_PROTOCOL_TREASURY_PUZHASH TRUSTED_GOVERNANCE_REWARDS_PUZHASH TRUSTED_GOVERNANCE_REWARDS_ROOT TRUSTED_ZKPASSPORT_BRIDGE_POLICY_HASH FP_SCALE
+                                      POOL_STATUS
+                                      (- TOTAL_VALUE_LOCKED deed_par_value)
+                                      (- DEED_COUNT 1)
+                                      TOTAL_POOL_TOKEN_SUPPLY
+                                      TREASURY_RESERVE_TOKENS)
+                    my_amount)
+                (c
+                    ;; Verify token payment via Chia offer settlement
+                    (list ASSERT_PUZZLE_ANNOUNCEMENT
+                        (sha256
+                            (curry_hashes CAT_MOD_HASH
+                                (sha256 1 CAT_MOD_HASH)
+                                (sha256 1 TOKEN_TAIL_HASH)
+                                OFFER_MOD_HASH)
+                            (sha256tree
+                                (c my_id
+                                    (list
+                                        (list PROTOCOL_DID_PUZHASH
+                                              (compute_token_amount deed_par_value FP_SCALE)
+                                              (list PROTOCOL_DID_PUZHASH)))))))
+                    (c
+                        ;; ── V1-CANON-020: cross-coin announcement pairing ────
+                        ;; vault_singleton_inner.clsp::spend_accept_offer asserts a
+                        ;; CREATE_PUZZLE_ANNOUNCEMENT from THIS coin with body
+                        ;;
+                        ;;   PROTOCOL_PREFIX || sha256tree(list
+                        ;;       POOL_SPEND_GENERATE_OFFER
+                        ;;       deed_launcher_id
+                        ;;       token_amount)
+                        ;;
+                        ;; before the buyer's vault will accept the deed.  Without
+                        ;; this emission, the vault-mediated secondary purchase
+                        ;; bundle fails atomically at consensus (the vault's
+                        ;; ASSERT_PUZZLE_ANNOUNCEMENT has no matching emission).
+                        ;; The vault's `deed_launcher_id` and `token_amount` map
+                        ;; to the pool's `deed_id` and `(compute_token_amount
+                        ;; deed_par_value FP_SCALE)` respectively.
+                        (list CREATE_PUZZLE_ANNOUNCEMENT
+                            (concat PROTOCOL_PREFIX
+                                (sha256tree (list POOL_SPEND_GENERATE_OFFER
+                                                  deed_id
+                                                  (compute_token_amount deed_par_value FP_SCALE)))))
+                        (c
+                            ;; Tell deed to release to buyer's p2_vault (vault containment)
+                            (list SEND_MESSAGE 0x10
+                                (concat PROTOCOL_PREFIX (sha256tree (list POOL_SPEND_REDEEM deed_id
+                                    (curry_hashes P2_VAULT_MOD_HASH
+                                        (sha256 1 (f SINGLETON_STRUCT))
+                                        (sha256 1 buyer_vault_launcher_id)
+                                        (sha256 1 launcher_puzzle_hash))))))
+                            (c
+                                (list REMARK
+                                    PROTOCOL_PREFIX
+                                    POOL_STATUS
+                                    (- TOTAL_VALUE_LOCKED deed_par_value)
+                                    (- DEED_COUNT 1)
+                                    TOTAL_POOL_TOKEN_SUPPLY
+                                    TREASURY_RESERVE_TOKENS)
+                                (identity_conditions SINGLETON_STRUCT my_id my_inner_puzzlehash my_amount)
+                            )
+                        )
+                    )
+                )
+            )
+        )
+    )
+
+    ;; SPEND CASE 6 — V2 SPECIFIC DEED SWAP
+    ;; A buyer pays pool CATs for a specific deed.  The principal moves into
+    ;; locked treasury reserve, protocol/governance fees are paid out, total
+    ;; pool-token supply stays unchanged, and circulating supply decreases by
+    ;; the principal.
+    ;;
+    ;; params =
+    ;;   (deed_coin_id deed_launcher_id par_value_mojos asset_class property_id_canon
+    ;;    collection_id_canon share_ppm collection_nav_mojos
+    ;;    nav_root nav_registry_version nav_registry_coin_id nav_registry_puzzle_hash
+    ;;    buyer_vault_launcher_id launcher_puzzle_hash buyer_vault_coin_id
+    ;;    buyer_owner_pubkey buyer_auth_type buyer_members_merkle_root
+    ;;    buyer_identity_attest_root buyer_bridge_policy_hash
+    ;;    treasury_reserve_puzhash protocol_treasury_puzhash
+    ;;    governance_rewards_puzhash governance_rewards_root)
+    ;;
+    ;; Total NAV, deed count, total supply, and treasury reserve are all
+    ;; curried pool state fields.
+    (defun spend_v2_specific_deed_swap (MOD_HASH SINGLETON_STRUCT GOV_SINGLETON_STRUCT PROTOCOL_DID_PUZHASH TOKEN_TAIL_HASH CAT_MOD_HASH OFFER_MOD_HASH P2_VAULT_MOD_HASH VAULT_INNER_MOD_HASH NAV_REGISTRY_MOD_HASH NAV_REGISTRY_GOV_PUBKEY NAV_REGISTRY_LAUNCHER_ID MIN_NAV_REGISTRY_VERSION TRUSTED_TREASURY_RESERVE_PUZHASH TRUSTED_PROTOCOL_TREASURY_PUZHASH TRUSTED_GOVERNANCE_REWARDS_PUZHASH TRUSTED_GOVERNANCE_REWARDS_ROOT TRUSTED_ZKPASSPORT_BRIDGE_POLICY_HASH FP_SCALE
+                                        POOL_STATUS TOTAL_VALUE_LOCKED DEED_COUNT TOTAL_POOL_TOKEN_SUPPLY TREASURY_RESERVE_TOKENS
+                                        my_id my_inner_puzzlehash my_amount
+                                        deed_id deed_launcher_id par_value_mojos asset_class property_id_canon
+                                        collection_id_canon share_ppm collection_nav_mojos
+                                        nav_root nav_registry_version nav_registry_coin_id nav_registry_puzzle_hash
+                                        buyer_vault_launcher_id launcher_puzzle_hash
+                                        buyer_vault_coin_id buyer_owner_pubkey buyer_auth_type buyer_members_merkle_root
+                                        buyer_identity_attest_root buyer_bridge_policy_hash
+                                        treasury_reserve_puzhash protocol_treasury_puzhash
+                                        governance_rewards_puzhash governance_rewards_root)
+        (assert
+            (= POOL_STATUS POOL_ACTIVE)
+            (is-size-b32 deed_id)
+            (is-size-b32 deed_launcher_id)
+            (is-uint64 par_value_mojos)
+            (is-uint64 asset_class)
+            (is-size-b32 property_id_canon)
+            (is-size-b32 collection_id_canon)
+            (is-uint64 share_ppm)
+            (is-uint64 collection_nav_mojos)
+            (is-size-b32 nav_root)
+            (is-uint64 nav_registry_version)
+            (gte nav_registry_version MIN_NAV_REGISTRY_VERSION)
+            (is-size-b32 nav_registry_coin_id)
+            (is-size-b32 nav_registry_puzzle_hash)
+            (is-uint64 TOTAL_POOL_TOKEN_SUPPLY)
+            (is-uint64 TREASURY_RESERVE_TOKENS)
+            (is-size-b32 buyer_vault_launcher_id)
+            (is-size-b32 launcher_puzzle_hash)
+            (is-size-b32 buyer_vault_coin_id)
+            (is-uint64 buyer_auth_type)
+            (is-size-b32 buyer_members_merkle_root)
+            (is-size-b32 buyer_identity_attest_root)
+            (not (= buyer_identity_attest_root ZKPASSPORT_EMPTY_ATTEST_ROOT))
+            (is-size-b32 buyer_bridge_policy_hash)
+            (not (= buyer_bridge_policy_hash ZERO_B32))
+            (= buyer_bridge_policy_hash TRUSTED_ZKPASSPORT_BRIDGE_POLICY_HASH)
+            (is-size-b32 treasury_reserve_puzhash)
+            (is-size-b32 protocol_treasury_puzhash)
+            (is-size-b32 governance_rewards_puzhash)
+            (is-size-b32 governance_rewards_root)
+            (= nav_registry_puzzle_hash
+                (trusted_nav_registry_puzzle_hash
+                    SINGLETON_STRUCT
+                    NAV_REGISTRY_MOD_HASH
+                    NAV_REGISTRY_GOV_PUBKEY
+                    NAV_REGISTRY_LAUNCHER_ID
+                    nav_root
+                    nav_registry_version))
+            (= treasury_reserve_puzhash TRUSTED_TREASURY_RESERVE_PUZHASH)
+            (= protocol_treasury_puzhash TRUSTED_PROTOCOL_TREASURY_PUZHASH)
+            (= governance_rewards_puzhash TRUSTED_GOVERNANCE_REWARDS_PUZHASH)
+            (= governance_rewards_root TRUSTED_GOVERNANCE_REWARDS_ROOT)
+            (> TOTAL_VALUE_LOCKED 0)
+            (> DEED_COUNT 0)
+            (> collection_nav_mojos 0)
+            (> share_ppm 0)
+            (gte SHARE_PPM_DENOMINATOR share_ppm)
+            (gte TOTAL_POOL_TOKEN_SUPPLY TREASURY_RESERVE_TOKENS)
+            (> (- TOTAL_POOL_TOKEN_SUPPLY TREASURY_RESERVE_TOKENS) 0)
+            (gte TOTAL_VALUE_LOCKED (compute_deed_nav collection_nav_mojos share_ppm))
+            (gte TOTAL_POOL_TOKEN_SUPPLY
+                (+ TREASURY_RESERVE_TOKENS
+                    (compute_principal_tokens
+                        (compute_deed_nav collection_nav_mojos share_ppm)
+                        (- TOTAL_POOL_TOKEN_SUPPLY TREASURY_RESERVE_TOKENS)
+                        TOTAL_VALUE_LOCKED)))
+            (c
+                (list CREATE_COIN
+                    (compute_inner_ph MOD_HASH SINGLETON_STRUCT GOV_SINGLETON_STRUCT PROTOCOL_DID_PUZHASH TOKEN_TAIL_HASH CAT_MOD_HASH OFFER_MOD_HASH P2_VAULT_MOD_HASH VAULT_INNER_MOD_HASH NAV_REGISTRY_MOD_HASH NAV_REGISTRY_GOV_PUBKEY NAV_REGISTRY_LAUNCHER_ID MIN_NAV_REGISTRY_VERSION TRUSTED_TREASURY_RESERVE_PUZHASH TRUSTED_PROTOCOL_TREASURY_PUZHASH TRUSTED_GOVERNANCE_REWARDS_PUZHASH TRUSTED_GOVERNANCE_REWARDS_ROOT TRUSTED_ZKPASSPORT_BRIDGE_POLICY_HASH FP_SCALE
+                                      POOL_STATUS
+                                      (- TOTAL_VALUE_LOCKED (compute_deed_nav collection_nav_mojos share_ppm))
+                                      (- DEED_COUNT 1)
+                                      TOTAL_POOL_TOKEN_SUPPLY
+                                      (+ TREASURY_RESERVE_TOKENS
+                                          (compute_principal_tokens
+                                              (compute_deed_nav collection_nav_mojos share_ppm)
+                                              (- TOTAL_POOL_TOKEN_SUPPLY TREASURY_RESERVE_TOKENS)
+                                              TOTAL_VALUE_LOCKED)))
+                    my_amount)
+                (c
+                    ;; Require governed NAV evidence in the same bundle.
+                    (list ASSERT_PUZZLE_ANNOUNCEMENT
+                        (sha256
+                            nav_registry_puzzle_hash
+                            (nav_evidence_message collection_id_canon collection_nav_mojos nav_root nav_registry_version)))
+                    (c
+                        ;; Require the exact smart deed coin to announce the
+                        ;; collection/share metadata it is releasing.
+                        (list ASSERT_COIN_ANNOUNCEMENT
+                            (sha256
+                                deed_id
+                                (deed_v3_redeem_message
+                                    (deed_commitment
+                                        deed_launcher_id par_value_mojos asset_class
+                                        property_id_canon collection_id_canon share_ppm)
+                                    (compute_p2_vault_hash P2_VAULT_MOD_HASH SINGLETON_STRUCT buyer_vault_launcher_id launcher_puzzle_hash)
+                                )))
+                        (c
+                            ;; Verify pool-token payment fanout via Chia offer settlement:
+                            ;; principal -> treasury reserve, 0.3% -> protocol treasury,
+                            ;; 0.7% -> SGT rewards puzzle with the claim root in memos.
+                            (list ASSERT_PUZZLE_ANNOUNCEMENT
+                                (sha256
+                                    (cat_offer_puzzle_hash CAT_MOD_HASH TOKEN_TAIL_HASH OFFER_MOD_HASH)
+                                    (token_swap_payment_message
+                                        my_id
+                                        treasury_reserve_puzhash
+                                        (compute_principal_tokens
+                                            (compute_deed_nav collection_nav_mojos share_ppm)
+                                            (- TOTAL_POOL_TOKEN_SUPPLY TREASURY_RESERVE_TOKENS)
+                                            TOTAL_VALUE_LOCKED)
+                                        protocol_treasury_puzhash
+                                        (compute_protocol_fee
+                                            (compute_principal_tokens
+                                                (compute_deed_nav collection_nav_mojos share_ppm)
+                                                (- TOTAL_POOL_TOKEN_SUPPLY TREASURY_RESERVE_TOKENS)
+                                                TOTAL_VALUE_LOCKED))
+                                        governance_rewards_puzhash
+                                        (compute_governance_fee
+                                            (compute_principal_tokens
+                                                (compute_deed_nav collection_nav_mojos share_ppm)
+                                                (- TOTAL_POOL_TOKEN_SUPPLY TREASURY_RESERVE_TOKENS)
+                                                TOTAL_VALUE_LOCKED))
+                                        governance_rewards_root)))
+                            (c
+                                ;; Require the buyer's canonical, enrolled vault singleton
+                                ;; to authorize this exact deed acquisition.
+                                (list ASSERT_PUZZLE_ANNOUNCEMENT
+                                    (sha256
+                                        (canonical_vault_full_hash
+                                            VAULT_INNER_MOD_HASH SINGLETON_STRUCT
+                                            buyer_vault_launcher_id launcher_puzzle_hash
+                                            buyer_owner_pubkey buyer_auth_type buyer_members_merkle_root
+                                            buyer_identity_attest_root buyer_bridge_policy_hash)
+                                        (vault_accept_offer_message
+                                            deed_launcher_id
+                                            (compute_principal_tokens
+                                                (compute_deed_nav collection_nav_mojos share_ppm)
+                                                (- TOTAL_POOL_TOKEN_SUPPLY TREASURY_RESERVE_TOKENS)
+                                                TOTAL_VALUE_LOCKED)
+                                            buyer_vault_coin_id)))
+                                (c
+                                    ;; Emit the live pool-side announcement that vault
+                                    ;; accept-offer asserts before authorizing the purchase.
+                                    (list CREATE_PUZZLE_ANNOUNCEMENT
+                                        (pool_v2_kyc_offer_message
+                                            deed_launcher_id
+                                            (compute_principal_tokens
+                                                (compute_deed_nav collection_nav_mojos share_ppm)
+                                                (- TOTAL_POOL_TOKEN_SUPPLY TREASURY_RESERVE_TOKENS)
+                                                TOTAL_VALUE_LOCKED)))
+                                    (c
+                                ;; Public V2 action commitment consumed by drivers/indexers.
+                                (list CREATE_PUZZLE_ANNOUNCEMENT
+                                    (pool_v2_specific_deed_swap_message
+                                        deed_id
+                                        (deed_commitment
+                                            deed_launcher_id par_value_mojos asset_class
+                                            property_id_canon collection_id_canon share_ppm)
+                                        (compute_p2_vault_hash P2_VAULT_MOD_HASH SINGLETON_STRUCT buyer_vault_launcher_id launcher_puzzle_hash)
+                                        collection_id_canon
+                                        share_ppm
+                                        collection_nav_mojos
+                                        nav_root
+                                        nav_registry_version
+                                        nav_registry_coin_id
+                                        nav_registry_puzzle_hash
+                                        (compute_deed_nav collection_nav_mojos share_ppm)
+                                        (compute_principal_tokens
+                                            (compute_deed_nav collection_nav_mojos share_ppm)
+                                            (- TOTAL_POOL_TOKEN_SUPPLY TREASURY_RESERVE_TOKENS)
+                                            TOTAL_VALUE_LOCKED)
+                                        (compute_protocol_fee
+                                            (compute_principal_tokens
+                                                (compute_deed_nav collection_nav_mojos share_ppm)
+                                                (- TOTAL_POOL_TOKEN_SUPPLY TREASURY_RESERVE_TOKENS)
+                                                TOTAL_VALUE_LOCKED))
+                                        (compute_governance_fee
+                                            (compute_principal_tokens
+                                                (compute_deed_nav collection_nav_mojos share_ppm)
+                                                (- TOTAL_POOL_TOKEN_SUPPLY TREASURY_RESERVE_TOKENS)
+                                                TOTAL_VALUE_LOCKED))
+                                        treasury_reserve_puzhash
+                                        protocol_treasury_puzhash
+                                        governance_rewards_puzhash
+                                        governance_rewards_root))
+                                (c
+                                    ;; Authorize the exact committed p2_pool_v2 coin
+                                    ;; to release to this vault in the same bundle.
+                                    (list CREATE_PUZZLE_ANNOUNCEMENT
+                                        (pool_deed_release_message
+                                            my_id
+                                            deed_id
+                                            (deed_commitment
+                                                deed_launcher_id par_value_mojos asset_class
+                                                property_id_canon collection_id_canon share_ppm)
+                                            (compute_p2_vault_hash P2_VAULT_MOD_HASH SINGLETON_STRUCT buyer_vault_launcher_id launcher_puzzle_hash)))
+                                    (c
+                                        (list REMARK
+                                            PROTOCOL_PREFIX
+                                            POOL_V2_SPECIFIC_DEED_SWAP_TAG
+                                            (- TOTAL_VALUE_LOCKED (compute_deed_nav collection_nav_mojos share_ppm))
+                                            (- DEED_COUNT 1)
+                                            TOTAL_POOL_TOKEN_SUPPLY
+                                            (+ TREASURY_RESERVE_TOKENS
+                                                (compute_principal_tokens
+                                                    (compute_deed_nav collection_nav_mojos share_ppm)
+                                                    (- TOTAL_POOL_TOKEN_SUPPLY TREASURY_RESERVE_TOKENS)
+                                                    TOTAL_VALUE_LOCKED))
+                                            (compute_protocol_fee
+                                                (compute_principal_tokens
+                                                    (compute_deed_nav collection_nav_mojos share_ppm)
+                                                    (- TOTAL_POOL_TOKEN_SUPPLY TREASURY_RESERVE_TOKENS)
+                                                    TOTAL_VALUE_LOCKED))
+                                            (compute_governance_fee
+                                                (compute_principal_tokens
+                                                    (compute_deed_nav collection_nav_mojos share_ppm)
+                                                    (- TOTAL_POOL_TOKEN_SUPPLY TREASURY_RESERVE_TOKENS)
+                                                    TOTAL_VALUE_LOCKED)))
+                                        (identity_conditions SINGLETON_STRUCT my_id my_inner_puzzlehash my_amount)
+                                    )
+                                )
+                                    )
+                                )
+                            )
+                        )
+                    )
+                )
+            )
+        )
+    )
+
+    ;; SPEND CASE 8 — V2 RESERVE ACQUISITION
+    ;; Acquire a new deed into the global pool using treasury reserve tokens
+    ;; first.  Only the shortfall is authorized as a fresh pool CAT mint.
+    ;;
+    ;; params =
+    ;;   (deed_coin_id deed_launcher_id property_id_canon par_value_mojos asset_class
+    ;;    collection_id_canon share_ppm collection_nav_mojos
+    ;;    nav_root nav_registry_version nav_registry_coin_id nav_registry_puzzle_hash
+    ;;    seller_puzhash seller_token_price mint_token_coin_id)
+    ;;
+    ;; This path intentionally has fixed payment shape: at most one CAT
+    ;; settlement assertion to the seller, plus at most one CAT mint
+    ;; authorization for reserve shortfall.  That keeps faucet/payment helpers
+    ;; from becoming an unbounded fanout surface.
+    (defun spend_v2_reserve_acquisition (MOD_HASH SINGLETON_STRUCT GOV_SINGLETON_STRUCT PROTOCOL_DID_PUZHASH TOKEN_TAIL_HASH CAT_MOD_HASH OFFER_MOD_HASH P2_VAULT_MOD_HASH VAULT_INNER_MOD_HASH NAV_REGISTRY_MOD_HASH NAV_REGISTRY_GOV_PUBKEY NAV_REGISTRY_LAUNCHER_ID MIN_NAV_REGISTRY_VERSION TRUSTED_TREASURY_RESERVE_PUZHASH TRUSTED_PROTOCOL_TREASURY_PUZHASH TRUSTED_GOVERNANCE_REWARDS_PUZHASH TRUSTED_GOVERNANCE_REWARDS_ROOT TRUSTED_ZKPASSPORT_BRIDGE_POLICY_HASH FP_SCALE
+                                         POOL_STATUS TOTAL_VALUE_LOCKED DEED_COUNT TOTAL_POOL_TOKEN_SUPPLY TREASURY_RESERVE_TOKENS
+                                         my_id my_inner_puzzlehash my_amount
+                                         deed_id deed_launcher_id property_id_canon par_value_mojos asset_class
+                                         collection_id_canon share_ppm collection_nav_mojos
+                                         nav_root nav_registry_version nav_registry_coin_id nav_registry_puzzle_hash
+                                         seller_puzhash seller_token_price mint_token_coin_id)
+        (assert
+            (= POOL_STATUS POOL_ACTIVE)
+            (is-size-b32 deed_id)
+            (is-size-b32 deed_launcher_id)
+            (is-size-b32 property_id_canon)
+            (is-uint64 par_value_mojos)
+            (is-uint64 asset_class)
+            (is-size-b32 collection_id_canon)
+            (is-uint64 share_ppm)
+            (is-uint64 collection_nav_mojos)
+            (is-size-b32 nav_root)
+            (is-uint64 nav_registry_version)
+            (gte nav_registry_version MIN_NAV_REGISTRY_VERSION)
+            (is-size-b32 nav_registry_coin_id)
+            (is-size-b32 nav_registry_puzzle_hash)
+            (= nav_registry_puzzle_hash
+                (trusted_nav_registry_puzzle_hash
+                    SINGLETON_STRUCT
+                    NAV_REGISTRY_MOD_HASH
+                    NAV_REGISTRY_GOV_PUBKEY
+                    NAV_REGISTRY_LAUNCHER_ID
+                    nav_root
+                    nav_registry_version))
+            (is-uint64 TOTAL_POOL_TOKEN_SUPPLY)
+            (is-uint64 TREASURY_RESERVE_TOKENS)
+            (is-size-b32 seller_puzhash)
+            (is-uint64 seller_token_price)
+            (is-size-b32-or-nil mint_token_coin_id)
+            (is-uint64 TOTAL_VALUE_LOCKED)
+            (is-uint64 DEED_COUNT)
+            (> par_value_mojos 0)
+            (> collection_nav_mojos 0)
+            (> share_ppm 0)
+            (gte SHARE_PPM_DENOMINATOR share_ppm)
+            (> seller_token_price 0)
+            (gte (compute_deed_nav collection_nav_mojos share_ppm) seller_token_price)
+            (gte TOTAL_POOL_TOKEN_SUPPLY TREASURY_RESERVE_TOKENS)
+            (is-uint64 (compute_deed_nav collection_nav_mojos share_ppm))
+            (is-uint64 (+ TOTAL_VALUE_LOCKED (compute_deed_nav collection_nav_mojos share_ppm)))
+            (is-uint64 (+ DEED_COUNT 1))
+            (is-uint64 (+ TOTAL_POOL_TOKEN_SUPPLY (compute_fresh_mint TREASURY_RESERVE_TOKENS seller_token_price)))
+            (if (> (compute_fresh_mint TREASURY_RESERVE_TOKENS seller_token_price) 0)
+                (is-size-b32 mint_token_coin_id)
+                (not mint_token_coin_id))
+            (c
+                (list CREATE_COIN
+                    (compute_inner_ph MOD_HASH SINGLETON_STRUCT GOV_SINGLETON_STRUCT PROTOCOL_DID_PUZHASH TOKEN_TAIL_HASH CAT_MOD_HASH OFFER_MOD_HASH P2_VAULT_MOD_HASH VAULT_INNER_MOD_HASH NAV_REGISTRY_MOD_HASH NAV_REGISTRY_GOV_PUBKEY NAV_REGISTRY_LAUNCHER_ID MIN_NAV_REGISTRY_VERSION TRUSTED_TREASURY_RESERVE_PUZHASH TRUSTED_PROTOCOL_TREASURY_PUZHASH TRUSTED_GOVERNANCE_REWARDS_PUZHASH TRUSTED_GOVERNANCE_REWARDS_ROOT TRUSTED_ZKPASSPORT_BRIDGE_POLICY_HASH FP_SCALE
+                                      POOL_STATUS
+                                      (+ TOTAL_VALUE_LOCKED (compute_deed_nav collection_nav_mojos share_ppm))
+                                      (+ DEED_COUNT 1)
+                                      (+ TOTAL_POOL_TOKEN_SUPPLY
+                                          (compute_fresh_mint TREASURY_RESERVE_TOKENS seller_token_price))
+                                      (- TREASURY_RESERVE_TOKENS
+                                          (compute_reserve_paid TREASURY_RESERVE_TOKENS seller_token_price)))
+                    my_amount)
+                (c
+                    ;; Require governed NAV evidence in the same bundle.
+                    (list ASSERT_PUZZLE_ANNOUNCEMENT
+                        (sha256
+                            nav_registry_puzzle_hash
+                            (nav_evidence_message collection_id_canon collection_nav_mojos nav_root nav_registry_version)))
+                    (c
+                        ;; Require the smart deed to announce the collection/share
+                        ;; metadata it is depositing into the pool.
+                        (list ASSERT_COIN_ANNOUNCEMENT
+                            (sha256
+                                deed_id
+                                (deed_v3_deposit_message
+                                    deed_id
+                                    (deed_commitment
+                                        deed_launcher_id par_value_mojos asset_class
+                                        property_id_canon collection_id_canon share_ppm)
+                                    par_value_mojos
+                                    asset_class
+                                    property_id_canon
+                                    collection_id_canon
+                                    share_ppm)))
+                        (maybe_reserve_payment_condition
+                            CAT_MOD_HASH
+                            TOKEN_TAIL_HASH
+                            OFFER_MOD_HASH
+                            my_id
+                            seller_puzhash
+                            (compute_reserve_paid TREASURY_RESERVE_TOKENS seller_token_price)
+                            (maybe_fresh_mint_condition
+                                mint_token_coin_id
+                                (compute_fresh_mint TREASURY_RESERVE_TOKENS seller_token_price)
+                                (c
+                                    ;; Public V2 action commitment consumed by
+                                    ;; drivers/indexers and bound to the optional
+                                    ;; mint token id when fresh minting is needed.
+                                    (list CREATE_PUZZLE_ANNOUNCEMENT
+                                    (pool_v2_reserve_acquisition_message
+                                        deed_id
+                                        (deed_commitment
+                                            deed_launcher_id par_value_mojos asset_class
+                                            property_id_canon collection_id_canon share_ppm)
+                                        property_id_canon
+                                            par_value_mojos
+                                            asset_class
+                                            collection_id_canon
+                                            share_ppm
+                                            collection_nav_mojos
+                                            nav_root
+                                            nav_registry_version
+                                            nav_registry_coin_id
+                                            nav_registry_puzzle_hash
+                                            (compute_deed_nav collection_nav_mojos share_ppm)
+                                            seller_token_price
+                                            (compute_reserve_paid TREASURY_RESERVE_TOKENS seller_token_price)
+                                            (compute_fresh_mint TREASURY_RESERVE_TOKENS seller_token_price)
+                                            seller_puzhash
+                                            mint_token_coin_id))
+                                    (c
+                                        ;; Keep V1 pool-deposit compatibility for
+                                        ;; smart_deed_inner while asserting the
+                                        ;; richer deed announcement above.
+                                        (list SEND_MESSAGE 0x10
+                                            (concat PROTOCOL_PREFIX (sha256tree (list POOL_SPEND_DEPOSIT deed_id par_value_mojos))))
+                                        (c
+                                            (list REMARK
+                                                PROTOCOL_PREFIX
+                                                POOL_V2_RESERVE_ACQUISITION_TAG
+                                                (+ TOTAL_VALUE_LOCKED (compute_deed_nav collection_nav_mojos share_ppm))
+                                                (+ DEED_COUNT 1)
+                                                (+ TOTAL_POOL_TOKEN_SUPPLY
+                                                    (compute_fresh_mint TREASURY_RESERVE_TOKENS seller_token_price))
+                                                (- TREASURY_RESERVE_TOKENS
+                                                    (compute_reserve_paid TREASURY_RESERVE_TOKENS seller_token_price))
+                                                (compute_reserve_paid TREASURY_RESERVE_TOKENS seller_token_price)
+                                                (compute_fresh_mint TREASURY_RESERVE_TOKENS seller_token_price))
+                                            (identity_conditions SINGLETON_STRUCT my_id my_inner_puzzlehash my_amount)
+                                        )
+                                    )
+                                )
+                            )
+                        )
+                    )
+                )
+            )
+        )
+    )
+
+    ;; SPEND CASE 7 — V2 TRUE REDEMPTION
+    ;; A holder burns/melts the NAV-pro-rata principal amount of pool CATs
+    ;; and receives the specific smart deed in a computed p2_vault.
+    ;;
+    ;; params =
+    ;;   (deed_coin_id deed_launcher_id par_value_mojos asset_class property_id_canon
+    ;;    collection_id_canon share_ppm collection_nav_mojos
+    ;;    nav_root nav_registry_version nav_registry_coin_id nav_registry_puzzle_hash
+    ;;    vault_launcher_id launcher_puzzle_hash token_coin_id)
+    ;;
+    ;; Total NAV, deed count, total supply, and treasury reserve are all
+    ;; curried pool state fields.
+    (defun spend_v2_true_redemption (MOD_HASH SINGLETON_STRUCT GOV_SINGLETON_STRUCT PROTOCOL_DID_PUZHASH TOKEN_TAIL_HASH CAT_MOD_HASH OFFER_MOD_HASH P2_VAULT_MOD_HASH VAULT_INNER_MOD_HASH NAV_REGISTRY_MOD_HASH NAV_REGISTRY_GOV_PUBKEY NAV_REGISTRY_LAUNCHER_ID MIN_NAV_REGISTRY_VERSION TRUSTED_TREASURY_RESERVE_PUZHASH TRUSTED_PROTOCOL_TREASURY_PUZHASH TRUSTED_GOVERNANCE_REWARDS_PUZHASH TRUSTED_GOVERNANCE_REWARDS_ROOT TRUSTED_ZKPASSPORT_BRIDGE_POLICY_HASH FP_SCALE
+                                     POOL_STATUS TOTAL_VALUE_LOCKED DEED_COUNT TOTAL_POOL_TOKEN_SUPPLY TREASURY_RESERVE_TOKENS
+                                     my_id my_inner_puzzlehash my_amount
+                                     deed_id deed_launcher_id par_value_mojos asset_class property_id_canon
+                                     collection_id_canon share_ppm collection_nav_mojos
+                                     nav_root nav_registry_version nav_registry_coin_id nav_registry_puzzle_hash
+                                     vault_launcher_id launcher_puzzle_hash token_coin_id)
+        (assert
+            (= POOL_STATUS POOL_ACTIVE)
+            (is-size-b32 deed_id)
+            (is-size-b32 deed_launcher_id)
+            (is-uint64 par_value_mojos)
+            (is-uint64 asset_class)
+            (is-size-b32 property_id_canon)
+            (is-size-b32 collection_id_canon)
+            (is-uint64 share_ppm)
+            (is-uint64 collection_nav_mojos)
+            (is-size-b32 nav_root)
+            (is-uint64 nav_registry_version)
+            (gte nav_registry_version MIN_NAV_REGISTRY_VERSION)
+            (is-size-b32 nav_registry_coin_id)
+            (is-size-b32 nav_registry_puzzle_hash)
+            (= nav_registry_puzzle_hash
+                (trusted_nav_registry_puzzle_hash
+                    SINGLETON_STRUCT
+                    NAV_REGISTRY_MOD_HASH
+                    NAV_REGISTRY_GOV_PUBKEY
+                    NAV_REGISTRY_LAUNCHER_ID
+                    nav_root
+                    nav_registry_version))
+            (is-uint64 TOTAL_POOL_TOKEN_SUPPLY)
+            (is-uint64 TREASURY_RESERVE_TOKENS)
+            (is-size-b32 vault_launcher_id)
+            (is-size-b32 launcher_puzzle_hash)
+            (is-size-b32 token_coin_id)
+            (> TOTAL_VALUE_LOCKED 0)
+            (> DEED_COUNT 0)
+            (> collection_nav_mojos 0)
+            (> share_ppm 0)
+            (gte SHARE_PPM_DENOMINATOR share_ppm)
+            (gte TOTAL_POOL_TOKEN_SUPPLY TREASURY_RESERVE_TOKENS)
+            (> (- TOTAL_POOL_TOKEN_SUPPLY TREASURY_RESERVE_TOKENS) 0)
+            (gte TOTAL_VALUE_LOCKED (compute_deed_nav collection_nav_mojos share_ppm))
+            (gte TOTAL_POOL_TOKEN_SUPPLY
+                (compute_principal_tokens
+                    (compute_deed_nav collection_nav_mojos share_ppm)
+                    (- TOTAL_POOL_TOKEN_SUPPLY TREASURY_RESERVE_TOKENS)
+                    TOTAL_VALUE_LOCKED))
+            (c
+                (list CREATE_COIN
+                    (compute_inner_ph MOD_HASH SINGLETON_STRUCT GOV_SINGLETON_STRUCT PROTOCOL_DID_PUZHASH TOKEN_TAIL_HASH CAT_MOD_HASH OFFER_MOD_HASH P2_VAULT_MOD_HASH VAULT_INNER_MOD_HASH NAV_REGISTRY_MOD_HASH NAV_REGISTRY_GOV_PUBKEY NAV_REGISTRY_LAUNCHER_ID MIN_NAV_REGISTRY_VERSION TRUSTED_TREASURY_RESERVE_PUZHASH TRUSTED_PROTOCOL_TREASURY_PUZHASH TRUSTED_GOVERNANCE_REWARDS_PUZHASH TRUSTED_GOVERNANCE_REWARDS_ROOT TRUSTED_ZKPASSPORT_BRIDGE_POLICY_HASH FP_SCALE
+                                      POOL_STATUS
+                                      (- TOTAL_VALUE_LOCKED (compute_deed_nav collection_nav_mojos share_ppm))
+                                      (- DEED_COUNT 1)
+                                      (- TOTAL_POOL_TOKEN_SUPPLY
+                                          (compute_principal_tokens
+                                              (compute_deed_nav collection_nav_mojos share_ppm)
+                                              (- TOTAL_POOL_TOKEN_SUPPLY TREASURY_RESERVE_TOKENS)
+                                              TOTAL_VALUE_LOCKED))
+                                      TREASURY_RESERVE_TOKENS)
+                    my_amount)
+                (c
+                    ;; Require the governed NAV registry spend in the same bundle.
+                    (list ASSERT_PUZZLE_ANNOUNCEMENT
+                        (sha256
+                            nav_registry_puzzle_hash
+                            (nav_evidence_message collection_id_canon collection_nav_mojos nav_root nav_registry_version)))
+                    (c
+                        ;; Require the exact smart deed coin to announce the
+                        ;; collection/share metadata it is releasing.
+                        (list ASSERT_COIN_ANNOUNCEMENT
+                            (sha256
+                                deed_id
+                                (deed_v3_redeem_message
+                                    (deed_commitment
+                                        deed_launcher_id par_value_mojos asset_class
+                                        property_id_canon collection_id_canon share_ppm)
+                                    (compute_p2_vault_hash P2_VAULT_MOD_HASH SINGLETON_STRUCT vault_launcher_id launcher_puzzle_hash)
+                                )))
+                        (token_authorization_conditions
+                            (token_melt_message
+                                token_coin_id
+                                (compute_principal_tokens
+                                    (compute_deed_nav collection_nav_mojos share_ppm)
+                                    (- TOTAL_POOL_TOKEN_SUPPLY TREASURY_RESERVE_TOKENS)
+                                    TOTAL_VALUE_LOCKED))
+                            (c
+                                ;; Public V2 action commitment consumed by drivers/indexers.
+                                (list CREATE_PUZZLE_ANNOUNCEMENT
+                                    (pool_v2_true_redemption_message
+                                        deed_id
+                                        (deed_commitment
+                                            deed_launcher_id par_value_mojos asset_class
+                                            property_id_canon collection_id_canon share_ppm)
+                                        (compute_p2_vault_hash P2_VAULT_MOD_HASH SINGLETON_STRUCT vault_launcher_id launcher_puzzle_hash)
+                                        collection_id_canon
+                                        share_ppm
+                                        collection_nav_mojos
+                                        nav_root
+                                        nav_registry_version
+                                        nav_registry_coin_id
+                                        nav_registry_puzzle_hash
+                                        (compute_deed_nav collection_nav_mojos share_ppm)
+                                        (compute_principal_tokens
+                                            (compute_deed_nav collection_nav_mojos share_ppm)
+                                            (- TOTAL_POOL_TOKEN_SUPPLY TREASURY_RESERVE_TOKENS)
+                                            TOTAL_VALUE_LOCKED)
+                                        token_coin_id))
+                                (c
+                                    ;; Authorize the exact committed p2_pool_v2 coin
+                                    ;; to release to this vault in the same bundle.
+                                    (list CREATE_PUZZLE_ANNOUNCEMENT
+                                        (pool_deed_release_message
+                                            my_id
+                                            deed_id
+                                            (deed_commitment
+                                                deed_launcher_id par_value_mojos asset_class
+                                                property_id_canon collection_id_canon share_ppm)
+                                            (compute_p2_vault_hash P2_VAULT_MOD_HASH SINGLETON_STRUCT vault_launcher_id launcher_puzzle_hash)))
+                                    (c
+                                        (list REMARK
+                                            PROTOCOL_PREFIX
+                                            POOL_V2_TRUE_REDEMPTION_TAG
+                                            (- TOTAL_VALUE_LOCKED (compute_deed_nav collection_nav_mojos share_ppm))
+                                            (- DEED_COUNT 1)
+                                            (- TOTAL_POOL_TOKEN_SUPPLY
+                                                (compute_principal_tokens
+                                                    (compute_deed_nav collection_nav_mojos share_ppm)
+                                                    (- TOTAL_POOL_TOKEN_SUPPLY TREASURY_RESERVE_TOKENS)
+                                                    TOTAL_VALUE_LOCKED))
+                                            TREASURY_RESERVE_TOKENS)
+                                        (identity_conditions SINGLETON_STRUCT my_id my_inner_puzzlehash my_amount)
+                                    )
+                                )
+                            )
+                        )
+                    )
+                )
+            )
+        )
+    )
+
+    ;; Main dispatch — validate common inputs, then route
+    (assert
+        (is-size-b32 my_id)
+        (is-size-b32 my_inner_puzzlehash)
+        (is-uint64 my_amount)
+        (is-size-b32 VAULT_INNER_MOD_HASH)
+        (is-size-b32 NAV_REGISTRY_MOD_HASH)
+        (is-size-bls-g1 NAV_REGISTRY_GOV_PUBKEY)
+        (is-size-b32 NAV_REGISTRY_LAUNCHER_ID)
+        (is-uint64 MIN_NAV_REGISTRY_VERSION)
+        (is-size-b32 TRUSTED_TREASURY_RESERVE_PUZHASH)
+        (is-size-b32 TRUSTED_PROTOCOL_TREASURY_PUZHASH)
+        (is-size-b32 TRUSTED_GOVERNANCE_REWARDS_PUZHASH)
+        (is-size-b32 TRUSTED_GOVERNANCE_REWARDS_ROOT)
+        (is-size-b32 TRUSTED_ZKPASSPORT_BRIDGE_POLICY_HASH)
+        (not (= TRUSTED_ZKPASSPORT_BRIDGE_POLICY_HASH ZERO_B32))
+        (if (= spend_case POOL_SPEND_DEPOSIT)
+            (spend_deposit MOD_HASH SINGLETON_STRUCT GOV_SINGLETON_STRUCT PROTOCOL_DID_PUZHASH TOKEN_TAIL_HASH CAT_MOD_HASH OFFER_MOD_HASH P2_VAULT_MOD_HASH VAULT_INNER_MOD_HASH NAV_REGISTRY_MOD_HASH NAV_REGISTRY_GOV_PUBKEY NAV_REGISTRY_LAUNCHER_ID MIN_NAV_REGISTRY_VERSION TRUSTED_TREASURY_RESERVE_PUZHASH TRUSTED_PROTOCOL_TREASURY_PUZHASH TRUSTED_GOVERNANCE_REWARDS_PUZHASH TRUSTED_GOVERNANCE_REWARDS_ROOT TRUSTED_ZKPASSPORT_BRIDGE_POLICY_HASH FP_SCALE
+                           POOL_STATUS TOTAL_VALUE_LOCKED DEED_COUNT TOTAL_POOL_TOKEN_SUPPLY TREASURY_RESERVE_TOKENS
+                           my_id my_inner_puzzlehash my_amount
+                           (nth 0 params)
+                           (nth 1 params)
+                           (nth 2 params)
+                           (nth 3 params)
+                           (nth 4 params)
+                           (nth 5 params)
+                           (nth 6 params)
+                           (nth 7 params)
+                           (nth 8 params))
+            (if (= spend_case POOL_SPEND_REDEEM)
+                (x) ;; v3: legacy par-priced redemption is permanently retired
+                (if (= spend_case POOL_SPEND_SETTLEMENT)
+                    (spend_settlement MOD_HASH SINGLETON_STRUCT GOV_SINGLETON_STRUCT PROTOCOL_DID_PUZHASH TOKEN_TAIL_HASH CAT_MOD_HASH OFFER_MOD_HASH P2_VAULT_MOD_HASH VAULT_INNER_MOD_HASH NAV_REGISTRY_MOD_HASH NAV_REGISTRY_GOV_PUBKEY NAV_REGISTRY_LAUNCHER_ID MIN_NAV_REGISTRY_VERSION TRUSTED_TREASURY_RESERVE_PUZHASH TRUSTED_PROTOCOL_TREASURY_PUZHASH TRUSTED_GOVERNANCE_REWARDS_PUZHASH TRUSTED_GOVERNANCE_REWARDS_ROOT TRUSTED_ZKPASSPORT_BRIDGE_POLICY_HASH FP_SCALE
+                                      DEED_COUNT TOTAL_POOL_TOKEN_SUPPLY TREASURY_RESERVE_TOKENS
+                                      my_id my_inner_puzzlehash my_amount
+                                      (nth 0 params) (nth 1 params) (nth 2 params)
+                                      (nth 3 params))
+                    (if (= spend_case POOL_SPEND_GOVERNANCE)
+                        (spend_governance MOD_HASH SINGLETON_STRUCT GOV_SINGLETON_STRUCT PROTOCOL_DID_PUZHASH TOKEN_TAIL_HASH CAT_MOD_HASH OFFER_MOD_HASH P2_VAULT_MOD_HASH VAULT_INNER_MOD_HASH NAV_REGISTRY_MOD_HASH NAV_REGISTRY_GOV_PUBKEY NAV_REGISTRY_LAUNCHER_ID MIN_NAV_REGISTRY_VERSION TRUSTED_TREASURY_RESERVE_PUZHASH TRUSTED_PROTOCOL_TREASURY_PUZHASH TRUSTED_GOVERNANCE_REWARDS_PUZHASH TRUSTED_GOVERNANCE_REWARDS_ROOT TRUSTED_ZKPASSPORT_BRIDGE_POLICY_HASH FP_SCALE
+                                          TOTAL_VALUE_LOCKED DEED_COUNT TOTAL_POOL_TOKEN_SUPPLY TREASURY_RESERVE_TOKENS
+                                          my_id my_inner_puzzlehash my_amount
+                                          (nth 0 params) (nth 1 params))
+                        (if (= spend_case POOL_SPEND_GENERATE_OFFER)
+                            (x) ;; v3: legacy par-priced offer exit is permanently retired
+                            (if (= spend_case POOL_SPEND_V2_SPECIFIC_DEED_SWAP)
+                                (spend_v2_specific_deed_swap MOD_HASH SINGLETON_STRUCT GOV_SINGLETON_STRUCT PROTOCOL_DID_PUZHASH TOKEN_TAIL_HASH CAT_MOD_HASH OFFER_MOD_HASH P2_VAULT_MOD_HASH VAULT_INNER_MOD_HASH NAV_REGISTRY_MOD_HASH NAV_REGISTRY_GOV_PUBKEY NAV_REGISTRY_LAUNCHER_ID MIN_NAV_REGISTRY_VERSION TRUSTED_TREASURY_RESERVE_PUZHASH TRUSTED_PROTOCOL_TREASURY_PUZHASH TRUSTED_GOVERNANCE_REWARDS_PUZHASH TRUSTED_GOVERNANCE_REWARDS_ROOT TRUSTED_ZKPASSPORT_BRIDGE_POLICY_HASH FP_SCALE
+                                                             POOL_STATUS TOTAL_VALUE_LOCKED DEED_COUNT TOTAL_POOL_TOKEN_SUPPLY TREASURY_RESERVE_TOKENS
+                                                             my_id my_inner_puzzlehash my_amount
+                                                             ;; V2 swap params in schema order.
+                                                             (nth 0 params)
+                                                             (nth 1 params)
+                                                             (nth 2 params)
+                                                             (nth 3 params)
+                                                             (nth 4 params)
+                                                             (nth 5 params)
+                                                             (nth 6 params)
+                                                             (nth 7 params)
+                                                             (nth 8 params)
+                                                             (nth 9 params)
+                                                             (nth 10 params)
+                                                             (nth 11 params)
+                                                             (nth 12 params)
+                                                             (nth 13 params)
+                                                             (nth 14 params)
+                                                             (nth 15 params)
+                                                             (nth 16 params)
+                                                             (nth 17 params)
+                                                             (nth 18 params)
+                                                             (nth 19 params)
+                                                             (nth 20 params)
+                                                             (nth 21 params)
+                                                             (nth 22 params)
+                                                             (nth 23 params)
+                                )
+                                (if (= spend_case POOL_SPEND_V2_RESERVE_ACQUISITION)
+                                    (spend_v2_reserve_acquisition MOD_HASH SINGLETON_STRUCT GOV_SINGLETON_STRUCT PROTOCOL_DID_PUZHASH TOKEN_TAIL_HASH CAT_MOD_HASH OFFER_MOD_HASH P2_VAULT_MOD_HASH VAULT_INNER_MOD_HASH NAV_REGISTRY_MOD_HASH NAV_REGISTRY_GOV_PUBKEY NAV_REGISTRY_LAUNCHER_ID MIN_NAV_REGISTRY_VERSION TRUSTED_TREASURY_RESERVE_PUZHASH TRUSTED_PROTOCOL_TREASURY_PUZHASH TRUSTED_GOVERNANCE_REWARDS_PUZHASH TRUSTED_GOVERNANCE_REWARDS_ROOT TRUSTED_ZKPASSPORT_BRIDGE_POLICY_HASH FP_SCALE
+                                                                  POOL_STATUS TOTAL_VALUE_LOCKED DEED_COUNT TOTAL_POOL_TOKEN_SUPPLY TREASURY_RESERVE_TOKENS
+                                                                  my_id my_inner_puzzlehash my_amount
+                                                                  ;; V2 reserve acquisition params in schema order.
+                                                                  (nth 0 params)
+                                                                  (nth 1 params)
+                                                                  (nth 2 params)
+                                                                  (nth 3 params)
+                                                                  (nth 4 params)
+                                                                  (nth 5 params)
+                                                                  (nth 6 params)
+                                                                  (nth 7 params)
+                                                                  (nth 8 params)
+                                                                  (nth 9 params)
+                                                                  (nth 10 params)
+                                                                  (nth 11 params)
+                                                                  (nth 12 params)
+                                                                  (nth 13 params)
+                                                                  (nth 14 params)
+                                    )
+                                    (if (= spend_case POOL_SPEND_V2_TRUE_REDEMPTION)
+                                        (spend_v2_true_redemption MOD_HASH SINGLETON_STRUCT GOV_SINGLETON_STRUCT PROTOCOL_DID_PUZHASH TOKEN_TAIL_HASH CAT_MOD_HASH OFFER_MOD_HASH P2_VAULT_MOD_HASH VAULT_INNER_MOD_HASH NAV_REGISTRY_MOD_HASH NAV_REGISTRY_GOV_PUBKEY NAV_REGISTRY_LAUNCHER_ID MIN_NAV_REGISTRY_VERSION TRUSTED_TREASURY_RESERVE_PUZHASH TRUSTED_PROTOCOL_TREASURY_PUZHASH TRUSTED_GOVERNANCE_REWARDS_PUZHASH TRUSTED_GOVERNANCE_REWARDS_ROOT TRUSTED_ZKPASSPORT_BRIDGE_POLICY_HASH FP_SCALE
+                                                                  POOL_STATUS TOTAL_VALUE_LOCKED DEED_COUNT TOTAL_POOL_TOKEN_SUPPLY TREASURY_RESERVE_TOKENS
+                                                                  my_id my_inner_puzzlehash my_amount
+                                                                  ;; V2 redemption params in schema order.
+                                                                  (nth 0 params)
+                                                                  (nth 1 params)
+                                                                  (nth 2 params)
+                                                                  (nth 3 params)
+                                                                  (nth 4 params)
+                                                                  (nth 5 params)
+                                                                  (nth 6 params)
+                                                                  (nth 7 params)
+                                                                  (nth 8 params)
+                                                                  (nth 9 params)
+                                                                  (nth 10 params)
+                                                                  (nth 11 params)
+                                                                  (nth 12 params)
+                                                                  (nth 13 params)
+                                                                  (nth 14 params)
+                                        )
+                                        (x) ;; invalid spend case
+                                    )
+                                )
+                            )
+                        )
+                    )
+                )
+            )
+        )
+    )
+)

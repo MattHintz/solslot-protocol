@@ -1,7 +1,7 @@
 """Unit tests for protocol_config_inner.clsp + protocol_config_driver.py.
 
 The protocol-config singleton (A.3) is the on-chain replacement for
-three off-chain trust roots that the Populis API previously carried as
+three off-chain trust roots that the Solslot API previously carried as
 environment variables (POOL/GOV/NETWORK launcher ids).  These tests
 verify both the puzzle's CLVM behaviour and the Python driver, and —
 critically — that the off-chain ``compute_content_hash`` exactly
@@ -16,7 +16,7 @@ import pytest
 from chia.types.blockchain_format.program import Program
 from chia_rs.sized_bytes import bytes32
 
-from populis_puzzles.protocol_config_driver import (
+from solslot_puzzles.protocol_config_driver import (
     NETWORK_ID_MAINNET,
     NETWORK_ID_TESTNET11,
     ProtocolConfigState,
@@ -142,9 +142,9 @@ class TestContentHash:
         in isolation (it's a defun-inline inside the puzzle body), so
         we exercise it via a successful update spend and inspect the
         ``CREATE_PUZZLE_ANNOUNCEMENT`` message (which embeds the same
-        ``content-hash`` output, prefixed by ``PROTOCOL_PREFIX = 0x50``).
+        ``content-hash`` output, prefixed by ``PROTOCOL_PREFIX = 0x53``).
         """
-        from populis_puzzles.protocol_config_driver import (
+        from solslot_puzzles.protocol_config_driver import (
             build_update_spend,
         )
 
@@ -174,8 +174,8 @@ class TestContentHash:
         assert len(announcements) == 1, "exactly one CREATE_PUZZLE_ANNOUNCEMENT"
         msg = announcements[0][1]
 
-        # Message is PROTOCOL_PREFIX (0x50) || content-hash(new_state).
-        assert msg[:1] == b"\x50", "message must start with PROTOCOL_PREFIX"
+        # Message is PROTOCOL_PREFIX (0x53) || content-hash(new_state).
+        assert msg[:1] == b"\x53", "message must start with PROTOCOL_PREFIX"
         on_chain_content_hash = msg[1:]
         assert len(on_chain_content_hash) == 32
 
@@ -236,7 +236,7 @@ class TestParse:
         from chia.wallet.puzzles.load_clvm import load_clvm
         other = load_clvm(
             "quorum_did_inner.clsp",
-            package_or_requirement="populis_puzzles",
+            package_or_requirement="solslot_puzzles",
             recompile=True,
         ).curry(b"\x00" * 32)
         with pytest.raises(ValueError, match="protocol_config_inner"):
@@ -300,7 +300,7 @@ class TestUpdateSpend:
         announcements = [c for c in conditions if c[0] == bytes([62])]
         assert len(announcements) == 1
         msg = announcements[0][1]
-        assert msg[:1] == b"\x50", "PROTOCOL_PREFIX"
+        assert msg[:1] == b"\x53", "PROTOCOL_PREFIX"
         assert msg[1:] == bytes(artifacts.new_content_hash)
 
     def test_assert_my_amount(self):
@@ -316,7 +316,7 @@ class TestUpdateSpend:
 class TestReplayProtection:
     def test_python_rejects_version_downgrade(self):
         state = _make_state()
-        with pytest.raises(ValueError, match="strictly exceed"):
+        with pytest.raises(ValueError, match="exactly one"):
             build_update_spend(
                 current=state,
                 new_pool_launcher_id=NEW_POOL_LAUNCHER_ID,
@@ -335,7 +335,7 @@ class TestReplayProtection:
             network_id=NETWORK_ID_TESTNET11,
             config_version=10,
         )
-        with pytest.raises(ValueError, match="strictly exceed"):
+        with pytest.raises(ValueError, match="exactly one"):
             build_update_spend(
                 current=state,
                 new_pool_launcher_id=NEW_POOL_LAUNCHER_ID,
@@ -344,6 +344,19 @@ class TestReplayProtection:
                 new_config_version=5,
                 my_amount=SINGLETON_AMOUNT,
             )
+
+    def test_python_rejects_version_jump(self):
+        state = _make_state()
+        for bad_version in (CONFIG_VERSION + 2, (1 << 64) - 1):
+            with pytest.raises(ValueError, match="exactly one"):
+                build_update_spend(
+                    current=state,
+                    new_pool_launcher_id=NEW_POOL_LAUNCHER_ID,
+                    new_gov_tracker_launcher_id=NEW_GOV_TRACKER_LAUNCHER_ID,
+                    new_network_id=NETWORK_ID_TESTNET11,
+                    new_config_version=bad_version,
+                    my_amount=SINGLETON_AMOUNT,
+                )
 
     def test_clvm_rejects_version_downgrade(self):
         """If the Python guard is bypassed somehow (hand-rolled solution),
@@ -389,6 +402,27 @@ class TestReplayProtection:
         )
         with pytest.raises(ValueError):
             curried.run(sol)
+
+    def test_clvm_rejects_version_jump(self):
+        curried = make_inner_puzzle(
+            gov_pubkey=GOV_PUBKEY,
+            pool_launcher_id=POOL_LAUNCHER_ID,
+            gov_tracker_launcher_id=GOV_TRACKER_LAUNCHER_ID,
+            network_id=NETWORK_ID_TESTNET11,
+            config_version=CONFIG_VERSION,
+        )
+        for bad_version in (CONFIG_VERSION + 2, (1 << 64) - 1):
+            sol = Program.to(
+                [
+                    SINGLETON_AMOUNT,
+                    NEW_POOL_LAUNCHER_ID,
+                    NEW_GOV_TRACKER_LAUNCHER_ID,
+                    NETWORK_ID_TESTNET11,
+                    bad_version,
+                ]
+            )
+            with pytest.raises(ValueError):
+                curried.run(sol)
 
 
 # ── Input validation ────────────────────────────────────────────────────

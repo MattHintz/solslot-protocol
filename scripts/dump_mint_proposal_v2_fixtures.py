@@ -8,7 +8,7 @@ produces byte-identical hashes for the same inputs.
 
 Usage::
 
-    cd populis_protocol
+    cd solslot-protocol
     .venv/bin/python scripts/dump_mint_proposal_v2_fixtures.py
 
 The fixture is also exported by the regression test in
@@ -17,12 +17,18 @@ The fixture is also exported by the regression test in
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
+from chia.types.blockchain_format.program import Program
+from chia.wallet.puzzles.singleton_top_layer_v1_1 import (
+    SINGLETON_LAUNCHER_HASH,
+    SINGLETON_MOD_HASH,
+)
 from chia_rs.sized_bytes import bytes32
 
-from populis_puzzles.mint_proposal_v2_driver import (
+from solslot_puzzles.mint_proposal_v2_driver import (
     STATE_APPROVED,
     STATE_CANCELLED,
     STATE_DRAFT,
@@ -45,14 +51,14 @@ def build_fixture() -> dict[str, Any]:
 
     Coverage:
       * ``mod_hash`` \u2014 pinned uncurried tree hash of the V2 puzzle.
-      * ``proposal_data_hash`` \u2014 sha256tree of (property_id, par,
-        royalty_bps, quorum_threshold).  Three cases varying each
-        field individually.
+      * ``proposal_data_hash`` \u2014 sha256tree of (property_id,
+        collection_id, share_ppm, par, royalty_bps, quorum_threshold).
+        Three cases varying the proposal terms.
       * ``binding_hash`` \u2014 sha256tree of (transition_case,
         new_state_version, proposal_data_hash).  Cases for each
         transition / version combination.
       * ``transition_message`` \u2014 sha256tree of (transition_case,
-        new_state, new_state_version).  Wire-compatible with V1.
+        new_state, new_state_version). Canonical for Solslot V2.
       * ``inner_puzzle_hash`` \u2014 tree hash of the curried inner.
         Cases vary each curry slot to catch a TS port getting the
         order wrong.
@@ -65,14 +71,44 @@ def build_fixture() -> dict[str, Any]:
     # cross-curve TS bug is obvious.
     OWNER_HASH = bytes32(b"\xAA" * 32)
     GOV_HASH = bytes32(b"\xBB" * 32)
+    GOVERNANCE_STRUCT = Program.to(
+        (
+            SINGLETON_MOD_HASH,
+            (bytes32(b"\xBC" * 32), SINGLETON_LAUNCHER_HASH),
+        )
+    )
+    GOVERNANCE_PROPOSAL_HASH = bytes32(b"\xBD" * 32)
+    DEED_LAUNCHER_ID = bytes32(b"\xBE" * 32)
+    DID_INNER_PUZZLE_HASH = bytes32(b"\xBF" * 32)
+    DEED_FULL_PUZZLE_HASH = bytes32(b"\xC0" * 32)
+    immutable_input = {
+        "governance_singleton_struct_hex": _hex(bytes(GOVERNANCE_STRUCT)),
+        "governance_proposal_hash": _hex(GOVERNANCE_PROPOSAL_HASH),
+        "deed_launcher_id": _hex(DEED_LAUNCHER_ID),
+        "did_inner_puzzle_hash": _hex(DID_INNER_PUZZLE_HASH),
+        "deed_full_puzzle_hash": _hex(DEED_FULL_PUZZLE_HASH),
+    }
+    immutable_args = {
+        "governance_singleton_struct": GOVERNANCE_STRUCT,
+        "governance_proposal_hash": GOVERNANCE_PROPOSAL_HASH,
+        "deed_launcher_id": DEED_LAUNCHER_ID,
+        "did_inner_puzzle_hash": DID_INNER_PUZZLE_HASH,
+        "deed_full_puzzle_hash": DEED_FULL_PUZZLE_HASH,
+    }
+    COLLECTION_A = bytes32(b"\x12" * 32)
+    COLLECTION_B = bytes32(b"\x23" * 32)
     PROP_HASH_A = compute_proposal_data_hash(
         property_id_canon=bytes32(b"\x11" * 32),
+        collection_id_canon=COLLECTION_A,
+        share_ppm=750_000,
         par_value_mojos=100_000,
         royalty_bps=250,
         quorum_threshold=1_000_000,
     )
     PROP_HASH_B = compute_proposal_data_hash(
         property_id_canon=bytes32(b"\x22" * 32),
+        collection_id_canon=COLLECTION_B,
+        share_ppm=500_000,
         par_value_mojos=500_000,
         royalty_bps=500,
         quorum_threshold=2_000_000,
@@ -91,6 +127,8 @@ def build_fixture() -> dict[str, Any]:
             {
                 "input": {
                     "property_id_canon": _hex(bytes32(b"\x11" * 32)),
+                    "collection_id_canon": _hex(COLLECTION_A),
+                    "share_ppm": 750_000,
                     "par_value_mojos": 100_000,
                     "royalty_bps": 250,
                     "quorum_threshold": 1_000_000,
@@ -100,6 +138,8 @@ def build_fixture() -> dict[str, Any]:
             {
                 "input": {
                     "property_id_canon": _hex(bytes32(b"\x22" * 32)),
+                    "collection_id_canon": _hex(COLLECTION_B),
+                    "share_ppm": 500_000,
                     "par_value_mojos": 500_000,
                     "royalty_bps": 500,
                     "quorum_threshold": 2_000_000,
@@ -109,6 +149,8 @@ def build_fixture() -> dict[str, Any]:
             {
                 "input": {
                     "property_id_canon": _hex(bytes32(b"\x33" * 32)),
+                    "collection_id_canon": _hex(bytes32(b"\x34" * 32)),
+                    "share_ppm": 1,
                     "par_value_mojos": 1,
                     "royalty_bps": 0,
                     "quorum_threshold": 0,
@@ -116,6 +158,8 @@ def build_fixture() -> dict[str, Any]:
                 "expected": _hex(
                     compute_proposal_data_hash(
                         property_id_canon=bytes32(b"\x33" * 32),
+                        collection_id_canon=bytes32(b"\x34" * 32),
+                        share_ppm=1,
                         par_value_mojos=1,
                         royalty_bps=0,
                         quorum_threshold=0,
@@ -217,6 +261,7 @@ def build_fixture() -> dict[str, Any]:
                     "owner_member_hash": _hex(OWNER_HASH),
                     "gov_member_hash": _hex(GOV_HASH),
                     "proposal_data_hash": _hex(PROP_HASH_A),
+                    **immutable_input,
                     "proposal_state": STATE_DRAFT,
                     "state_version": 0,
                 },
@@ -225,6 +270,7 @@ def build_fixture() -> dict[str, Any]:
                         owner_member_hash=OWNER_HASH,
                         gov_member_hash=GOV_HASH,
                         proposal_data_hash=PROP_HASH_A,
+                        **immutable_args,
                         proposal_state=STATE_DRAFT,
                         state_version=0,
                     )
@@ -235,6 +281,7 @@ def build_fixture() -> dict[str, Any]:
                     "owner_member_hash": _hex(OWNER_HASH),
                     "gov_member_hash": _hex(GOV_HASH),
                     "proposal_data_hash": _hex(PROP_HASH_A),
+                    **immutable_input,
                     "proposal_state": STATE_APPROVED,
                     "state_version": 1,
                 },
@@ -243,6 +290,7 @@ def build_fixture() -> dict[str, Any]:
                         owner_member_hash=OWNER_HASH,
                         gov_member_hash=GOV_HASH,
                         proposal_data_hash=PROP_HASH_A,
+                        **immutable_args,
                         proposal_state=STATE_APPROVED,
                         state_version=1,
                     )
@@ -253,6 +301,7 @@ def build_fixture() -> dict[str, Any]:
                     "owner_member_hash": _hex(OWNER_HASH),
                     "gov_member_hash": _hex(GOV_HASH),
                     "proposal_data_hash": _hex(PROP_HASH_A),
+                    **immutable_input,
                     "proposal_state": STATE_CANCELLED,
                     "state_version": 1,
                 },
@@ -261,6 +310,7 @@ def build_fixture() -> dict[str, Any]:
                         owner_member_hash=OWNER_HASH,
                         gov_member_hash=GOV_HASH,
                         proposal_data_hash=PROP_HASH_A,
+                        **immutable_args,
                         proposal_state=STATE_CANCELLED,
                         state_version=1,
                     )
@@ -274,6 +324,7 @@ def build_fixture() -> dict[str, Any]:
                     "owner_member_hash": _hex(OWNER_HASH),
                     "gov_member_hash": _hex(GOV_HASH),
                     "proposal_data_hash": _hex(PROP_HASH_B),
+                    **immutable_input,
                     "proposal_state": STATE_DRAFT,
                     "state_version": 0,
                 },
@@ -282,6 +333,7 @@ def build_fixture() -> dict[str, Any]:
                         owner_member_hash=OWNER_HASH,
                         gov_member_hash=GOV_HASH,
                         proposal_data_hash=PROP_HASH_B,
+                        **immutable_args,
                         proposal_state=STATE_DRAFT,
                         state_version=0,
                     )
@@ -293,10 +345,12 @@ def build_fixture() -> dict[str, Any]:
 
 def fixture_destination() -> Path:
     """Resolve the canonical destination inside the portal repo."""
-    repo_root = Path(__file__).resolve().parents[2]
+    protocol_root = Path(__file__).resolve().parents[1]
+    portal_root = Path(
+        os.environ.get("SOLSLOT_PORTAL_ROOT", protocol_root.parent / "solslot-portal")
+    )
     return (
-        repo_root
-        / "populis_portal"
+        portal_root
         / "src"
         / "app"
         / "services"

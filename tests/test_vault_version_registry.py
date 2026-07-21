@@ -25,7 +25,7 @@ from chia.wallet.puzzles.singleton_top_layer_v1_1 import (
 )
 from chia_rs.sized_bytes import bytes32
 
-from populis_puzzles.vault_version_registry_driver import (
+from solslot_puzzles.vault_version_registry_driver import (
     PROTOCOL_PREFIX,
     SPEND_CODE_ROUTINE,
     SPEND_PARAMS_FASTTRACK,
@@ -323,7 +323,7 @@ class TestRoutine:
 class TestGuards:
     def test_driver_rejects_version_downgrade(self):
         state = _state(vault_version=10)
-        with pytest.raises(ValueError, match="strictly exceed"):
+        with pytest.raises(ValueError, match="exactly one"):
             build_fasttrack_spend(
                 current=state,
                 authorizer_inner_puzzle_hash=bytes32(
@@ -332,6 +332,19 @@ class TestGuards:
                 new_canonical_params_hash=NEW_CANONICAL_PARAMS_HASH,
                 new_vault_version=10,  # equal — must reject
             )
+
+    def test_driver_rejects_version_jump(self):
+        state = _state()
+        for bad_version in (VAULT_VERSION + 2, (1 << 64) - 1):
+            with pytest.raises(ValueError, match="exactly one"):
+                build_fasttrack_spend(
+                    current=state,
+                    authorizer_inner_puzzle_hash=bytes32(
+                        AUTHORITY_INNER.get_tree_hash()
+                    ),
+                    new_canonical_params_hash=NEW_CANONICAL_PARAMS_HASH,
+                    new_vault_version=bad_version,
+                )
 
     def test_clvm_rejects_version_downgrade(self):
         curried = _curry(vault_version=10)
@@ -362,6 +375,22 @@ class TestGuards:
         )
         with pytest.raises(ValueError):
             _run(curried, sol)
+
+    def test_clvm_rejects_version_jump(self):
+        curried = _curry(vault_version=VAULT_VERSION)
+        for bad_version in (VAULT_VERSION + 2, (1 << 64) - 1):
+            sol = Program.to(
+                [
+                    SPEND_PARAMS_FASTTRACK,
+                    SINGLETON_AMOUNT,
+                    bytes32(AUTHORITY_INNER.get_tree_hash()),
+                    VAULT_INNER_MOD_HASH,
+                    NEW_CANONICAL_PARAMS_HASH,
+                    bad_version,
+                ]
+            )
+            with pytest.raises(ValueError):
+                _run(curried, sol)
 
     def test_clvm_rejects_unknown_spend_case(self):
         sol = Program.to(
@@ -441,7 +470,7 @@ class TestCanonicalParamsHashAndDetection:
     def test_from_vault_inner_matches_explicit_params(self):
         """A live vault's canonical params hash == the explicit hash of its
         four protocol-level curried params."""
-        from populis_puzzles.vault_driver import (
+        from solslot_puzzles.vault_driver import (
             AUTH_TYPE_BLS,
             one_leaf_merkle_root,
             puzzle_for_vault_inner,
@@ -468,7 +497,7 @@ class TestCanonicalParamsHashAndDetection:
         assert got == expected
 
     def test_is_vault_current_true_when_matching_false_on_drift(self):
-        from populis_puzzles.vault_driver import (
+        from solslot_puzzles.vault_driver import (
             VAULT_INNER_MOD,
             AUTH_TYPE_BLS,
             one_leaf_merkle_root,

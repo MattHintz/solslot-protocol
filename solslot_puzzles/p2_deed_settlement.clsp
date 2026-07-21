@@ -1,0 +1,141 @@
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; p2_deed_settlement — Settlement offer leaf puzzle for batch settlement.
+;;;
+;;; Each p2_deed_settlement coin is a leaf of the splitxch distribution tree,
+;;; created when the pool batch-settles a collection of deeds.  It holds an
+;;; equal share of the total settlement XCH for one specific deed.
+;;;
+;;; Two escape conditions:
+;;;   1. CLAIM — burn the deed (via p2_pool release to BURN_INNER_PUZHASH)
+;;;      and receive XCH to a pool-authorized target puzzle hash.  Verifies
+;;;      both the deed singleton's p2_pool burn announcement and the pool
+;;;      singleton's governance-bound target authorization.
+;;;   2. DELAYED — after SECONDS_DELAY, anyone can claim to DELAYED_PUZZLE_HASH
+;;;      (safety valve if deed holder never claims).
+;;;
+;;; Curried parameters:
+;;;   SINGLETON_MOD_HASH    — mod hash for singleton_top_layer
+;;;   DEED_LAUNCHER_ID      — launcher ID of the specific deed NFT
+;;;   LAUNCHER_PUZZLE_HASH  — standard launcher puzzle hash
+;;;   SECONDS_DELAY         — seconds before delayed escape is available
+;;;   DELAYED_PUZZLE_HASH   — destination for delayed escape
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(mod
+    (
+        SINGLETON_MOD_HASH
+        DEED_LAUNCHER_ID
+        LAUNCHER_PUZZLE_HASH
+        SECONDS_DELAY
+        DELAYED_PUZZLE_HASH
+        ;; --- solution ---
+        ;; Claim path:
+        ;;   (target_puzzle_hash my_amount deed_coin_id pool_coin_id deed_commitment)
+        ;; Delayed path: (ignored_target_puzzle_hash my_amount)
+        target_puzzle_hash
+        my_amount
+        . extra_args
+    )
+
+    (include condition_codes.clib)
+    (include curry.clib)
+    (include sha256tree.clib)
+    (include utility_macros.clib)
+
+    ;; Canonical unspendable burn destination for settlement-exited deeds.
+    ;; This is intentionally not a curried parameter: settlement leaves must
+    ;; not get to choose where "burned" deeds are sent.
+    (defconstant BURN_INNER_PUZHASH 0x0000000000000000000000000000000000000000000000000000000000000000)
+    (defconstant DEED_SPEND_POOL_REDEEM 0x72)
+    (defconstant SETTLEMENT_CLAIM_AUTH 0x53434c4d)  ;; "SCLM"
+
+    ;; Compute full singleton puzzle hash for the deed
+    (defun-inline calculate_full_puzzle_hash (SINGLETON_MOD_HASH DEED_LAUNCHER_ID LAUNCHER_PUZZLE_HASH inner_puzzle_hash)
+        (curry_hashes SINGLETON_MOD_HASH
+            (sha256tree (c SINGLETON_MOD_HASH (c DEED_LAUNCHER_ID LAUNCHER_PUZZLE_HASH)))
+            inner_puzzle_hash
+        )
+    )
+
+    ;; DELAYED escape — safety valve after timeout
+    (defun-inline delayed_spend (SECONDS_DELAY DELAYED_PUZZLE_HASH my_amount)
+        (list
+            (list ASSERT_SECONDS_RELATIVE SECONDS_DELAY)
+            (list CREATE_COIN DELAYED_PUZZLE_HASH my_amount)
+            (list ASSERT_MY_AMOUNT my_amount)
+        )
+    )
+
+    (defun-inline deed_v3_redeem_message (deed_commitment next_puzzlehash)
+        (concat PROTOCOL_PREFIX
+            (sha256tree
+                (list DEED_SPEND_POOL_REDEEM
+                    deed_commitment
+                    next_puzzlehash)))
+    )
+
+    (defun-inline settlement_claim_message
+        (deed_coin_id deed_commitment burn_puzhash target_puzzle_hash)
+        (concat PROTOCOL_PREFIX
+            (sha256tree
+                (list SETTLEMENT_CLAIM_AUTH
+                    deed_coin_id
+                    deed_commitment
+                    burn_puzhash
+                    target_puzzle_hash)))
+    )
+
+    ;; CLAIM — deed holder burns deed, receives XCH
+    ;; The deed is released from p2_pool to BURN_INNER_PUZHASH by the pool
+    ;; settlement transaction.  p2_pool emits a commitment-bound burn
+    ;; CREATE_COIN_ANNOUNCEMENT; the pool singleton emits a separate
+    ;; governance-bound coin announcement authorizing this payout target.
+    ;; extra_args = (deed_coin_id pool_coin_id deed_commitment)
+    (defun claim_settlement (SINGLETON_MOD_HASH DEED_LAUNCHER_ID LAUNCHER_PUZZLE_HASH
+                             target_puzzle_hash my_amount
+                             deed_coin_id pool_coin_id deed_commitment)
+        (assert
+            (is-size-b32 target_puzzle_hash)
+            (is-uint64 my_amount)
+            (is-size-b32 deed_coin_id)
+            (is-size-b32 pool_coin_id)
+            (is-size-b32 deed_commitment)
+            (is-size-b32 BURN_INNER_PUZHASH)
+            (list
+                ;; Assert the deed's p2_pool_v2 coin announces the burn release.
+                (list ASSERT_COIN_ANNOUNCEMENT
+                    (sha256 deed_coin_id
+                        (deed_v3_redeem_message deed_commitment BURN_INNER_PUZHASH)))
+
+                ;; Assert the pool singleton authorized this exact payout
+                ;; target through its governance-approved deed_releases tuple.
+                (list ASSERT_COIN_ANNOUNCEMENT
+                    (sha256 pool_coin_id
+                        (settlement_claim_message
+                            deed_coin_id
+                            deed_commitment
+                            BURN_INNER_PUZHASH
+                            target_puzzle_hash)))
+
+                ;; Release settlement XCH to target (beneficiary)
+                (list CREATE_COIN target_puzzle_hash my_amount (list target_puzzle_hash))
+
+                ;; Announce claim for driver hints
+                (list CREATE_COIN_ANNOUNCEMENT
+                    (concat PROTOCOL_PREFIX (sha256 DEED_LAUNCHER_ID target_puzzle_hash)))
+
+                ;; Verify settlement amount
+                (list ASSERT_MY_AMOUNT my_amount)
+            )
+        )
+    )
+
+    ;; Main dispatch: if extra_args present → claim path, else → delayed path
+    (if extra_args
+        (claim_settlement
+            SINGLETON_MOD_HASH DEED_LAUNCHER_ID LAUNCHER_PUZZLE_HASH
+            target_puzzle_hash my_amount
+            (f extra_args) (f (r extra_args)) (f (r (r extra_args))))
+        (delayed_spend SECONDS_DELAY DELAYED_PUZZLE_HASH my_amount)
+    )
+)

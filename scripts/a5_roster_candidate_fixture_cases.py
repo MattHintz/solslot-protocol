@@ -10,7 +10,7 @@ from chia.wallet.puzzles.load_clvm import load_clvm
 from chia.wallet.puzzles.singleton_top_layer_v1_1 import puzzle_for_singleton, solution_for_singleton
 from chia_rs.sized_bytes import bytes32
 
-from populis_puzzles.admin_authority_v2_driver import (
+from solslot_puzzles.admin_authority_v2_driver import (
     SPEND_ADMIN_ROSTER_UPDATE,
     AdminRecord,
     PendingOp,
@@ -84,7 +84,7 @@ def condition_int(condition: Program, index: int) -> int:
 def bls_member_fixture() -> Program:
     return load_clvm(
         "test_fixture_bls_member.clsp",
-        package_or_requirement="populis_puzzles",
+        package_or_requirement="solslot_puzzles",
         recompile=True,
     )
 
@@ -376,8 +376,13 @@ def build_fixture() -> dict[str, Any]:
 
 
 def fixture_destination() -> Path:
-    repo_root = Path(__file__).resolve().parents[2]
-    return repo_root / "populis_portal" / "src" / "app" / "services" / "admin-authority-v2" / "admin-roster-mips-execution-coin-spend.fixture.json"
+    protocol_root = Path(__file__).resolve().parents[1]
+    return (
+        protocol_root
+        / "fixtures"
+        / "admin-authority-v2"
+        / "admin-roster-mips-execution-coin-spend.fixture.json"
+    )
 
 
 def write_fixture() -> Path:

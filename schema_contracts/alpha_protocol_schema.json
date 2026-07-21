@@ -1,0 +1,242 @@
+{
+  "version": 4,
+  "mint_publish": {
+    "draft_fields": [
+      "par_value",
+      "asset_class",
+      "property_id",
+      "collection_id",
+      "share_ppm",
+      "jurisdiction",
+      "royalty_puzhash",
+      "royalty_bps",
+      "quorum_required",
+      "off_chain_metadata"
+    ],
+    "proposal_metadata_fields": [
+      "property_id",
+      "collection_id",
+      "asset_class_name",
+      "property_id_canon",
+      "collection_id_canon",
+      "share_ppm",
+      "property_registry_coin_id",
+      "property_registry_puzzle_hash",
+      "par_value_mojos",
+      "asset_class",
+      "jurisdiction",
+      "royalty_puzhash",
+      "royalty_bps",
+      "quorum_threshold",
+      "owner_member_hash",
+      "gov_member_hash",
+      "voting_deadline",
+      "metadata_root",
+      "metadata_anchor_id",
+      "primary_purchase_usd_amount_minor"
+    ],
+    "protocol_context": [
+      {
+        "portal_key": "protocolDidSingletonStructHex",
+        "api_setting": "protocol_did_singleton_struct_hex",
+        "api_env": "SOLSLOT_PROTOCOL_DID_SINGLETON_STRUCT_HEX",
+        "kind": "serialized_clvm_program"
+      },
+      {
+        "portal_key": "protocolDidPuzhash",
+        "api_setting": "protocol_did_puzhash",
+        "api_env": "SOLSLOT_PROTOCOL_DID_PUZHASH",
+        "kind": "bytes32"
+      },
+      {
+        "portal_key": "poolLauncherId",
+        "api_setting": "pool_launcher_id",
+        "api_env": "SOLSLOT_POOL_LAUNCHER_ID",
+        "kind": "bytes32"
+      },
+      {
+        "portal_key": "p2PoolModHash",
+        "api_setting": "p2_pool_mod_hash",
+        "api_env": "SOLSLOT_P2_POOL_MOD_HASH",
+        "kind": "bytes32"
+      },
+      {
+        "portal_key": "p2VaultModHash",
+        "api_setting": "p2_vault_mod_hash",
+        "api_env": "SOLSLOT_P2_VAULT_MOD_HASH",
+        "kind": "bytes32"
+      }
+    ],
+    "property_id_canonicalization": {
+      "pipeline": [
+        "trim",
+        "upper",
+        "utf8",
+        "sha256"
+      ],
+      "empty_normalized_value": "reject"
+    },
+    "asset_classes": {
+      "RWA-RE-RES": 1
+    }
+  },
+  "zkpassport": {
+    "validator_message_fields": [
+      "policyVersion",
+      "vaultLauncherId",
+      "attestationRoot",
+      "bridgePolicyHash",
+      "bridgeCoinId",
+      "bridgeMessage",
+      "attestationLeafHash",
+      "scopedNullifier",
+      "nullifierType",
+      "serviceScopeHash",
+      "serviceSubscopeHash",
+      "proofTimestamp"
+    ],
+    "verified_proof_fields_components": [
+      {
+        "name": "scopedNullifier",
+        "type": "bytes32"
+      },
+      {
+        "name": "nullifierType",
+        "type": "uint16"
+      },
+      {
+        "name": "serviceScopeHash",
+        "type": "bytes32"
+      },
+      {
+        "name": "serviceSubscopeHash",
+        "type": "bytes32"
+      },
+      {
+        "name": "proofTimestamp",
+        "type": "uint64"
+      }
+    ],
+    "enrollment_binding_components": [
+      {
+        "name": "vaultLauncherId",
+        "type": "bytes32"
+      },
+      {
+        "name": "bridgeParentId",
+        "type": "bytes32"
+      },
+      {
+        "name": "bridgeAmount",
+        "type": "uint64"
+      }
+    ],
+    "vault_attestation_verified_event": [
+      {
+        "name": "sender",
+        "type": "address",
+        "indexed": true
+      },
+      {
+        "name": "vaultLauncherId",
+        "type": "bytes32",
+        "indexed": true
+      },
+      {
+        "name": "scopedNullifier",
+        "type": "bytes32",
+        "indexed": true
+      },
+      {
+        "name": "nullifierType",
+        "type": "uint16",
+        "indexed": false
+      },
+      {
+        "name": "serviceScopeHash",
+        "type": "bytes32",
+        "indexed": false
+      },
+      {
+        "name": "serviceSubscopeHash",
+        "type": "bytes32",
+        "indexed": false
+      },
+      {
+        "name": "proofTimestamp",
+        "type": "uint64",
+        "indexed": false
+      },
+      {
+        "name": "attestationLeafHash",
+        "type": "bytes32",
+        "indexed": false
+      },
+      {
+        "name": "attestationRoot",
+        "type": "bytes32",
+        "indexed": false
+      },
+      {
+        "name": "bridgeParentId",
+        "type": "bytes32",
+        "indexed": false
+      },
+      {
+        "name": "bridgeAmount",
+        "type": "uint64",
+        "indexed": false
+      },
+      {
+        "name": "bridgeCoinId",
+        "type": "bytes32",
+        "indexed": false
+      },
+      {
+        "name": "bridgeMessage",
+        "type": "bytes32",
+        "indexed": false
+      },
+      {
+        "name": "bridgePolicyHash",
+        "type": "bytes32",
+        "indexed": false
+      },
+      {
+        "name": "policyVersion",
+        "type": "uint16",
+        "indexed": false
+      }
+    ],
+    "emitter_constructor": [
+      {
+        "name": "verifier_",
+        "type": "address"
+      },
+      {
+        "name": "bridgePolicyHash_",
+        "type": "bytes32"
+      },
+      {
+        "name": "trustedForwarder_",
+        "type": "address"
+      },
+      {
+        "name": "trustedDirectRelayer_",
+        "type": "address"
+      }
+    ]
+  },
+  "state": {
+    "mint_lifecycle_states": [
+      "DRAFT",
+      "PROPOSED",
+      "VOTING",
+      "PASSED",
+      "FAILED",
+      "EXECUTED",
+      "MINTED",
+      "CANCELED"
+    ]
+  }
+}

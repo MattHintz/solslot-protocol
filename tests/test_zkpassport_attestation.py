@@ -4,9 +4,11 @@ import hashlib
 
 import pytest
 from chia.types.blockchain_format.program import Program
+from chia_rs import Coin
 from chia_rs.sized_bytes import bytes32
+from chia_rs.sized_ints import uint64
 
-from populis_puzzles.zkpassport_attestation import (
+from solslot_puzzles.zkpassport_attestation import (
     ZKPASSPORT_ATTEST_DOMAIN,
     ZKPASSPORT_EMPTY_ATTEST_ROOT,
     ZKPASSPORT_POLICY_VERSION,
@@ -14,6 +16,7 @@ from populis_puzzles.zkpassport_attestation import (
     compute_attestation_bridge_message,
     compute_attestation_leaf,
     compute_attestation_root,
+    compute_validator_bridge_message,
     compute_vault_subscope,
     verify_merkle_proof,
 )
@@ -141,6 +144,38 @@ class TestZkPassportBridgeMessage:
             bridge_policy_hash=bytes32(b"\x56" * 32),
         )
         assert a != b
+
+    def test_solslot_v2_matches_frozen_evm_commitment_vector(self):
+        attestation = _attestation(proof_timestamp=1_900_000_000)
+        leaf = compute_attestation_leaf(attestation)
+        root = compute_attestation_root([leaf])
+        bridge_coin_id = Coin(
+            bytes32(b"\x66" * 32),
+            BRIDGE_POLICY_HASH,
+            uint64(1),
+        ).name()
+        bridge_message = compute_attestation_bridge_message(
+            vault_launcher_id=VAULT_LAUNCHER_ID,
+            attestation_root=root,
+            bridge_policy_hash=BRIDGE_POLICY_HASH,
+        )
+        validator_message = compute_validator_bridge_message(
+            vault_launcher_id=VAULT_LAUNCHER_ID,
+            attestation_root=root,
+            bridge_policy_hash=BRIDGE_POLICY_HASH,
+            bridge_coin_id=bridge_coin_id,
+            bridge_message=bridge_message,
+            attestation_leaf_hash=leaf,
+            scoped_nullifier=SCOPED_NULLIFIER,
+            nullifier_type=1,
+            service_scope_hash=SERVICE_SCOPE_HASH,
+            service_subscope_hash=SERVICE_SUBSCOPE_HASH,
+            proof_timestamp=1_900_000_000,
+        )
+        assert leaf.hex() == "649f7d41ff41ca34bf0d091ba762cefce1d545677e5aa5dfb8205fc878b84d7c"
+        assert bridge_coin_id.hex() == "30c14b0547553627bde49cd6021cbddc7e0dea379ce600c8832533027612f065"
+        assert bridge_message.hex() == "ec76c723774501aa2afe0153fff45efddbdc49c69a6aa67e0f6d269b6a7e49bc"
+        assert validator_message.hex() == "093507a5ff3da02672f47dba4aecfa76fbccbd1fcbaf5417217fe6f67b9beac0"
 
 
 class TestZkPassportMerkleProof:

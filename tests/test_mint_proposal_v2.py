@@ -16,9 +16,13 @@ from __future__ import annotations
 import pytest
 from chia.types.blockchain_format.program import Program
 from chia.wallet.puzzles.load_clvm import load_clvm
+from chia.wallet.puzzles.singleton_top_layer_v1_1 import (
+    SINGLETON_LAUNCHER_HASH,
+    SINGLETON_MOD_HASH,
+)
 from chia_rs.sized_bytes import bytes32
 
-from populis_puzzles.mint_proposal_v2_driver import (
+from solslot_puzzles.mint_proposal_v2_driver import (
     MintProposalV2State,
     STATE_APPROVED,
     STATE_CANCELLED,
@@ -44,11 +48,13 @@ from populis_puzzles.mint_proposal_v2_driver import (
 # Pinned mod hash for the V2 puzzle.  Update both here AND in the
 # portal's TS port if the .clsp source changes intentionally.
 PINNED_V2_MOD_HASH = bytes32.fromhex(
-    "1d3838f04de2d8b864c0b96f7f14d7fc8ec6bd39940806e2fa4087b520138517"
+    "bb1379bc24f0a02ca27de58e2200ae4cd1fc1e58d53a49d1119600108741d37e"
 )
 
 # Sample proposal data.
 PROPERTY_ID_CANON = bytes32(b"\x11" * 32)
+COLLECTION_ID_CANON = bytes32(b"\x12" * 32)
+SHARE_PPM = 750_000
 PAR_VALUE = 100_000
 ROYALTY_BPS = 250
 QUORUM_THRESHOLD = 1_000_000
@@ -58,6 +64,36 @@ SENTINEL_OWNER_HASH = bytes32(b"\xAA" * 32)
 SENTINEL_GOV_HASH = bytes32(b"\xBB" * 32)
 SENTINEL_OTHER_HASH = bytes32(b"\xCC" * 32)
 SINGLETON_AMOUNT = 1
+GOVERNANCE_LAUNCHER_ID = bytes32(b"\xD1" * 32)
+GOVERNANCE_SINGLETON_STRUCT = Program.to(
+    (SINGLETON_MOD_HASH, (GOVERNANCE_LAUNCHER_ID, SINGLETON_LAUNCHER_HASH))
+)
+GOVERNANCE_PROPOSAL_HASH = bytes32(b"\xD2" * 32)
+DEED_LAUNCHER_ID = bytes32(b"\xD3" * 32)
+DID_INNER_PUZZLE_HASH = bytes32(b"\xD4" * 32)
+DEED_FULL_PUZZLE_HASH = bytes32(b"\xD5" * 32)
+
+_driver_make_inner_puzzle = make_inner_puzzle
+_driver_make_inner_puzzle_hash = make_inner_puzzle_hash
+
+
+def make_inner_puzzle(**kwargs) -> Program:
+    """Apply the immutable execution context shared by these unit fixtures."""
+    kwargs.setdefault("governance_singleton_struct", GOVERNANCE_SINGLETON_STRUCT)
+    kwargs.setdefault("governance_proposal_hash", GOVERNANCE_PROPOSAL_HASH)
+    kwargs.setdefault("deed_launcher_id", DEED_LAUNCHER_ID)
+    kwargs.setdefault("did_inner_puzzle_hash", DID_INNER_PUZZLE_HASH)
+    kwargs.setdefault("deed_full_puzzle_hash", DEED_FULL_PUZZLE_HASH)
+    return _driver_make_inner_puzzle(**kwargs)
+
+
+def make_inner_puzzle_hash(**kwargs) -> bytes32:
+    kwargs.setdefault("governance_singleton_struct", GOVERNANCE_SINGLETON_STRUCT)
+    kwargs.setdefault("governance_proposal_hash", GOVERNANCE_PROPOSAL_HASH)
+    kwargs.setdefault("deed_launcher_id", DEED_LAUNCHER_ID)
+    kwargs.setdefault("did_inner_puzzle_hash", DID_INNER_PUZZLE_HASH)
+    kwargs.setdefault("deed_full_puzzle_hash", DEED_FULL_PUZZLE_HASH)
+    return _driver_make_inner_puzzle_hash(**kwargs)
 
 
 # \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
@@ -80,7 +116,7 @@ def _bls_member_fixture() -> Program:
     if _BLS_MEMBER_FIXTURE is None:
         _BLS_MEMBER_FIXTURE = load_clvm(
             "test_fixture_bls_member.clsp",
-            package_or_requirement="populis_puzzles",
+            package_or_requirement="solslot_puzzles",
             recompile=True,
         )
     return _BLS_MEMBER_FIXTURE
@@ -98,7 +134,7 @@ def _eip712_member_fixture() -> Program:
     if _EIP712_MEMBER_FIXTURE is None:
         _EIP712_MEMBER_FIXTURE = load_clvm(
             "test_fixture_eip712_member.clsp",
-            package_or_requirement="populis_puzzles",
+            package_or_requirement="solslot_puzzles",
             recompile=True,
         )
     return _EIP712_MEMBER_FIXTURE
@@ -227,10 +263,17 @@ def _draft_state(
         gov_member_hash=bytes32(gov_member_hash),
         proposal_data_hash=compute_proposal_data_hash(
             property_id_canon=PROPERTY_ID_CANON,
+            collection_id_canon=COLLECTION_ID_CANON,
+            share_ppm=SHARE_PPM,
             par_value_mojos=PAR_VALUE,
             royalty_bps=ROYALTY_BPS,
             quorum_threshold=QUORUM_THRESHOLD,
         ),
+        governance_singleton_struct=GOVERNANCE_SINGLETON_STRUCT,
+        governance_proposal_hash=GOVERNANCE_PROPOSAL_HASH,
+        deed_launcher_id=DEED_LAUNCHER_ID,
+        did_inner_puzzle_hash=DID_INNER_PUZZLE_HASH,
+        deed_full_puzzle_hash=DEED_FULL_PUZZLE_HASH,
         proposal_state=STATE_DRAFT,
         state_version=state_version,
     )
@@ -396,7 +439,7 @@ class TestApproveSpendBls:
     def test_emits_announcement_with_protocol_prefix(self):
         """CREATE_PUZZLE_ANNOUNCEMENT body equals
         ``PROTOCOL_PREFIX || sha256tree([case, new_state, new_version])``,
-        wire-compatible with V1 monitors.
+        stable for Solslot V2 monitors.
         """
         puzzle, solution, artifacts = self._setup()
         conditions = list(puzzle.run(solution).as_iter())
@@ -405,7 +448,7 @@ class TestApproveSpendBls:
         )
         assert ann is not None
         body = bytes(ann.rest().first().as_atom())
-        expected_body = b"\x50" + bytes(
+        expected_body = b"\x53" + bytes(
             compute_transition_message(
                 transition_case=TRANSITION_APPROVE,
                 new_state=STATE_APPROVED,
@@ -844,10 +887,14 @@ class TestBindingHashReplayProtection:
     def test_binding_hash_unique_per_proposal_data(self):
         prop_a = compute_proposal_data_hash(
             property_id_canon=bytes32(b"\x01" * 32),
+            collection_id_canon=COLLECTION_ID_CANON,
+            share_ppm=SHARE_PPM,
             par_value_mojos=1, royalty_bps=0, quorum_threshold=1,
         )
         prop_b = compute_proposal_data_hash(
             property_id_canon=bytes32(b"\x02" * 32),
+            collection_id_canon=COLLECTION_ID_CANON,
+            share_ppm=SHARE_PPM,
             par_value_mojos=1, royalty_bps=0, quorum_threshold=1,
         )
         a = compute_binding_hash(

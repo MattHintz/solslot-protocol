@@ -3,11 +3,11 @@
 # Regenerate the portal-side bundled puzzle hex constant for
 # admin_authority_v2_inner.clsp.
 #
-# The portal can't depend on populis_puzzles at runtime (different
+# The portal can't depend on solslot_puzzles at runtime (different
 # language, different repo), so the compiled bytecode is bundled as
 # a TS string literal.  This script reads
-# ``populis_puzzles/admin_authority_v2_inner.clsp.hex`` and rewrites
-# ``populis_portal/src/app/services/admin-authority-v2/admin-authority-v2.puzzle-hex.ts``.
+# ``solslot_puzzles/admin_authority_v2_inner.clsp.hex`` and rewrites
+# ``solslot-portal/src/app/services/admin-authority-v2/admin-authority-v2.puzzle-hex.ts``.
 #
 # Run this whenever the .clsp source changes.  The cross-repo
 # regression test (``tests/test_v2_fixtures.py::test_mod_hash_is_a_known_constant``)
@@ -17,12 +17,13 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." &> /dev/null && pwd)"
-SOURCE="$REPO_ROOT/populis_puzzles/admin_authority_v2_inner.clsp.hex"
-DEST="$REPO_ROOT/../populis_portal/src/app/services/admin-authority-v2/admin-authority-v2.puzzle-hex.ts"
+PORTAL_ROOT="${SOLSLOT_PORTAL_ROOT:-$REPO_ROOT/../solslot-portal}"
+SOURCE="$REPO_ROOT/solslot_puzzles/admin_authority_v2_inner.clsp.hex"
+DEST="$PORTAL_ROOT/src/app/services/admin-authority-v2/admin-authority-v2.puzzle-hex.ts"
 
 if [[ ! -f "$SOURCE" ]]; then
   echo "ERROR: puzzle hex not found at $SOURCE" >&2
-  echo "  Try: cd populis_protocol && .venv/bin/python -c 'from populis_puzzles import load_puzzle; load_puzzle(\"admin_authority_v2_inner.clsp\")'" >&2
+  echo "  Try: cd solslot-protocol && .venv/bin/python -c 'from solslot_puzzles import load_puzzle; load_puzzle(\"admin_authority_v2_inner.clsp\")'" >&2
   exit 1
 fi
 
@@ -36,20 +37,20 @@ cat > "$DEST" <<'HEADER'
  * Compiled bytecode of `admin_authority_v2_inner.clsp` (Phase 9-Hermes-C).
  *
  * Bundled at build time from
- * ``populis_protocol/populis_puzzles/admin_authority_v2_inner.clsp.hex``
- * via the helper script ``populis_protocol/scripts/dump_v2_puzzle_hex.sh``.
+ * ``solslot-protocol/solslot_puzzles/admin_authority_v2_inner.clsp.hex``
+ * via the helper script ``solslot-protocol/scripts/dump_v2_puzzle_hex.sh``.
  *
  * The portal feeds this hex into ``Clvm.deserialize()`` (chia-wallet-sdk-wasm)
  * to construct the inner puzzle Program client-side.  This is what makes the
  * WASM-first path possible: no API call needed to obtain the puzzle.
  *
  * **CRITICAL**: this constant MUST stay in sync with the .hex file in
- * populis_protocol.  The cross-repo regression test
- * ``populis_protocol/tests/test_v2_fixtures.py::test_mod_hash_is_a_known_constant``
+ * solslot-protocol.  The cross-repo regression test
+ * ``solslot-protocol/tests/test_v2_fixtures.py::test_mod_hash_is_a_known_constant``
  * pins the tree hash of this bytecode.  If the puzzle source changes,
  * regenerate via:
  *
- *     cd populis_protocol
+ *     cd solslot-protocol
  *     bash scripts/dump_v2_puzzle_hex.sh
  *
  * which rewrites this file.

@@ -1,8 +1,8 @@
-# Populis Protocol
+# Solslot Protocol
 
 **A sketch architectural framework for tokenized real-world assets on Chia.**
 
-Populis is a publicly visible, proprietary-licensed protocol for issuing, pooling, and settling real-world asset (RWA) tokens entirely on-chain. No servers. No databases. No oracles. Just puzzles, singletons, and a full node.
+Solslot is a publicly visible, proprietary-licensed protocol for issuing, pooling, and settling real-world asset (RWA) tokens entirely on-chain. No servers. No databases. No oracles. Just puzzles, singletons, and a full node.
 
 > This is an early-stage architectural sketch — working code, passing tests, but not audited. Built in public to advance the conversation about what RWA infrastructure should look like on a UTXO chain.
 
@@ -14,7 +14,7 @@ Existing tokenized real-world asset platforms share a common flaw: they inherit 
 
 The result is a system that is *on* a blockchain but not *of* a blockchain. Kill the server and the assets become unreachable. Revoke the API key and the tokens become worthless.
 
-**Populis takes the opposite approach.** Every piece of state — asset metadata, pool balances, governance votes, settlement distributions — lives in the coin set. The protocol operates through puzzle evaluation alone. If every server in the world shuts down, a user with a full node can still locate, verify, and move their assets.
+**Solslot takes the opposite approach.** Every piece of state — asset metadata, pool balances, governance votes, settlement distributions — lives in the coin set. The protocol operates through puzzle evaluation alone. If every server in the world shuts down, a user with a full node can still locate, verify, and move their assets.
 
 This is what RWA infrastructure looks like when you take the "decentralized" part seriously.
 
@@ -41,7 +41,7 @@ This is what RWA infrastructure looks like when you take the "decentralized" par
 
 ### Core Contracts (21 production puzzles)
 
-The base protocol stack (12 production puzzles, before the A.x trust-root and PGT extensions):
+The base protocol stack (12 production puzzles, before the A.x trust-root and SGT extensions):
 
 | Contract | Role |
 |----------|------|
@@ -59,14 +59,14 @@ The base protocol stack (12 production puzzles, before the A.x trust-root and PG
 
 Plus four trust-root singletons (the **A.1..A.4 series**) replacing
 off-chain env-var trust roots with on-chain primitives — see
-`../populis_api/SECURITY.md` for the full audit narrative:
+the Solslot API security notes for the full audit narrative:
 
 | Contract | Role | Closes |
 |----------|------|--------|
-| `protocol_config_inner` (A.3) | Curries `(pool_launcher_id, governance_launcher_id, network, version)`; emits `state_hash` on every update. | Off-chain `POPULIS_POOL_LAUNCHER_ID` / `POPULIS_GOVERNANCE_LAUNCHER_ID` / `POPULIS_NETWORK` env-var trust roots. |
-| `admin_authority_inner` (A.2 v1) | m-of-n quorum singleton; rotation requires *m* `AGG_SIG_ME`s from the curried allowlist plus a strictly increasing version. | `POP-CANON-012` foundation (live key revocation = chain event). |
-| `property_registry_inner` (A.4) | Append-only on-chain log of canonicalised property IDs; each spend emits a `CREATE_PUZZLE_ANNOUNCEMENT` carrying `PROTOCOL_PREFIX \|\| property_id_canon`. | `POP-CANON-014` foundation. |
-| `mint_proposal_inner` (A.1 v1) | Per-proposal state-machine singleton: DRAFT → APPROVED (gov-signed) / CANCELLED (owner-signed). Each transition is replay-protected via monotonic version. | `POP-CANON-013` foundation. |
+| `protocol_config_inner` (A.3) | Curries `(pool_launcher_id, governance_launcher_id, network, version)`; emits `state_hash` on every update. | Off-chain `SOLSLOT_POOL_LAUNCHER_ID` / `SOLSLOT_GOVERNANCE_LAUNCHER_ID` / `SOLSLOT_NETWORK` env-var trust roots. |
+| `admin_authority_inner` (A.2 v1) | m-of-n quorum singleton; rotation requires *m* `AGG_SIG_ME`s from the curried allowlist plus a strictly increasing version. | `V1-CANON-012` foundation (live key revocation = chain event). |
+| `property_registry_inner` (A.4) | Append-only on-chain log of canonicalised property IDs; each spend emits a `CREATE_PUZZLE_ANNOUNCEMENT` carrying `PROTOCOL_PREFIX \|\| property_id_canon`. | `V1-CANON-014` foundation. |
+| `mint_proposal_inner` (A.1 v1) | Per-proposal state-machine singleton: DRAFT → APPROVED (gov-signed) / CANCELLED (owner-signed). Each transition is replay-protected via monotonic version. | `V1-CANON-013` foundation. |
 
 **Phase 9-Hermes-D — MIPS-pluggable v2 lineage** (CHIP-0043 / CHIP-0036 / CHIP-0037):
 
@@ -75,16 +75,17 @@ off-chain env-var trust roots with on-chain primitives — see
 | `admin_authority_v2_inner` | A.2 v2 — thin singleton inner that delegates authentication to a CHIP-0043 MIPS `m_of_n` quorum. Each admin slot is a `OneOfN` of personal auth methods (BLS, EIP-712, passkey/WebAuthn, …); the protocol-level admin set is an `MofN` over those slots. Six on-chain spend tags: `OPERATIONAL`, `KEY_ADD_PROPOSE/ACTIVATE/VETO`, `KEY_REMOVE_QUORUM/EMERGENCY`. Polymorphic `ACTIVATE` handles both add and remove pending ops via the `op_kind` field. |
 | `mint_proposal_inner_v2` | A.1 v2 — replaces the v1 hard-coded BLS `OWNER_PUBKEY` / `GOV_PUBKEY` with curried CHIP-0043 member tree hashes. A single proposal can mix any member type (BLS, Eip712Member EVM, passkey) for owner and gov independently. Replay protection: `binding_hash = sha256tree(transition_case ‖ new_state_version ‖ PROPOSAL_DATA_HASH)` locks each member signature to a specific (case, version, proposal) triple. |
 
-The v1 puzzles remain shipped — both lineages coexist so existing
-deployments don't have to migrate atomically.
+The active package ships only the Solslot V2 lineage. Retired contracts and
+coordinates are quarantined outside release repositories and cannot be loaded
+by deployment tooling.
 
-**PGT (Populis Governance Token) puzzles:**
+**SGT (Solslot Governance Token) puzzles:**
 
 | Contract | Role |
 |----------|------|
-| `pgt_tail` | CAT tail enforcing the dual-supply (locked + free) governance-token model. |
-| `pgt_locked_inner` | Locked-PGT inner — holds vesting / committee allocations; release requires governance approval. |
-| `pgt_free_inner` | Free-PGT inner — freely transferable governance-vote token issued from `pgt_locked_inner` on unlock. |
+| `sgt_tail` | CAT tail enforcing the dual-supply (locked + free) governance-token model. |
+| `sgt_locked_inner` | Locked-SGT inner — holds vesting / committee allocations; release requires governance approval. |
+| `sgt_free_inner` | Free-SGT inner — freely transferable governance-vote token issued from `sgt_locked_inner` on unlock. |
 
 ### Key Design Decisions
 
@@ -99,8 +100,8 @@ deployments don't have to migrate atomically.
 ## Project Structure
 
 ```
-populis_protocol/
-├── populis_puzzles/          # Core contract package
+solslot-protocol/
+├── solslot_puzzles/          # Core contract package
 │   ├── *.clsp                # 21 production puzzles + 2 test fixtures
 │   ├── *.clib                # include libraries
 │   ├── *.clsp.hex            # Pre-compiled (checksum-verified on import)
@@ -111,7 +112,7 @@ populis_protocol/
 │   ├── property_registry_driver.py   # A.4 — property-registry singleton
 │   ├── mint_proposal_driver.py       # A.1 v1 — BLS-only proposal lifecycle
 │   ├── mint_proposal_v2_driver.py    # A.1 v2 — MIPS-pluggable proposal lifecycle
-│   ├── pgt_driver.py                 # PGT (governance token) helpers
+│   ├── sgt_driver.py                 # SGT (governance token) helpers
 │   ├── vault_driver.py               # Vault singleton + EIP-712 envelope helpers
 │   └── __init__.py           # load_puzzle(), verify_puzzle_checksum()
 ├── scripts/                  # Cross-repo fixture + puzzle-hex dumpers
@@ -130,8 +131,8 @@ populis_protocol/
 
 ```bash
 # Clone
-git clone https://github.com/MattHintz/populis-protocol.git
-cd populis-protocol
+git clone https://github.com/solslot/solslot-protocol.git
+cd solslot-protocol
 
 # Setup
 python3 -m venv .venv
@@ -171,7 +172,7 @@ the Phase 9-Hermes-D MIPS-pluggable v2 lineage):
 - `test_property_registry.py` — append-only log semantics, canonicalisation, CLVM replay rejection.
 - `test_mint_proposal.py` — v1 per-proposal state machine, transition signing, state-machine guards, replay protection.
 - `test_mint_proposal_v2.py` — v2 MIPS-pluggable proposal lifecycle: BLS, Eip712Member, mixed-curve owner/gov, binding-hash replay across (case, version, proposal) triples, member-hash enforcement, monotonic-version + transition-case guards (25 tests).
-- `test_v2_fixtures.py` — cross-repo fixture round-trip for the TS port in `populis_portal`.
+- `test_v2_fixtures.py` — cross-repo fixture round-trip for the TS port in Solslot Portal.
 
 All tests run via pure puzzle evaluation (`.run()` on curried programs). No SpendSim required for unit tests.
 
@@ -189,7 +190,7 @@ Real-world assets are the largest addressable market for blockchain technology. 
 
 This architecture fails the most basic test of blockchain utility: **it doesn't survive the removal of trusted parties.**
 
-## The Populis Thesis
+## The Solslot Thesis
 
 RWA tokenization works when the protocol enforces the rules that matter — gated transfer, on-chain metadata, governance-approved settlement — at the puzzle level, not the application level.
 
@@ -239,7 +240,7 @@ On Chia's coin-set model, every constraint is part of the puzzle hash. You can't
 
 All inter-contract coordination uses **CHIP-25** (`SEND_MESSAGE 0x10` / `RECEIVE_MESSAGE 0x10`) for verified message passing, with `CREATE_PUZZLE_ANNOUNCEMENT` / `ASSERT_PUZZLE_ANNOUNCEMENT` for token authorization and deed release.
 
-Every announcement is prefixed with `0x50` ("P") to namespace protocol messages from user-generated announcements. All contracts validate inputs with `is-uint64` and `is-size-b32` on every parameter.
+Every announcement is prefixed with `0x53` ("P") to namespace protocol messages from user-generated announcements. All contracts validate inputs with `is-uint64` and `is-size-b32` on every parameter.
 
 Puzzle integrity is verified on import via SHA256 checksum of all compiled `.clsp.hex` files.
 
@@ -273,7 +274,7 @@ collaborating or licensing the Software, please contact the Author.
 pytest -v
 
 # Check puzzle integrity
-python -c "from populis_puzzles import verify_puzzle_checksum; verify_puzzle_checksum()"
+python -c "from solslot_puzzles import verify_puzzle_checksum; verify_puzzle_checksum()"
 ```
 
 ---

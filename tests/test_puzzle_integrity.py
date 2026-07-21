@@ -1,4 +1,4 @@
-"""Integrity tests for the populis_puzzles canonical set + frozen checksum.
+"""Integrity tests for the solslot_puzzles canonical set + frozen checksum.
 
 These guard the exact failure mode that let commit c8eef7e (the vault EIP-712
 chainId change to Base Sepolia) silently drift the compiled puzzles away from
@@ -6,7 +6,7 @@ chainId change to Base Sepolia) silently drift the compiled puzzles away from
 accompanied by a refreeze, or ``test_frozen_checksum_matches_compiled_puzzles``
 fails loudly in CI.
 """
-from populis_puzzles import (
+from solslot_puzzles import (
     FROZEN_CHECKSUM,
     PUZZLE_FILENAMES,
     compute_puzzles_checksum,
@@ -36,6 +36,16 @@ def test_vault_version_registry_is_canonical_and_loadable():
         mod.get_tree_hash()
         == load_puzzle("vault_version_registry_inner.clsp").get_tree_hash()
     )
+
+
+def test_solslot_v2_pool_modules_are_canonical_and_loadable():
+    for filename in (
+        "pool_singleton_inner_v3.clsp",
+        "smart_deed_inner_v2.clsp",
+        "p2_pool_v2.clsp",
+    ):
+        assert filename in PUZZLE_FILENAMES
+        assert load_puzzle(filename).get_tree_hash() is not None
 
 
 def test_no_duplicate_puzzle_filenames():

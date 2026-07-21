@@ -1,7 +1,7 @@
 """Unit tests for the v2 governance proposal tracker.
 
 The tracker replaces the legacy raw-`vote_weight` puzzle (CRITICAL-3 audit
-fix).  Vote weight is now bound to PGT CAT lock announcements; the tracker
+fix).  Vote weight is now bound to SGT CAT lock announcements; the tracker
 enforces a CAT-conservation-backed quorum check before EXECUTE can dispatch
 a bill to the pool / DID.
 
@@ -12,7 +12,7 @@ Test scope:
   - EXPIRE clears state when quorum is not met.
   - Schema validation (proposal_hash == sha256tree(bill_op), idle preconditions).
 
-These tests drive the puzzle directly with synthetic CAT-wrapped PGT
+These tests drive the puzzle directly with synthetic CAT-wrapped SGT
 announcements; full CAT2 lifecycle is exercised by the e2e simulator test
 (Step D / Milestone 1).
 """
@@ -24,30 +24,34 @@ import pytest
 from chia.types.blockchain_format.program import Program
 from chia_rs.sized_bytes import bytes32
 
-from populis_puzzles.pgt_driver import (
+from solslot_puzzles.sgt_driver import (
     BILL_FREEZE,
     BILL_MINT,
     BILL_SETTLE,
     BILL_VAULT_VERSION,
+    KOS_MINT_EXECUTE_TAG,
     SINGLETON_LAUNCHER_HASH,
+    TEST_KOS_MINT_EXECUTE_PUBKEY,
     TRK_EXECUTE,
     TRK_EXPIRE,
     TRK_PROPOSE,
     TRK_VOTE,
     bill_freeze,
-    bill_mint,
+    bill_mint as build_mint_bill,
     bill_settle,
     bill_vault_version,
-    cat_pgt_free_puzzle_hash,
-    pgt_free_inner_mod,
-    pgt_locked_inner_mod,
+    cat_sgt_free_puzzle_hash,
+    deed_releases_hash,
+    kos_mint_execute_message,
+    sgt_free_inner_mod,
+    sgt_locked_inner_mod,
     proposal_hash_from_bill,
     proposal_tracker_inner_puzzle,
     proposal_tracker_mod,
     vault_version_approval_message,
     vault_version_content_hash,
 )
-from populis_puzzles import vault_version_registry_driver as vvr
+from solslot_puzzles import vault_version_registry_driver as vvr
 
 
 PuzzleError = ValueError
@@ -64,6 +68,7 @@ ASSERT_MY_PUZZLEHASH = 72
 ASSERT_SECONDS_ABSOLUTE = 81
 ASSERT_BEFORE_SECONDS_ABSOLUTE = 85
 REMARK = 1
+AGG_SIG_ME = 50
 
 
 # ── Common fixtures ──────────────────────────────────────────────────────────
@@ -80,24 +85,30 @@ POOL_STRUCT = Program.to(
 
 DID_PUZHASH = bytes32(b"\xd0" * 32)
 CAT_MOD_HASH = bytes32(b"\xca" * 32)
-PGT_TAIL_HASH = bytes32(b"\xea" * 32)
+SGT_TAIL_HASH = bytes32(b"\xea" * 32)
 
-PGT_FREE_MOD_HASH = bytes32(pgt_free_inner_mod().get_tree_hash())
-PGT_LOCKED_MOD_HASH = bytes32(pgt_locked_inner_mod().get_tree_hash())
+SGT_FREE_MOD_HASH = bytes32(sgt_free_inner_mod().get_tree_hash())
+SGT_LOCKED_MOD_HASH = bytes32(sgt_locked_inner_mod().get_tree_hash())
 TRACKER_MOD_HASH = bytes32(proposal_tracker_mod().get_tree_hash())
 
 QUORUM_BPS = 5000        # 50%
 VOTING_WINDOW = 300      # 5 min
-PGT_TOTAL_SUPPLY = 1_000_000
+SGT_TOTAL_SUPPLY = 1_000_000
 MIN_PROPOSAL_STAKE = 10_000  # 1% of supply, anti-spam
 
 VOTER_INNER_PUZHASH = bytes32(b"\x77" * 32)
+PROPERTY_ID = bytes32(b"\x71" * 32)
+PROPERTY_REGISTRY_PUZHASH = bytes32(b"\x72" * 32)
 
 # Tracker self identity at the time of a spend
 TRACKER_AMOUNT = 1
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
+def mint_bill(deed_full_puzhash: bytes32) -> Program:
+    return build_mint_bill(deed_full_puzhash, PROPERTY_ID, PROPERTY_REGISTRY_PUZHASH)
+
+
 def _curry_tracker(
     proposal_hash: int = 0,
     bill_op: int = 0,
@@ -106,16 +117,17 @@ def _curry_tracker(
 ) -> Program:
     return proposal_tracker_inner_puzzle(
         TRACKER_STRUCT,
-        PGT_FREE_MOD_HASH,
-        PGT_LOCKED_MOD_HASH,
+        SGT_FREE_MOD_HASH,
+        SGT_LOCKED_MOD_HASH,
         CAT_MOD_HASH,
-        PGT_TAIL_HASH,
+        SGT_TAIL_HASH,
         DID_PUZHASH,
         POOL_STRUCT,
         QUORUM_BPS,
         VOTING_WINDOW,
-        PGT_TOTAL_SUPPLY,
+        SGT_TOTAL_SUPPLY,
         MIN_PROPOSAL_STAKE,
+        TEST_KOS_MINT_EXECUTE_PUBKEY,
         proposal_hash=proposal_hash,
         bill_operation=bill_op,
         vote_tally=vote_tally,
@@ -197,17 +209,17 @@ def _expected_lock_announcement_id(
     voting_deadline: int,
 ) -> bytes32:
     """Compute the LOCK announcement id the tracker expects."""
-    sender_ph = cat_pgt_free_puzzle_hash(
+    sender_ph = cat_sgt_free_puzzle_hash(
         TRACKER_STRUCT,
-        PGT_FREE_MOD_HASH,
-        PGT_LOCKED_MOD_HASH,
+        SGT_FREE_MOD_HASH,
+        SGT_LOCKED_MOD_HASH,
         CAT_MOD_HASH,
-        PGT_TAIL_HASH,
+        SGT_TAIL_HASH,
         voter_inner_puzhash,
     )
     LOCK_TAG = b"LOCK"
     msg_body = Program.to([LOCK_TAG, proposal_hash, amount, voting_deadline]).get_tree_hash()
-    msg = b"\x50" + msg_body  # PROTOCOL_PREFIX + sha256tree(...)
+    msg = b"\x53" + msg_body  # PROTOCOL_PREFIX + sha256tree(...)
     return bytes32(hashlib.sha256(sender_ph + msg).digest())
 
 
@@ -217,13 +229,13 @@ def _expected_lock_announcement_id(
 class TestPropose:
     def test_propose_emits_lock_announcement_and_recurries_to_open_state(self):
         """Tracker is idle → PROPOSE opens it.  Verify the puzzle:
-        - asserts PGT lock announcement covering first_vote_amount
+        - asserts SGT lock announcement covering first_vote_amount
         - creates a child tracker with proposal_hash / bill / tally / deadline
         - asserts now is within the voting window
         - DOES NOT assert any DID PROP announcement (legacy gate removed in fix C-1)
         """
         deed_full_ph = bytes32(b"\x33" * 32)
-        bill = bill_mint(deed_full_ph)
+        bill = mint_bill(deed_full_ph)
         proposal_hash = proposal_hash_from_bill(bill)
         first_vote = 600_000  # 60% of 1M = above quorum, also ≫ MIN_PROPOSAL_STAKE
         # Pick a future deadline.
@@ -243,15 +255,15 @@ class TestPropose:
 
         # Check the structure
         assert CREATE_COIN in codes              # next tracker state
-        assert ASSERT_PUZZLE_ANNOUNCEMENT in codes  # PGT lock only (DID gate removed)
+        assert ASSERT_PUZZLE_ANNOUNCEMENT in codes  # SGT lock only (DID gate removed)
         assert ASSERT_BEFORE_SECONDS_ABSOLUTE in codes
         assert ASSERT_SECONDS_ABSOLUTE in codes  # lower bound
         assert REMARK in codes
 
-        # Exactly one ASSERT_PUZZLE_ANNOUNCEMENT — the PGT lock
+        # Exactly one ASSERT_PUZZLE_ANNOUNCEMENT — the SGT lock
         assertions = [c for c in conds if _atom_int(c[0]) == ASSERT_PUZZLE_ANNOUNCEMENT]
         assert len(assertions) == 1, (
-            f"Expected only the PGT-lock assertion (DID PROP gate dropped); "
+            f"Expected only the SGT-lock assertion (DID PROP gate dropped); "
             f"got {len(assertions)} ASSERT_PUZZLE_ANNOUNCEMENT entries."
         )
 
@@ -265,7 +277,7 @@ class TestPropose:
         """Tracker has an active proposal → PROPOSE must fail."""
         curried = _curry_tracker(
             proposal_hash=bytes32(b"\xee" * 32),
-            bill_op=bill_mint(bytes32(b"\x33" * 32)),
+            bill_op=mint_bill(bytes32(b"\x33" * 32)),
             vote_tally=100,
             voting_deadline=2_000_000_000,
         )
@@ -273,7 +285,7 @@ class TestPropose:
         sol = Program.to([
             my_id, my_ph, TRACKER_AMOUNT,
             TRK_PROPOSE,
-            [bytes32(b"\xff" * 32), bill_mint(bytes32(b"\x44" * 32)),
+            [bytes32(b"\xff" * 32), mint_bill(bytes32(b"\x44" * 32)),
              VOTER_INNER_PUZHASH, 100, 2_100_000_000],
         ])
         with pytest.raises(PuzzleError):
@@ -283,7 +295,7 @@ class TestPropose:
         """proposal_hash must equal sha256tree(bill_op)."""
         curried = _curry_tracker()
         my_id, my_ph = _tracker_my_id_and_ph(curried)
-        bill = bill_mint(bytes32(b"\x33" * 32))
+        bill = mint_bill(bytes32(b"\x33" * 32))
         wrong_hash = bytes32(b"\xab" * 32)
         sol = Program.to([
             my_id, my_ph, TRACKER_AMOUNT,
@@ -293,11 +305,25 @@ class TestPropose:
         with pytest.raises(PuzzleError):
             curried.run(sol)
 
+    def test_propose_rejects_unknown_bill_tag(self):
+        """PA3: malformed bills must not enter the open governance state."""
+        curried = _curry_tracker()
+        my_id, my_ph = _tracker_my_id_and_ph(curried)
+        bill = Program.to([b"X", bytes32(b"\x33" * 32), 0])
+        ph = proposal_hash_from_bill(bill)
+        sol = Program.to([
+            my_id, my_ph, TRACKER_AMOUNT,
+            TRK_PROPOSE,
+            [ph, bill, VOTER_INNER_PUZHASH, MIN_PROPOSAL_STAKE, 2_000_000_000],
+        ])
+        with pytest.raises(PuzzleError):
+            curried.run(sol)
+
     def test_propose_rejects_zero_first_vote(self):
         """Zero stake fails the MIN_PROPOSAL_STAKE check."""
         curried = _curry_tracker()
         my_id, my_ph = _tracker_my_id_and_ph(curried)
-        bill = bill_mint(bytes32(b"\x33" * 32))
+        bill = mint_bill(bytes32(b"\x33" * 32))
         ph = proposal_hash_from_bill(bill)
         sol = Program.to([
             my_id, my_ph, TRACKER_AMOUNT,
@@ -311,7 +337,7 @@ class TestPropose:
         """Stake just below MIN_PROPOSAL_STAKE fails (anti-spam)."""
         curried = _curry_tracker()
         my_id, my_ph = _tracker_my_id_and_ph(curried)
-        bill = bill_mint(bytes32(b"\x33" * 32))
+        bill = mint_bill(bytes32(b"\x33" * 32))
         ph = proposal_hash_from_bill(bill)
         sol = Program.to([
             my_id, my_ph, TRACKER_AMOUNT,
@@ -325,7 +351,7 @@ class TestPropose:
         """Stake exactly at MIN_PROPOSAL_STAKE is accepted (boundary inclusive)."""
         curried = _curry_tracker()
         my_id, my_ph = _tracker_my_id_and_ph(curried)
-        bill = bill_mint(bytes32(b"\x33" * 32))
+        bill = mint_bill(bytes32(b"\x33" * 32))
         ph = proposal_hash_from_bill(bill)
         sol = Program.to([
             my_id, my_ph, TRACKER_AMOUNT,
@@ -338,9 +364,10 @@ class TestPropose:
         # Sanity: state recreation captured the boundary stake as initial tally.
         cc = next(c for c in conds if _atom_int(c[0]) == CREATE_COIN)
         expected_next = proposal_tracker_inner_puzzle(
-            TRACKER_STRUCT, PGT_FREE_MOD_HASH, PGT_LOCKED_MOD_HASH,
-            CAT_MOD_HASH, PGT_TAIL_HASH, DID_PUZHASH, POOL_STRUCT,
-            QUORUM_BPS, VOTING_WINDOW, PGT_TOTAL_SUPPLY, MIN_PROPOSAL_STAKE,
+            TRACKER_STRUCT, SGT_FREE_MOD_HASH, SGT_LOCKED_MOD_HASH,
+            CAT_MOD_HASH, SGT_TAIL_HASH, DID_PUZHASH, POOL_STRUCT,
+            QUORUM_BPS, VOTING_WINDOW, SGT_TOTAL_SUPPLY, MIN_PROPOSAL_STAKE,
+            TEST_KOS_MINT_EXECUTE_PUBKEY,
             proposal_hash=ph, bill_operation=bill,
             vote_tally=MIN_PROPOSAL_STAKE, voting_deadline=2_000_000_000,
         ).get_tree_hash()
@@ -352,7 +379,7 @@ class TestPropose:
 # ─────────────────────────────────────────────────────────────────────────────
 class TestVote:
     def test_vote_increments_tally_and_emits_lock_assertion(self):
-        bill = bill_mint(bytes32(b"\x33" * 32))
+        bill = mint_bill(bytes32(b"\x33" * 32))
         proposal_hash = proposal_hash_from_bill(bill)
         deadline = 2_000_000_000
         existing_tally = 100_000
@@ -399,7 +426,7 @@ class TestVote:
             curried.run(sol)
 
     def test_vote_rejected_with_zero_amount(self):
-        bill = bill_mint(bytes32(b"\x33" * 32))
+        bill = mint_bill(bytes32(b"\x33" * 32))
         curried = _curry_tracker(
             proposal_hash=proposal_hash_from_bill(bill),
             bill_op=bill,
@@ -420,6 +447,40 @@ class TestVote:
 #                              EXECUTE tests
 # ─────────────────────────────────────────────────────────────────────────────
 class TestExecute:
+    def test_execute_extended_mint_bill_uses_unchanged_dispatch(self):
+        """Trailing metadata commitments are hashed but ignored by RC16 dispatch."""
+        deed_full_ph = bytes32(b"\x33" * 32)
+        bill = Program.to(
+            [
+                BILL_MINT,
+                deed_full_ph,
+                PROPERTY_ID,
+                PROPERTY_REGISTRY_PUZHASH,
+                bytes32(b"\x44" * 32),
+                bytes32(b"\x55" * 32),
+            ]
+        )
+        curried = _curry_tracker(
+            proposal_hash=proposal_hash_from_bill(bill),
+            bill_op=bill,
+            vote_tally=SGT_TOTAL_SUPPLY,
+            voting_deadline=2_000_000_000,
+        )
+        my_id, my_ph = _tracker_my_id_and_ph(curried)
+        out = curried.run(
+            Program.to([my_id, my_ph, TRACKER_AMOUNT, TRK_EXECUTE, 0])
+        )
+        conds = _conds_to_list(out)
+        sends = [c for c in conds if _atom_int(c[0]) == SEND_MESSAGE]
+        assertions = [
+            c for c in conds if _atom_int(c[0]) == ASSERT_PUZZLE_ANNOUNCEMENT
+        ]
+        assert len(sends) == 1
+        assert len(assertions) == 2
+        assert _atom_bytes(sends[0][2]) == b"\x53" + Program.to(
+            [b"MINT", deed_full_ph]
+        ).get_tree_hash()
+
     def test_execute_mint_sends_message_to_did(self):
         """MINT EXECUTE must:
         - SEND_MESSAGE with mode 0x10 (matches DID's RECEIVE_MESSAGE 0x10 per CHIP-25)
@@ -428,10 +489,10 @@ class TestExecute:
         - reset state to IDLE and emit EXEC release announcement
         """
         deed_full_ph = bytes32(b"\x33" * 32)
-        bill = bill_mint(deed_full_ph)
+        bill = mint_bill(deed_full_ph)
         proposal_hash = proposal_hash_from_bill(bill)
         deadline = 2_000_000_000
-        # Quorum reached: 600_000 PGT > 50% of 1M
+        # Quorum reached: 600_000 SGT > 50% of 1M
         tally = 600_000
 
         curried = _curry_tracker(
@@ -475,17 +536,33 @@ class TestExecute:
         expected_did_announce_id = bytes32(
             hashlib.sha256(DID_PUZHASH + deed_full_ph).digest()
         )
+        expected_registry_announce_id = bytes32(
+            hashlib.sha256(
+                PROPERTY_REGISTRY_PUZHASH + b"\x53" + PROPERTY_ID
+            ).digest()
+        )
         asserts = [c for c in conds if _atom_int(c[0]) == ASSERT_PUZZLE_ANNOUNCEMENT]
-        assert len(asserts) == 1, (
-            f"MINT EXECUTE must assert DID's deed announcement; got {len(asserts)} asserts"
+        assert len(asserts) == 2, (
+            "MINT EXECUTE must assert both DID and property-registry announcements; "
+            f"got {len(asserts)} asserts"
         )
-        assert _atom_bytes(asserts[0][1]) == expected_did_announce_id, (
-            "MINT assertion must match the DID's announcement id "
-            "(same one the launcher asserts)."
+        assert {_atom_bytes(condition[1]) for condition in asserts} == {
+            expected_did_announce_id,
+            expected_registry_announce_id,
+        }
+
+        cosigner_conditions = [c for c in conds if _atom_int(c[0]) == AGG_SIG_ME]
+        assert len(cosigner_conditions) == 1
+        assert _atom_bytes(cosigner_conditions[0][1]) == TEST_KOS_MINT_EXECUTE_PUBKEY
+        assert _atom_bytes(cosigner_conditions[0][2]) == kos_mint_execute_message(
+            governance_singleton_struct=TRACKER_STRUCT,
+            governance_coin_id=my_id,
+            proposal_hash=proposal_hash,
         )
+        assert _atom_bytes(cosigner_conditions[0][2])[:5] == b"S" + KOS_MINT_EXECUTE_TAG
 
     def test_execute_rejects_below_quorum(self):
-        bill = bill_mint(bytes32(b"\x33" * 32))
+        bill = mint_bill(bytes32(b"\x33" * 32))
         # 49% — below 50% quorum
         curried = _curry_tracker(
             proposal_hash=proposal_hash_from_bill(bill),
@@ -509,7 +586,7 @@ class TestExecute:
         curried = _curry_tracker(
             proposal_hash=proposal_hash_from_bill(bill),
             bill_op=bill,
-            vote_tally=PGT_TOTAL_SUPPLY,  # 100% > quorum
+            vote_tally=SGT_TOTAL_SUPPLY,  # 100% > quorum
             voting_deadline=2_000_000_000,
         )
         my_id, my_ph = _tracker_my_id_and_ph(curried)
@@ -528,14 +605,31 @@ class TestExecute:
         # FREEZE has no DID assertion (pool handles routing alone)
         asserts = [c for c in conds if _atom_int(c[0]) == ASSERT_PUZZLE_ANNOUNCEMENT]
         assert len(asserts) == 0
+        assert AGG_SIG_ME not in [_atom_int(c[0]) for c in conds]
 
     def test_execute_settle_sends_message_to_pool(self):
         """SETTLE EXECUTE: same pattern as FREEZE — mode 0x10, no extra asserts."""
-        bill = bill_settle(bytes32(b"\xab" * 32), 1_000_000, 5)
+        splitxch_root = bytes32(b"\xab" * 32)
+        releases = [
+            [
+                bytes32(b"\x11" * 32),
+                bytes32(b"\x22" * 32),
+                bytes32(b"\x23" * 32),
+                bytes32(b"\x24" * 32),
+            ],
+            [
+                bytes32(b"\x33" * 32),
+                bytes32(b"\x44" * 32),
+                bytes32(b"\x45" * 32),
+                bytes32(b"\x46" * 32),
+            ],
+        ]
+        releases_hash = deed_releases_hash(releases)
+        bill = bill_settle(splitxch_root, 1_000_000, len(releases), releases_hash)
         curried = _curry_tracker(
             proposal_hash=proposal_hash_from_bill(bill),
             bill_op=bill,
-            vote_tally=PGT_TOTAL_SUPPLY,
+            vote_tally=SGT_TOTAL_SUPPLY,
             voting_deadline=2_000_000_000,
         )
         my_id, my_ph = _tracker_my_id_and_ph(curried)
@@ -551,8 +645,17 @@ class TestExecute:
         assert len(sends) == 1
         assert _atom_int(sends[0][1]) == 0x10
         assert len(sends[0]) == 3
+        expected_message = b"\x53" + Program.to([
+            b"SETT",
+            splitxch_root,
+            1_000_000,
+            len(releases),
+            releases_hash,
+        ]).get_tree_hash()
+        assert _atom_bytes(sends[0][2]) == expected_message
         asserts = [c for c in conds if _atom_int(c[0]) == ASSERT_PUZZLE_ANNOUNCEMENT]
         assert len(asserts) == 0
+        assert AGG_SIG_ME not in [_atom_int(c[0]) for c in conds]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -560,7 +663,7 @@ class TestExecute:
 # ─────────────────────────────────────────────────────────────────────────────
 class TestExpire:
     def test_expire_clears_failed_proposal(self):
-        bill = bill_mint(bytes32(b"\x33" * 32))
+        bill = mint_bill(bytes32(b"\x33" * 32))
         # Below quorum
         curried = _curry_tracker(
             proposal_hash=proposal_hash_from_bill(bill),
@@ -581,10 +684,10 @@ class TestExpire:
 
         assert CREATE_COIN in codes
         assert ASSERT_SECONDS_ABSOLUTE in codes
-        assert CREATE_PUZZLE_ANNOUNCEMENT in codes  # EXEC announcement so PGTs can release
+        assert CREATE_PUZZLE_ANNOUNCEMENT in codes  # EXEC announcement so SGTs can release
 
     def test_expire_rejected_when_quorum_reached(self):
-        bill = bill_mint(bytes32(b"\x33" * 32))
+        bill = mint_bill(bytes32(b"\x33" * 32))
         curried = _curry_tracker(
             proposal_hash=proposal_hash_from_bill(bill),
             bill_op=bill,
@@ -627,7 +730,7 @@ class TestDispatch:
         """The CREATE_COIN destination on PROPOSE must equal the next tracker
         inner puzhash computed via Python's curry helper — ensures puzzle and
         driver use the same state-encoding."""
-        bill = bill_mint(bytes32(b"\x33" * 32))
+        bill = mint_bill(bytes32(b"\x33" * 32))
         ph = proposal_hash_from_bill(bill)
         deadline = 2_000_000_000
 
@@ -644,16 +747,17 @@ class TestDispatch:
 
         expected_next = proposal_tracker_inner_puzzle(
             TRACKER_STRUCT,
-            PGT_FREE_MOD_HASH,
-            PGT_LOCKED_MOD_HASH,
+            SGT_FREE_MOD_HASH,
+            SGT_LOCKED_MOD_HASH,
             CAT_MOD_HASH,
-            PGT_TAIL_HASH,
+            SGT_TAIL_HASH,
             DID_PUZHASH,
             POOL_STRUCT,
             QUORUM_BPS,
             VOTING_WINDOW,
-            PGT_TOTAL_SUPPLY,
+            SGT_TOTAL_SUPPLY,
             MIN_PROPOSAL_STAKE,
+            TEST_KOS_MINT_EXECUTE_PUBKEY,
             proposal_hash=ph,
             bill_operation=bill,
             vote_tally=100_000,
@@ -703,6 +807,7 @@ class TestExecuteVaultVersion:
         # and asserts nothing (registry is the asserter, gov the announcer).
         assert SEND_MESSAGE not in codes
         assert ASSERT_PUZZLE_ANNOUNCEMENT not in codes
+        assert AGG_SIG_ME not in codes
 
         # The governance driver and the registry driver must agree on the
         # routine approval message byte-for-byte.
@@ -717,7 +822,7 @@ class TestExecuteVaultVersion:
         )
         assert expected_msg == registry_msg
 
-        # EXECUTE emits two announcements: the EXEC release (locked PGT) and the
+        # EXECUTE emits two announcements: the EXEC release (locked SGT) and the
         # routine approval.  The registry asserts the latter.
         announcements = [
             _atom_bytes(c[1])
@@ -727,7 +832,7 @@ class TestExecuteVaultVersion:
         assert expected_msg in announcements
 
         # The content_hash carried in the message equals both drivers'.
-        assert expected_msg == b"\x50" + b"\x52\x54" + bytes(
+        assert expected_msg == b"\x53" + b"\x52\x54" + bytes(
             vvr.compute_content_hash(self.NEW_CODE, self.NEW_PARAMS, self.NEW_VERSION)
         )
         assert expected_msg[3:] == bytes(
@@ -737,9 +842,10 @@ class TestExecuteVaultVersion:
         # State resets to IDLE — the registry publish is the only side effect.
         cc = next(c for c in conds if _atom_int(c[0]) == CREATE_COIN)
         expected_idle = proposal_tracker_inner_puzzle(
-            TRACKER_STRUCT, PGT_FREE_MOD_HASH, PGT_LOCKED_MOD_HASH,
-            CAT_MOD_HASH, PGT_TAIL_HASH, DID_PUZHASH, POOL_STRUCT,
-            QUORUM_BPS, VOTING_WINDOW, PGT_TOTAL_SUPPLY, MIN_PROPOSAL_STAKE,
+            TRACKER_STRUCT, SGT_FREE_MOD_HASH, SGT_LOCKED_MOD_HASH,
+            CAT_MOD_HASH, SGT_TAIL_HASH, DID_PUZHASH, POOL_STRUCT,
+            QUORUM_BPS, VOTING_WINDOW, SGT_TOTAL_SUPPLY, MIN_PROPOSAL_STAKE,
+            TEST_KOS_MINT_EXECUTE_PUBKEY,
             proposal_hash=0, bill_operation=0, vote_tally=0, voting_deadline=0,
         ).get_tree_hash()
         assert _atom_bytes(cc[1]) == expected_idle
@@ -771,9 +877,10 @@ class TestExecuteVaultVersion:
         conds = _conds_to_list(out)
         cc = next(c for c in conds if _atom_int(c[0]) == CREATE_COIN)
         expected_next = proposal_tracker_inner_puzzle(
-            TRACKER_STRUCT, PGT_FREE_MOD_HASH, PGT_LOCKED_MOD_HASH,
-            CAT_MOD_HASH, PGT_TAIL_HASH, DID_PUZHASH, POOL_STRUCT,
-            QUORUM_BPS, VOTING_WINDOW, PGT_TOTAL_SUPPLY, MIN_PROPOSAL_STAKE,
+            TRACKER_STRUCT, SGT_FREE_MOD_HASH, SGT_LOCKED_MOD_HASH,
+            CAT_MOD_HASH, SGT_TAIL_HASH, DID_PUZHASH, POOL_STRUCT,
+            QUORUM_BPS, VOTING_WINDOW, SGT_TOTAL_SUPPLY, MIN_PROPOSAL_STAKE,
+            TEST_KOS_MINT_EXECUTE_PUBKEY,
             proposal_hash=ph, bill_operation=bill,
             vote_tally=MIN_PROPOSAL_STAKE, voting_deadline=2_000_000_000,
         ).get_tree_hash()

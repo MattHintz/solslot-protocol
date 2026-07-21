@@ -1,0 +1,441 @@
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; Payment-aware primary SmartDeed offer.
+;;;
+;;; Chia-native purchases use standard two-sided offer files. The buyer offers
+;;; XCH or a CAT and requests this singleton into the authorized p2_vault. The
+;;; deed side asserts both settlement announcements, so payment and vault-bound
+;;; delivery happen atomically.
+;;;
+;;; Stripe and EVM purchases use the separate threshold payment escrow. They
+;;; can release the deed only after the escrow emits the artifact-bound delivery
+;;; message.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(mod
+  (
+    SMART_DEED_INNER_HASH
+    PAYMENT_ESCROW_MOD_HASH
+    P2_VAULT_MOD_HASH
+    SINGLETON_MOD_HASH
+    SINGLETON_LAUNCHER_HASH
+    CAT_MOD_HASH
+    OFFER_MOD_HASH
+    NETWORK
+    DEED_LAUNCHER_ID
+    COLLECTION_ID
+    METADATA_ROOT
+    METADATA_ANCHOR_ID
+    SHARE_PPM
+    USD_AMOUNT_MINOR
+    PROTOCOL_PUZHASH
+    VALIDATOR_PUBKEYS
+    THRESHOLD
+    PROVIDER_ID
+    ;; solution
+    mode
+    my_id
+    my_parent_id
+    my_puzzlehash
+    my_amount
+    vault_launcher_id
+    vault_p2_puzzle_hash
+    authorization_nonce
+    authorization_expires_at
+    quote_expires_at
+    rail
+    rail_chain_id
+    rail_asset_id
+    rail_asset_decimals
+    rail_amount
+    oracle_round_hash
+    oracle_price_usd_minor_per_asset
+    source_evidence_root
+    external_reference_hash
+    pending_attestation_hash
+    pending_at
+    refund_puzhash
+    buyer_offer_nonce
+    signer_indices
+  )
+
+  (include condition_codes.clib)
+  (include utils.clib)
+  (include utility_macros.clib)
+
+  (defconstant PAYMENT_ARTIFACT_VERSION 2)
+  (defconstant MODE_CHIA_OFFER 1)
+  (defconstant MODE_EXTERNAL_ESCROW 2)
+  (defconstant RAIL_STRIPE 1)
+  (defconstant RAIL_EVM_TEST_USD 2)
+  (defconstant RAIL_CHIA_XCH 3)
+  (defconstant RAIL_CHIA_CAT 4)
+  (defconstant ZERO_B32 0x0000000000000000000000000000000000000000000000000000000000000000)
+  (defconstant PURCHASE_ID_TAG 0x534f4c534c4f545f50555243484153455f49445f5632)
+  (defconstant DELIVERY_DOMAIN 0x736f6c736c6f742d7061796d656e742d64656c69766572792d7631)
+
+  (defun list-length (lst)
+    (if lst (+ 1 (list-length (r lst))) 0)
+  )
+
+  (defun nth (lst n)
+    (if (= n 0) (f lst) (nth (r lst) (- n 1)))
+  )
+
+  (defun is-sorted-strict (lst)
+    (if lst
+      (if (r lst)
+        (if (> (f (r lst)) (f lst))
+          (is-sorted-strict (r lst))
+          ())
+        1)
+      1)
+  )
+
+  (defun all-indices-in-range (indices bound)
+    (if indices
+      (if (> 0 (f indices))
+        ()
+        (if (> bound (f indices))
+          (all-indices-in-range (r indices) bound)
+          ()))
+      1)
+  )
+
+  (defun emit-sigs (pubkeys indices msg)
+    (if indices
+      (c
+        (list AGG_SIG_ME (nth pubkeys (f indices)) msg)
+        (emit-sigs pubkeys (r indices) msg))
+      ())
+  )
+
+  (defun pow10 (decimals)
+    (if (= decimals 0) 1 (* 10 (pow10 (- decimals 1))))
+  )
+
+  (defun-inline purchase-artifact-hash
+      (NETWORK COLLECTION_ID DEED_LAUNCHER_ID METADATA_ROOT METADATA_ANCHOR_ID
+       SHARE_PPM USD_AMOUNT_MINOR rail rail_chain_id rail_asset_id
+       rail_asset_decimals rail_amount vault_launcher_id vault_p2_puzzle_hash
+       authorization_nonce authorization_expires_at quote_expires_at
+       oracle_round_hash oracle_price_usd_minor_per_asset
+       source_evidence_root)
+    (sha256tree
+      (list
+        PAYMENT_ARTIFACT_VERSION
+        NETWORK
+        COLLECTION_ID
+        DEED_LAUNCHER_ID
+        METADATA_ROOT
+        METADATA_ANCHOR_ID
+        SHARE_PPM
+        USD_AMOUNT_MINOR
+        rail
+        rail_chain_id
+        rail_asset_id
+        rail_asset_decimals
+        rail_amount
+        vault_launcher_id
+        vault_p2_puzzle_hash
+        authorization_nonce
+        authorization_expires_at
+        quote_expires_at
+        oracle_round_hash
+        oracle_price_usd_minor_per_asset
+        source_evidence_root))
+  )
+
+  (defun-inline purchase-id (artifact_hash)
+    (sha256tree (list PURCHASE_ID_TAG artifact_hash))
+  )
+
+  (defun-inline delivery-message
+      (purchase_id artifact_hash vault_p2_puzzle_hash)
+    (sha256tree
+      (list DELIVERY_DOMAIN purchase_id artifact_hash vault_p2_puzzle_hash))
+  )
+
+  (defun-inline canonical-p2-vault-hash
+      (P2_VAULT_MOD_HASH SINGLETON_MOD_HASH SINGLETON_LAUNCHER_HASH
+       vault_launcher_id)
+    (curry_hashes P2_VAULT_MOD_HASH
+      (sha256 1 SINGLETON_MOD_HASH)
+      (sha256 1 vault_launcher_id)
+      (sha256 1 SINGLETON_LAUNCHER_HASH))
+  )
+
+  (defun-inline payment-escrow-puzhash
+      (PAYMENT_ESCROW_MOD_HASH VALIDATOR_PUBKEYS THRESHOLD
+       purchase_id artifact_hash PROVIDER_ID external_reference_hash
+       pending_attestation_hash pending_at rail rail_amount PROTOCOL_PUZHASH
+       refund_puzhash vault_p2_puzzle_hash)
+    (curry_hashes PAYMENT_ESCROW_MOD_HASH
+      (sha256tree VALIDATOR_PUBKEYS)
+      (sha256 1 THRESHOLD)
+      (sha256 1 purchase_id)
+      (sha256 1 artifact_hash)
+      (sha256 1 PROVIDER_ID)
+      (sha256 1 external_reference_hash)
+      (sha256 1 pending_attestation_hash)
+      (sha256 1 pending_at)
+      (sha256 1 rail)
+      (sha256 1 rail_amount)
+      (sha256 1 PROTOCOL_PUZHASH)
+      (sha256 1 refund_puzhash)
+      (sha256 1 vault_p2_puzzle_hash))
+  )
+
+  (defun-inline chia-settlement-puzhash
+      (rail CAT_MOD_HASH OFFER_MOD_HASH rail_asset_id)
+    (if (= rail RAIL_CHIA_XCH)
+      OFFER_MOD_HASH
+      (curry_hashes CAT_MOD_HASH
+        (sha256 1 CAT_MOD_HASH)
+        (sha256 1 rail_asset_id)
+        OFFER_MOD_HASH))
+  )
+
+  (defun-inline seller-offer-nonce
+      (my_parent_id my_puzzlehash my_amount)
+    (sha256tree (list (list my_parent_id my_puzzlehash my_amount)))
+  )
+
+  (defun-inline payment-message
+      (nonce PROTOCOL_PUZHASH rail_amount purchase_id artifact_hash)
+    (sha256tree
+      (c nonce
+        (list
+          (list PROTOCOL_PUZHASH rail_amount
+            (list purchase_id artifact_hash)))))
+  )
+
+  (defun-inline deed-delivery-message
+      (buyer_offer_nonce vault_p2_puzzle_hash purchase_id artifact_hash)
+    (sha256tree
+      (c buyer_offer_nonce
+        (list
+          (list vault_p2_puzzle_hash 1
+            (list DEED_LAUNCHER_ID SMART_DEED_INNER_HASH
+              METADATA_ROOT purchase_id artifact_hash)))))
+  )
+
+  (defun rail-is-valid
+      (rail rail_chain_id rail_asset_id rail_asset_decimals rail_amount
+       USD_AMOUNT_MINOR oracle_round_hash oracle_price_usd_minor_per_asset
+       source_evidence_root)
+    (or
+      (and
+        (= rail RAIL_STRIPE)
+        (= rail_chain_id 0)
+        (= rail_asset_id ZERO_B32)
+        (= rail_asset_decimals 2)
+        (= rail_amount USD_AMOUNT_MINOR)
+        (= oracle_round_hash ZERO_B32)
+        (= oracle_price_usd_minor_per_asset 0)
+        (= source_evidence_root ZERO_B32))
+      (and
+        (= rail RAIL_EVM_TEST_USD)
+        (> rail_chain_id 0)
+        (not (= rail_asset_id ZERO_B32))
+        (= rail_asset_decimals 6)
+        (= rail_amount (* USD_AMOUNT_MINOR 10000))
+        (= oracle_round_hash ZERO_B32)
+        (= oracle_price_usd_minor_per_asset 0)
+        (= source_evidence_root ZERO_B32))
+      (and
+        (= rail RAIL_CHIA_XCH)
+        (= rail_chain_id 0)
+        (= rail_asset_id ZERO_B32)
+        (= rail_asset_decimals 12)
+        (not (= oracle_round_hash ZERO_B32))
+        (> oracle_price_usd_minor_per_asset 0)
+        (not (= source_evidence_root ZERO_B32))
+        (= rail_amount
+          (/
+            (+ (* USD_AMOUNT_MINOR (pow10 rail_asset_decimals))
+               (- oracle_price_usd_minor_per_asset 1))
+            oracle_price_usd_minor_per_asset)))
+      (and
+        (= rail RAIL_CHIA_CAT)
+        (= rail_chain_id 0)
+        (not (= rail_asset_id ZERO_B32))
+        (not (> rail_asset_decimals 18))
+        (not (= oracle_round_hash ZERO_B32))
+        (> oracle_price_usd_minor_per_asset 0)
+        (not (= source_evidence_root ZERO_B32))
+        (= rail_amount
+          (/
+            (+ (* USD_AMOUNT_MINOR (pow10 rail_asset_decimals))
+               (- oracle_price_usd_minor_per_asset 1))
+            oracle_price_usd_minor_per_asset))))
+  )
+
+  (defun chia-offer-conditions
+      (SINGLETON_MOD_HASH SINGLETON_LAUNCHER_HASH OFFER_MOD_HASH CAT_MOD_HASH
+       DEED_LAUNCHER_ID PROTOCOL_PUZHASH SMART_DEED_INNER_HASH METADATA_ROOT
+       artifact_hash purchase_id my_parent_id my_puzzlehash my_amount
+       rail rail_asset_id rail_amount vault_p2_puzzle_hash buyer_offer_nonce
+       VALIDATOR_PUBKEYS signer_indices)
+    (merge-lists
+      (emit-sigs VALIDATOR_PUBKEYS signer_indices artifact_hash)
+      (list
+        (list ASSERT_MY_PARENT_ID my_parent_id)
+        (list ASSERT_MY_PUZZLEHASH my_puzzlehash)
+        (list ASSERT_MY_AMOUNT my_amount)
+        (list ASSERT_PUZZLE_ANNOUNCEMENT
+          (sha256
+            (chia-settlement-puzhash
+              rail CAT_MOD_HASH OFFER_MOD_HASH rail_asset_id)
+            (payment-message
+              (seller-offer-nonce my_parent_id my_puzzlehash my_amount)
+              PROTOCOL_PUZHASH rail_amount purchase_id artifact_hash)))
+        (list ASSERT_PUZZLE_ANNOUNCEMENT
+          (sha256
+            (calculate_full_puzzle_hash
+              (c SINGLETON_MOD_HASH
+                (c DEED_LAUNCHER_ID SINGLETON_LAUNCHER_HASH))
+              OFFER_MOD_HASH)
+            (deed-delivery-message
+              buyer_offer_nonce vault_p2_puzzle_hash
+              purchase_id artifact_hash)))
+        (list CREATE_COIN OFFER_MOD_HASH 1
+          (list DEED_LAUNCHER_ID purchase_id artifact_hash))
+        (list REMARK PROTOCOL_PREFIX "MINT_PURCHASE_CHIA_OFFER_V2"
+          DEED_LAUNCHER_ID purchase_id artifact_hash
+          vault_p2_puzzle_hash SMART_DEED_INNER_HASH METADATA_ROOT)))
+  )
+
+  (defun external-escrow-conditions
+      (PAYMENT_ESCROW_MOD_HASH VALIDATOR_PUBKEYS THRESHOLD PROVIDER_ID
+       PROTOCOL_PUZHASH SMART_DEED_INNER_HASH METADATA_ROOT
+       artifact_hash purchase_id external_reference_hash
+       pending_attestation_hash pending_at rail rail_amount refund_puzhash
+       vault_p2_puzzle_hash)
+    (list
+      (list CREATE_COIN vault_p2_puzzle_hash 1
+        (list DEED_LAUNCHER_ID SMART_DEED_INNER_HASH METADATA_ROOT
+          purchase_id artifact_hash))
+      (list RECEIVE_MESSAGE 0x10
+        (concat PROTOCOL_PREFIX
+          (delivery-message
+            purchase_id artifact_hash vault_p2_puzzle_hash))
+        (payment-escrow-puzhash
+          PAYMENT_ESCROW_MOD_HASH VALIDATOR_PUBKEYS THRESHOLD
+          purchase_id artifact_hash PROVIDER_ID external_reference_hash
+          pending_attestation_hash pending_at rail rail_amount
+          PROTOCOL_PUZHASH refund_puzhash vault_p2_puzzle_hash))
+      (list REMARK PROTOCOL_PREFIX "MINT_PURCHASE_EXTERNAL_V2"
+        DEED_LAUNCHER_ID purchase_id artifact_hash
+        vault_p2_puzzle_hash SMART_DEED_INNER_HASH METADATA_ROOT))
+  )
+
+  (assert
+    (is-size-b32 SMART_DEED_INNER_HASH)
+    (is-size-b32 DEED_LAUNCHER_ID)
+    (is-size-b32 COLLECTION_ID)
+    (is-size-b32 METADATA_ROOT)
+    (is-size-b32 METADATA_ANCHOR_ID)
+    (is-size-b32 PROTOCOL_PUZHASH)
+    (is-size-b32 PROVIDER_ID)
+    (is-uint64 SHARE_PPM)
+    (> SHARE_PPM 0)
+    (not (> SHARE_PPM 1000000))
+    (is-uint64 USD_AMOUNT_MINOR)
+    (> USD_AMOUNT_MINOR 0)
+    (= THRESHOLD 2)
+    (= (list-length VALIDATOR_PUBKEYS) 3)
+    (all-bls-g1-pubkeys VALIDATOR_PUBKEYS)
+    (has-no-duplicates VALIDATOR_PUBKEYS ())
+    (is-size-b32 my_id)
+    (is-size-b32 vault_launcher_id)
+    (is-size-b32 vault_p2_puzzle_hash)
+    (= vault_p2_puzzle_hash
+      (canonical-p2-vault-hash
+        P2_VAULT_MOD_HASH SINGLETON_MOD_HASH SINGLETON_LAUNCHER_HASH
+        vault_launcher_id))
+    (is-size-b32 authorization_nonce)
+    (is-uint64 authorization_expires_at)
+    (is-uint64 quote_expires_at)
+    (not (> quote_expires_at authorization_expires_at))
+    (is-uint64 rail)
+    (is-uint64 rail_chain_id)
+    (is-size-b32 rail_asset_id)
+    (is-uint64 rail_asset_decimals)
+    (not (> rail_asset_decimals 18))
+    (is-uint64 rail_amount)
+    (> rail_amount 0)
+    (is-size-b32 oracle_round_hash)
+    (is-uint64 oracle_price_usd_minor_per_asset)
+    (is-size-b32 source_evidence_root)
+    (rail-is-valid
+      rail rail_chain_id rail_asset_id rail_asset_decimals rail_amount
+      USD_AMOUNT_MINOR oracle_round_hash oracle_price_usd_minor_per_asset
+      source_evidence_root)
+    (or
+      (and
+        (= mode MODE_CHIA_OFFER)
+        (or (= rail RAIL_CHIA_XCH) (= rail RAIL_CHIA_CAT))
+        (is-size-b32 my_parent_id)
+        (is-size-b32 my_puzzlehash)
+        (= my_amount 1)
+        (is-size-b32 buyer_offer_nonce)
+        (is-sorted-strict signer_indices)
+        (not (> THRESHOLD (list-length signer_indices)))
+        (all-indices-in-range signer_indices 3))
+      (and
+        (= mode MODE_EXTERNAL_ESCROW)
+        (or (= rail RAIL_STRIPE) (= rail RAIL_EVM_TEST_USD))
+        (is-size-b32 external_reference_hash)
+        (is-size-b32 pending_attestation_hash)
+        (is-uint64 pending_at)
+        (> pending_at 0)
+        (is-size-b32 refund_puzhash)))
+    (merge-lists
+      (list
+        (list ASSERT_MY_COIN_ID my_id)
+        (list ASSERT_BEFORE_SECONDS_ABSOLUTE quote_expires_at))
+      (if (= mode MODE_CHIA_OFFER)
+        (chia-offer-conditions
+          SINGLETON_MOD_HASH SINGLETON_LAUNCHER_HASH OFFER_MOD_HASH
+          CAT_MOD_HASH DEED_LAUNCHER_ID PROTOCOL_PUZHASH
+          SMART_DEED_INNER_HASH METADATA_ROOT
+          (purchase-artifact-hash
+            NETWORK COLLECTION_ID DEED_LAUNCHER_ID
+            METADATA_ROOT METADATA_ANCHOR_ID SHARE_PPM USD_AMOUNT_MINOR
+            rail rail_chain_id rail_asset_id rail_asset_decimals rail_amount
+            vault_launcher_id vault_p2_puzzle_hash authorization_nonce
+            authorization_expires_at quote_expires_at oracle_round_hash
+            oracle_price_usd_minor_per_asset source_evidence_root)
+          (purchase-id
+            (purchase-artifact-hash
+              NETWORK COLLECTION_ID DEED_LAUNCHER_ID
+              METADATA_ROOT METADATA_ANCHOR_ID SHARE_PPM USD_AMOUNT_MINOR
+              rail rail_chain_id rail_asset_id rail_asset_decimals rail_amount
+              vault_launcher_id vault_p2_puzzle_hash authorization_nonce
+              authorization_expires_at quote_expires_at oracle_round_hash
+              oracle_price_usd_minor_per_asset source_evidence_root))
+          my_parent_id my_puzzlehash my_amount rail rail_asset_id rail_amount
+          vault_p2_puzzle_hash buyer_offer_nonce
+          VALIDATOR_PUBKEYS signer_indices)
+        (external-escrow-conditions
+          PAYMENT_ESCROW_MOD_HASH VALIDATOR_PUBKEYS THRESHOLD PROVIDER_ID
+          PROTOCOL_PUZHASH SMART_DEED_INNER_HASH METADATA_ROOT
+          (purchase-artifact-hash
+            NETWORK COLLECTION_ID DEED_LAUNCHER_ID
+            METADATA_ROOT METADATA_ANCHOR_ID SHARE_PPM USD_AMOUNT_MINOR
+            rail rail_chain_id rail_asset_id rail_asset_decimals rail_amount
+            vault_launcher_id vault_p2_puzzle_hash authorization_nonce
+            authorization_expires_at quote_expires_at oracle_round_hash
+            oracle_price_usd_minor_per_asset source_evidence_root)
+          (purchase-id
+            (purchase-artifact-hash
+              NETWORK COLLECTION_ID DEED_LAUNCHER_ID
+              METADATA_ROOT METADATA_ANCHOR_ID SHARE_PPM USD_AMOUNT_MINOR
+              rail rail_chain_id rail_asset_id rail_asset_decimals rail_amount
+              vault_launcher_id vault_p2_puzzle_hash authorization_nonce
+              authorization_expires_at quote_expires_at oracle_round_hash
+              oracle_price_usd_minor_per_asset source_evidence_root))
+          external_reference_hash pending_attestation_hash pending_at
+          rail rail_amount refund_puzhash vault_p2_puzzle_hash)))
+  )
+)
