@@ -40,6 +40,13 @@ def _source_shas() -> dict[str, str]:
     }
 
 
+def test_source_defaults_bind_the_zkpassport_evm_contract_repository() -> None:
+    assert preflight.SOURCE_DEFAULTS["evm"] == preflight.WORKSPACE_ROOT / "solslot-evm"
+    assert preflight.SOURCE_DEFAULTS["evm"] != (
+        preflight.WORKSPACE_ROOT / "research" / "solslot-omnichain"
+    )
+
+
 def _ceremony_plan() -> tuple[dict, dict, dict, dict]:
     ceremony_id = _hex(1)
     sources = _source_shas()

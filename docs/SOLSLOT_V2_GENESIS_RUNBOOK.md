@@ -32,7 +32,7 @@ administrator signing happen on each administrator's own computer.
 
 ## Freeze The Release
 
-1. Commit every reviewed change in `solslot-protocol`, `research/solslot-omnichain`,
+1. Commit every reviewed change in `solslot-protocol`, `solslot-evm`,
    `solslot-api`, `research/solslot-backend`, `solslot`, and `solslot-portal`.
 2. Require clean worktrees and record all six full commit SHAs.
 3. Run complete tests, schema drift, namespace, secret, package, and
@@ -52,6 +52,12 @@ administrator signing happen on each administrator's own computer.
 
 Do not construct a plan from a dirty checkout or before the credential
 carryover checkpoint and fresh EVM deployment are complete.
+
+`research/solslot-omnichain` is a separate CCIP/Warp settlement rail. It is
+not the zkPassport bridge contract source and cannot occupy the ceremony's
+`evm` source-SHA slot. Its contracts remain disabled until a separate reviewed
+deployment record binds their source SHA, runtime code hashes, supported-token
+allowlist, and coordinator external-payment configuration.
 
 ## Build The Plan
 

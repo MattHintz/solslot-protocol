@@ -33,7 +33,9 @@ SOURCE_NAMES = (
 )
 SOURCE_DEFAULTS = {
     "protocol": PROTOCOL_ROOT,
-    "evm": WORKSPACE_ROOT / "research" / "solslot-omnichain",
+    # The ceremony EVM evidence is the zkPassport bridge deployment, not the
+    # separately gated CCIP/Warp payment rail.
+    "evm": WORKSPACE_ROOT / "solslot-evm",
     "api": WORKSPACE_ROOT / "solslot-api",
     "legacyBackend": WORKSPACE_ROOT / "research" / "solslot-backend",
     "customerWeb": WORKSPACE_ROOT / "solslot",
