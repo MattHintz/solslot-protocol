@@ -4,7 +4,7 @@
 
 Alpha writes and minting remain locked. No current deployment coordinate is
 eligible for reuse. The next deployment must be built from clean, reviewed
-commits in all five release repositories.
+commits in all six release repositories.
 
 ## Canonical Consensus Surface
 

@@ -42,6 +42,7 @@ REQUIRED_SOURCE_REFS = (
     "protocol",
     "evm",
     "api",
+    "legacyBackend",
     "customerWeb",
     "adminPortal",
 )
