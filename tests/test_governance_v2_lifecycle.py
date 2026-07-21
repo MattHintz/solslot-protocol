@@ -30,6 +30,7 @@ from chia_rs.sized_bytes import bytes32
 from solslot_puzzles.sgt_driver import (
     SGT_LOCK,
     SINGLETON_LAUNCHER_HASH,
+    TEST_KOS_MINT_EXECUTE_PUBKEY,
     TRK_EXECUTE,
     TRK_PROPOSE,
     bill_freeze,
@@ -163,6 +164,7 @@ def _curry_tracker(
         VOTING_WINDOW,
         SGT_TOTAL_SUPPLY,
         MIN_PROPOSAL_STAKE,
+        TEST_KOS_MINT_EXECUTE_PUBKEY,
         proposal_hash=proposal_hash,
         bill_operation=bill_op,
         vote_tally=vote_tally,

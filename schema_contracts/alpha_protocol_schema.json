@@ -1,5 +1,5 @@
 {
-  "version": 3,
+  "version": 4,
   "mint_publish": {
     "draft_fields": [
       "par_value",
@@ -32,7 +32,8 @@
       "gov_member_hash",
       "voting_deadline",
       "metadata_root",
-      "metadata_anchor_id"
+      "metadata_anchor_id",
+      "primary_purchase_usd_amount_minor"
     ],
     "protocol_context": [
       {

@@ -35,6 +35,7 @@ Usage (EVM / secp256k1):
 from __future__ import annotations
 
 import logging
+import hashlib
 from dataclasses import dataclass
 from typing import List, Optional
 
@@ -60,6 +61,10 @@ from chia.wallet.puzzles.singleton_top_layer_v1_1 import (
     puzzle_for_singleton,
     solution_for_singleton,
 )
+from chia.wallet.util.curry_and_treehash import (
+    calculate_hash_of_quoted_mod_hash,
+    curry_and_treehash,
+)
 from chia_rs import G1Element, G2Element, PrivateKey
 
 from solslot_puzzles import load_puzzle
@@ -71,6 +76,7 @@ SINGLETON_AMOUNT = uint64(1)
 
 VAULT_INNER_MOD: Program = load_puzzle("vault_singleton_inner.clsp")
 P2_VAULT_MOD: Program = load_puzzle("p2_vault.clsp")
+P2_VAULT_MOD_HASH: bytes32 = bytes32(P2_VAULT_MOD.get_tree_hash())
 
 # Auth type constants — mirror vault_singleton_inner.clsp
 AUTH_TYPE_BLS = 1        # Chia-native BLS (Goby, Sage)
@@ -285,6 +291,22 @@ def puzzle_for_p2_vault(vault_launcher_id: bytes32) -> Program:
         SINGLETON_MOD_HASH,
         vault_launcher_id,
         SINGLETON_LAUNCHER_HASH,
+    )
+
+
+def puzzle_hash_for_p2_vault(vault_launcher_id: bytes32) -> bytes32:
+    """Compute p2_vault without sharing a lazy Program across threads."""
+
+    if not isinstance(vault_launcher_id, bytes32):
+        raise TypeError("vault_launcher_id must be bytes32")
+    atom_hash = lambda value: hashlib.sha256(b"\x01" + bytes(value)).digest()
+    return bytes32(
+        curry_and_treehash(
+            calculate_hash_of_quoted_mod_hash(P2_VAULT_MOD_HASH),
+            atom_hash(SINGLETON_MOD_HASH),
+            atom_hash(vault_launcher_id),
+            atom_hash(SINGLETON_LAUNCHER_HASH),
+        )
     )
 
 

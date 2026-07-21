@@ -4,7 +4,7 @@
 
 This runbook does not authorize a production or mainnet ceremony. Alpha
 writes, credential enrollment, offers, and minting remain disabled until the
-selected review class and pre-broadcast gate pass against five frozen release
+selected review class and pre-broadcast gate pass against six frozen release
 commits.
 
 `internal-engineering-testnet` is the disposable test path. It is accepted
@@ -33,8 +33,8 @@ administrator signing happen on each administrator's own computer.
 ## Freeze The Release
 
 1. Commit every reviewed change in `solslot-protocol`, `solslot-evm`,
-   `solslot-api`, `solslot`, and `solslot-portal`.
-2. Require clean worktrees and record all five full commit SHAs.
+   `solslot-api`, `research/solslot-backend`, `solslot`, and `solslot-portal`.
+2. Require clean worktrees and record all six full commit SHAs.
 3. Run complete tests, schema drift, namespace, secret, package, and
    reproducibility gates from those exact commits.
 4. Select the review class. For the disposable internal test, record
@@ -53,12 +53,18 @@ administrator signing happen on each administrator's own computer.
 Do not construct a plan from a dirty checkout or before the credential
 carryover checkpoint and fresh EVM deployment are complete.
 
+`research/solslot-omnichain` is a separate CCIP/Warp settlement rail. It is
+not the zkPassport bridge contract source and cannot occupy the ceremony's
+`evm` source-SHA slot. Its contracts remain disabled until a separate reviewed
+deployment record binds their source SHA, runtime code hashes, supported-token
+allowlist, and coordinator external-payment configuration.
+
 ## Build The Plan
 
 The admin portal drives the endpoints below under `/admin/genesis`. Preserve
 the JSON response from every state transition in the private ceremony archive.
 
-1. `POST /drafts` with the five frozen source SHAs and explicit `reviewClass`.
+1. `POST /drafts` with the six frozen source SHAs and explicit `reviewClass`.
 2. `POST /{ceremonyId}/invitations/{slot}` for slots 1, 2, and 3.
 3. Each administrator calls `/invitations/prepare`, signs
    `SolslotGenesisAdminEnrollment`, then calls `/invitations/accept`.
@@ -102,8 +108,8 @@ cd solslot-protocol
   --output-dir /secure/ceremony/output/<ceremony-id>
 ```
 
-Repository paths default to the five sibling canonical repositories. Use the
-explicit `--protocol-repo`, `--evm-repo`, `--api-repo`,
+Repository paths default to the six canonical repositories. Use the explicit
+`--protocol-repo`, `--evm-repo`, `--api-repo`, `--legacy-backend-repo`,
 `--customer-web-repo`, and `--admin-portal-repo` options only when validating
 clean checkouts elsewhere.
 

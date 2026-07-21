@@ -106,6 +106,24 @@ class TestCompile:
         assert mod is not None
         assert mod.get_tree_hash() is not None
 
+    def test_payment_escrow_v1(self):
+        mod: Program = load_clvm(
+            "payment_escrow_v1.clsp",
+            package_or_requirement="solslot_puzzles",
+            recompile=True,
+        )
+        assert mod is not None
+        assert mod.get_tree_hash() is not None
+
+    def test_mint_offer_delegate_v2(self):
+        mod: Program = load_clvm(
+            "mint_offer_delegate_v2.clsp",
+            package_or_requirement="solslot_puzzles",
+            recompile=True,
+        )
+        assert mod is not None
+        assert mod.get_tree_hash() is not None
+
     def test_protocol_config_inner(self):
         mod: Program = load_clvm(
             "protocol_config_inner.clsp",

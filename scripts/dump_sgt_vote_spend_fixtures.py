@@ -42,6 +42,7 @@ from chia_rs.sized_bytes import bytes32
 from chia_rs.sized_ints import uint64
 
 from solslot_puzzles.sgt_driver import (
+    TEST_KOS_MINT_EXECUTE_PUBKEY,
     bill_mint,
     build_sgt_lock_coin_spend,
     build_tracker_vote_coin_spend,
@@ -142,6 +143,7 @@ def _open_tracker_inner() -> Program:
         VOTING_WINDOW,
         SGT_TOTAL_SUPPLY,
         MIN_PROPOSAL_STAKE,
+        TEST_KOS_MINT_EXECUTE_PUBKEY,
         proposal_hash=PROPOSAL_HASH,
         bill_operation=BILL,
         vote_tally=TRACKER_INITIAL_TALLY,

@@ -13,6 +13,7 @@
 # Puzzles bundled by this script:
 #   * smart_deed_inner_v2.clsp         → the post-purchase deed inner
 #   * mint_offer_delegate.clsp      → the eve deed inner (offer)
+#   * mint_offer_delegate_v2.clsp   → purchase-aware eve deed inner
 #   * singleton_launcher_with_did.clsp → DID-gated deed launcher
 #   * purchase_payment.clsp         → ephemeral buyer payment coin
 #
@@ -104,6 +105,12 @@ dump_one \
   "MINT_OFFER_DELEGATE_PUZZLE_HEX" \
   "mint-offer-delegate" \
   "eve deed inner puzzle (standing on-chain mint offer) curried with the smart_deed_inner hash + par value + protocol DID"
+
+dump_one \
+  "mint_offer_delegate_v2" \
+  "MINT_OFFER_DELEGATE_V2_PUZZLE_HEX" \
+  "mint-offer-delegate-v2" \
+  "purchase-aware eve deed inner enforcing exact H-system price, vault delivery, zkPassport-bound authorization, and validator signatures"
 
 dump_one \
   "singleton_launcher_with_did" \

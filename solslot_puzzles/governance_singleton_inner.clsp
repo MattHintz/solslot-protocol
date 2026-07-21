@@ -33,6 +33,10 @@
 ;;;   MIN_PROPOSAL_STAKE      — minimum first-vote SGT mojos to open a proposal
 ;;;                            (anti-spam; locked SGT is returned on EXEC/EXPIRE
 ;;;                             so this is a stake-deposit, not a fee)
+;;;   KOS_MINT_EXECUTE_PUBKEY — dedicated mint-execute co-signer. This key can
+;;;                            satisfy only the MINT-only AGG_SIG_ME condition
+;;;                            emitted below; it has no authority over votes,
+;;;                            custody, settlement, or any other spend case.
 ;;;
 ;;; Curried state (changes each spend via curry_hashes recreation):
 ;;;   PROPOSAL_HASH    — 0 when idle, else the hashed bill operation
@@ -92,6 +96,7 @@
         VOTING_WINDOW_SECONDS
         SGT_TOTAL_SUPPLY
         MIN_PROPOSAL_STAKE
+        KOS_MINT_EXECUTE_PUBKEY
         ;; --- curried state (recreated each spend) ---
         PROPOSAL_HASH
         BILL_OPERATION
@@ -135,6 +140,12 @@
     ;; MUST equal vault_version_registry_inner.clsp `TAG_ROUTINE`.
     (defconstant REGISTRY_TAG_ROUTINE 0x5254)
 
+    ;; Dedicated MINT execution co-signer tag. The visible condition message is
+    ;;   PROTOCOL_PREFIX || "KOSM" || sha256tree(
+    ;;     governance_singleton_struct_hash, live_tracker_coin_id, proposal_hash)
+    ;; AGG_SIG_ME appends the network-specific additional data at consensus.
+    (defconstant KOS_MINT_EXECUTE_TAG 0x4b4f534d)
+
     ;; Pool message tags (matches pool_singleton_inner_v3.clsp existing format)
     (defconstant POOL_GOV_TAG 0x474f5620)   ; "GOV "
     (defconstant POOL_SETT_TAG 0x53455454)  ; "SETT"
@@ -148,7 +159,7 @@
     (defun-inline next_inner_ph
             (mod_hash singleton_struct
              sgt_free_mh sgt_locked_mh cat_mh sgt_tail_h
-             did_ph pool_struct quorum voting_window total_supply min_stake
+             did_ph pool_struct quorum voting_window total_supply min_stake kos_mint_execute_pubkey
              proposal_hash bill_op vote_tally voting_deadline)
         (curry_hashes mod_hash
             (sha256 1 mod_hash)
@@ -163,6 +174,7 @@
             (sha256 1 voting_window)
             (sha256 1 total_supply)
             (sha256 1 min_stake)
+            (sha256 1 kos_mint_execute_pubkey)
             (sha256 1 proposal_hash)
             (sha256tree bill_op)
             (sha256 1 vote_tally)
@@ -220,6 +232,22 @@
             (f (r (r (r (r bill_op)))))))
     )
 
+    (defun-inline kos-mint-execute-message (singleton_struct my_id proposal_hash)
+        (concat PROTOCOL_PREFIX KOS_MINT_EXECUTE_TAG
+            (sha256tree (list (sha256tree singleton_struct) my_id proposal_hash)))
+    )
+
+    ;; This list is intentionally empty for every bill other than MINT. The
+    ;; co-signer has no general wallet or governance authority.
+    (defun-inline kos-mint-execute-conditions
+            (kos_mint_execute_pubkey singleton_struct my_id proposal_hash bill_op)
+        (if (= (f bill_op) BILL_MINT)
+            (list
+                (list AGG_SIG_ME kos_mint_execute_pubkey
+                    (kos-mint-execute-message singleton_struct my_id proposal_hash)))
+            ())
+    )
+
     (defun-inline known-bill-tag (bill_op)
         (if (= (f bill_op) BILL_MINT)
             1
@@ -242,7 +270,7 @@
     (defun spend_propose
             (mod_hash singleton_struct
              sgt_free_mh sgt_locked_mh cat_mh sgt_tail_h
-             did_ph pool_struct quorum voting_window total_supply min_stake
+             did_ph pool_struct quorum voting_window total_supply min_stake kos_mint_execute_pubkey
              my_id my_ph my_amount
              proposal_hash bill_op voter_inner_puzhash first_vote_amount voting_deadline)
         (assert
@@ -267,7 +295,7 @@
                 (list CREATE_COIN
                     (next_inner_ph mod_hash singleton_struct
                         sgt_free_mh sgt_locked_mh cat_mh sgt_tail_h
-                        did_ph pool_struct quorum voting_window total_supply min_stake
+                        did_ph pool_struct quorum voting_window total_supply min_stake kos_mint_execute_pubkey
                         proposal_hash bill_op first_vote_amount voting_deadline)
                     my_amount)
                 (c
@@ -294,7 +322,7 @@
     (defun spend_vote
             (mod_hash singleton_struct
              sgt_free_mh sgt_locked_mh cat_mh sgt_tail_h
-             did_ph pool_struct quorum voting_window total_supply min_stake
+             did_ph pool_struct quorum voting_window total_supply min_stake kos_mint_execute_pubkey
              proposal_hash bill_op vote_tally voting_deadline
              my_id my_ph my_amount
              voter_inner_puzhash additional_vote_amount)
@@ -308,7 +336,7 @@
                 (list CREATE_COIN
                     (next_inner_ph mod_hash singleton_struct
                         sgt_free_mh sgt_locked_mh cat_mh sgt_tail_h
-                        did_ph pool_struct quorum voting_window total_supply min_stake
+                        did_ph pool_struct quorum voting_window total_supply min_stake kos_mint_execute_pubkey
                         proposal_hash bill_op (+ vote_tally additional_vote_amount) voting_deadline)
                     my_amount)
                 (c
@@ -394,7 +422,7 @@
     (defun spend_execute
             (mod_hash singleton_struct
              sgt_free_mh sgt_locked_mh cat_mh sgt_tail_h
-             did_ph pool_struct quorum voting_window total_supply min_stake
+             did_ph pool_struct quorum voting_window total_supply min_stake kos_mint_execute_pubkey
              proposal_hash bill_op vote_tally voting_deadline
              my_id my_ph my_amount)
         (assert
@@ -406,7 +434,7 @@
                 (list CREATE_COIN
                     (next_inner_ph mod_hash singleton_struct
                         sgt_free_mh sgt_locked_mh cat_mh sgt_tail_h
-                        did_ph pool_struct quorum voting_window total_supply min_stake
+                        did_ph pool_struct quorum voting_window total_supply min_stake kos_mint_execute_pubkey
                         0 0 0 0)
                     my_amount)
                 (c
@@ -421,7 +449,10 @@
                             (list REMARK PROTOCOL_PREFIX TRK_EXECUTE proposal_hash)
                             (merge-lists
                                 (dispatch_bill bill_op did_ph)
-                                (identity_conditions singleton_struct my_id my_ph my_amount)))))))
+                                (merge-lists
+                                    (kos-mint-execute-conditions
+                                        kos_mint_execute_pubkey singleton_struct my_id proposal_hash bill_op)
+                                    (identity_conditions singleton_struct my_id my_ph my_amount))))))))
     )
 
     ;; SPEND CASE 4 — EXPIRE
@@ -429,7 +460,7 @@
     (defun spend_expire
             (mod_hash singleton_struct
              sgt_free_mh sgt_locked_mh cat_mh sgt_tail_h
-             did_ph pool_struct quorum voting_window total_supply min_stake
+             did_ph pool_struct quorum voting_window total_supply min_stake kos_mint_execute_pubkey
              proposal_hash bill_op vote_tally voting_deadline
              my_id my_ph my_amount)
         (assert
@@ -441,7 +472,7 @@
                 (list CREATE_COIN
                     (next_inner_ph mod_hash singleton_struct
                         sgt_free_mh sgt_locked_mh cat_mh sgt_tail_h
-                        did_ph pool_struct quorum voting_window total_supply min_stake
+                        did_ph pool_struct quorum voting_window total_supply min_stake kos_mint_execute_pubkey
                         0 0 0 0)
                     my_amount)
                 (c
@@ -463,6 +494,7 @@
         (is-size-b32 my_id)
         (is-size-b32 my_inner_puzzlehash)
         (is-uint64 my_amount)
+        (is-size-bls-g1 KOS_MINT_EXECUTE_PUBKEY)
         (if (= spend_case TRK_PROPOSE)
             (assert
                 (not PROPOSAL_HASH)        ; tracker must be idle to propose
@@ -470,7 +502,7 @@
                     MOD_HASH SINGLETON_STRUCT
                     SGT_FREE_MOD_HASH SGT_LOCKED_MOD_HASH CAT_MOD_HASH SGT_TAIL_HASH
                     PROTOCOL_DID_PUZHASH POOL_SINGLETON_STRUCT
-                    QUORUM_BPS VOTING_WINDOW_SECONDS SGT_TOTAL_SUPPLY MIN_PROPOSAL_STAKE
+                    QUORUM_BPS VOTING_WINDOW_SECONDS SGT_TOTAL_SUPPLY MIN_PROPOSAL_STAKE KOS_MINT_EXECUTE_PUBKEY
                     my_id my_inner_puzzlehash my_amount
                     (f params)            ; proposal_hash
                     (f (r params))        ; bill_op
@@ -482,7 +514,7 @@
                     MOD_HASH SINGLETON_STRUCT
                     SGT_FREE_MOD_HASH SGT_LOCKED_MOD_HASH CAT_MOD_HASH SGT_TAIL_HASH
                     PROTOCOL_DID_PUZHASH POOL_SINGLETON_STRUCT
-                    QUORUM_BPS VOTING_WINDOW_SECONDS SGT_TOTAL_SUPPLY MIN_PROPOSAL_STAKE
+                    QUORUM_BPS VOTING_WINDOW_SECONDS SGT_TOTAL_SUPPLY MIN_PROPOSAL_STAKE KOS_MINT_EXECUTE_PUBKEY
                     PROPOSAL_HASH BILL_OPERATION VOTE_TALLY VOTING_DEADLINE
                     my_id my_inner_puzzlehash my_amount
                     (f params)            ; voter_inner_puzhash
@@ -491,16 +523,16 @@
                     (spend_execute
                         MOD_HASH SINGLETON_STRUCT
                         SGT_FREE_MOD_HASH SGT_LOCKED_MOD_HASH CAT_MOD_HASH SGT_TAIL_HASH
-                        PROTOCOL_DID_PUZHASH POOL_SINGLETON_STRUCT
-                        QUORUM_BPS VOTING_WINDOW_SECONDS SGT_TOTAL_SUPPLY MIN_PROPOSAL_STAKE
+                    PROTOCOL_DID_PUZHASH POOL_SINGLETON_STRUCT
+                    QUORUM_BPS VOTING_WINDOW_SECONDS SGT_TOTAL_SUPPLY MIN_PROPOSAL_STAKE KOS_MINT_EXECUTE_PUBKEY
                         PROPOSAL_HASH BILL_OPERATION VOTE_TALLY VOTING_DEADLINE
                         my_id my_inner_puzzlehash my_amount)
                     (if (= spend_case TRK_EXPIRE)
                         (spend_expire
                             MOD_HASH SINGLETON_STRUCT
                             SGT_FREE_MOD_HASH SGT_LOCKED_MOD_HASH CAT_MOD_HASH SGT_TAIL_HASH
-                            PROTOCOL_DID_PUZHASH POOL_SINGLETON_STRUCT
-                            QUORUM_BPS VOTING_WINDOW_SECONDS SGT_TOTAL_SUPPLY MIN_PROPOSAL_STAKE
+                    PROTOCOL_DID_PUZHASH POOL_SINGLETON_STRUCT
+                    QUORUM_BPS VOTING_WINDOW_SECONDS SGT_TOTAL_SUPPLY MIN_PROPOSAL_STAKE KOS_MINT_EXECUTE_PUBKEY
                             PROPOSAL_HASH BILL_OPERATION VOTE_TALLY VOTING_DEADLINE
                             my_id my_inner_puzzlehash my_amount)
                         (x))))))
