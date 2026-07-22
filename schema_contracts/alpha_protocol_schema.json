@@ -32,7 +32,8 @@
       "gov_member_hash",
       "voting_deadline",
       "metadata_root",
-      "metadata_anchor_id"
+      "metadata_anchor_id",
+      "primary_purchase_usd_amount_minor"
     ],
     "protocol_context": [
       {

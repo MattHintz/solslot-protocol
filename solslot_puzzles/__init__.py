@@ -70,6 +70,8 @@ PUZZLE_FILENAMES = (
     # fast-track / SGT-tracker routine).  See
     # research/SOLSLOT_VAULT_UPGRADE_DESIGN.md and the puzzle docstring.
     "vault_version_registry_inner.clsp",
+    "voucher_presale_series_v1.clsp",
+    "voucher_nft_inner_v1.clsp",
 )
 
 # ── Frozen checksum — update after every intentional puzzle change ──
@@ -105,7 +107,7 @@ FROZEN_CHECKSUM: Optional[str] = (
     #   - RC17 MINT EXECUTE requires the immutable, dedicated KoS co-signer
     #     public key to sign the governance singleton/proposal commitment;
     #   - no retired contract implementations in the canonical package.
-    "ea5b46bc20b2ea626c233d9535235d8be597f343d0bd23947f74f124df2ccaff"
+    "65183d630b61bea65a4f85fdb0f77785bc00a454412e1e2b4181741df50f6f04"
 )
 
 # ── Cache ──

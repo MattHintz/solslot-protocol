@@ -45,6 +45,7 @@ REQUIRED_SOURCE_SHAS = (
     "protocol",
     "evm",
     "api",
+    "legacyBackend",
     "customerWeb",
     "adminPortal",
 )

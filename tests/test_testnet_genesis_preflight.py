@@ -34,6 +34,7 @@ def _source_shas() -> dict[str, str]:
         "protocol": "1" * 40,
         "evm": "2" * 40,
         "api": "3" * 40,
+        "legacyBackend": "6" * 40,
         "customerWeb": "4" * 40,
         "adminPortal": "5" * 40,
     }
