@@ -151,7 +151,21 @@ MIPS_ROOT_HASH
 
 This prevents split-brain authority where the admin records claim one roster but operational MIPS authorization still verifies against an older roster.
 
-## Admin Supermajority Rule
+## Owner-Required Alpha Rule
+
+The RC19 alpha authority has exactly three permanent slots. Slot 0 is the
+superadmin owner. Every operational or roster-authorized MIPS spend executes
+the nested policy:
+
+```text
+slot 0 AND (slot 1 OR slot 2)
+```
+
+Two coadministrators cannot authorize protocol state or funds without slot 0.
+The generic supermajority helper below is retained only for research into a
+future, separately reviewed roster model; it is not the RC19 genesis policy.
+
+## Future Admin Supermajority Research
 
 Operational admin decisions use a supermajority threshold over admin slots:
 

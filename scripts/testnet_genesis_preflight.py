@@ -466,7 +466,14 @@ def _validate_plan(
     if admin:
         keys = [str(value).lower() for value in admin.get("compressedPubkeys", [])]
         if admin.get("threshold") != 2 or keys != roster_keys:
-            findings.append(Finding("error", "plan administrator authority is not the frozen 2-of-3 roster"))
+            findings.append(Finding("error", "plan administrator authority does not bind the frozen roster"))
+        if (
+            admin.get("policy") != "owner-plus-one"
+            or admin.get("ownerIndex") != 0
+            or admin.get("coadminIndices") != [1, 2]
+            or admin.get("coadminThreshold") != 1
+        ):
+            findings.append(Finding("error", "plan administrator authority is not owner-plus-one"))
         if admin.get("adminsHash") != record.get("roster_hash"):
             findings.append(Finding("error", "plan administrator hash differs from the frozen roster"))
         _require_hex(admin.get("adminsHash"), 32, "plan.adminAuthority.adminsHash", findings)
@@ -728,13 +735,24 @@ def _validate_artifact(
     if admin:
         admin_keys = [str(value).lower() for value in admin.get("compressedPubkeys", [])]
         if admin.get("threshold") != 2 or len(admin_keys) != 3 or len(set(admin_keys)) != 3:
-            findings.append(Finding("error", "artifact administrator authority is not 2-of-3"))
+            findings.append(Finding("error", "artifact administrator roster is invalid"))
+        if (
+            admin.get("policy") != "owner-plus-one"
+            or admin.get("ownerIndex") != 0
+            or admin.get("coadminIndices") != [1, 2]
+            or admin.get("coadminThreshold") != 1
+        ):
+            findings.append(Finding("error", "artifact administrator authority is not owner-plus-one"))
         for key in admin_keys:
             _require_hex(key, 33, "artifact administrator public key", findings)
     policy = _require_mapping(artifact.get("signaturePolicy"), "artifact.signaturePolicy", findings)
     if admin and policy and (
         policy.get("type") != "SolslotGenesisArtifact"
         or policy.get("threshold") != 2
+        or policy.get("policy") != "owner-plus-one"
+        or policy.get("ownerIndex") != 0
+        or policy.get("coadminIndices") != [1, 2]
+        or policy.get("coadminThreshold") != 1
         or policy.get("rosterHash") != admin.get("rosterHash")
     ):
         findings.append(Finding("error", "artifact signature policy differs from administrator authority"))
@@ -759,6 +777,8 @@ def _validate_artifact(
             if len(admin_keys) == 3 and str(entry.get("compressedPubkey", "")).lower() != admin_keys[index]:
                 findings.append(Finding("error", f"artifact signature slot {index} has the wrong roster key"))
             _require_hex(entry.get("signature"), 65, f"artifact signature slot {index}", findings)
+        if 0 not in seen or not seen.intersection({1, 2}):
+            findings.append(Finding("error", "artifact requires slot 0 and one coadmin signature"))
 
     validators = _require_mapping(artifact.get("validatorSet"), "artifact.validatorSet", findings)
     if validators:

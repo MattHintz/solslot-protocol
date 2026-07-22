@@ -38,6 +38,10 @@ from solslot_puzzles.genesis_constants import GENESIS_EVM_CHAIN_ID, GENESIS_NETW
 GENESIS_PLAN_SCHEMA = "solslot-genesis-plan-v2"
 SOURCE_MANIFEST_VERSION = 3
 GENESIS_ADMIN_THRESHOLD = 2
+GENESIS_ADMIN_POLICY = "owner-plus-one"
+GENESIS_ADMIN_OWNER_INDEX = 0
+GENESIS_ADMIN_COADMIN_INDICES = (1, 2)
+GENESIS_ADMIN_COADMIN_THRESHOLD = 1
 GENESIS_VALIDATOR_THRESHOLD = 2
 GENESIS_BRIDGE_BATCH_SIZE = 32
 GENESIS_BRIDGE_LOW_WATER_MARK = 8
@@ -312,6 +316,10 @@ def _plan_payload(
         },
         "adminAuthority": {
             "threshold": plan.admin_quorum.threshold,
+            "policy": GENESIS_ADMIN_POLICY,
+            "ownerIndex": plan.admin_quorum.owner_index,
+            "coadminIndices": list(plan.admin_quorum.coadmin_indices),
+            "coadminThreshold": plan.admin_quorum.coadmin_threshold,
             "compressedPubkeys": [
                 _hex(pubkey) for pubkey in plan.admin_quorum.compressed_pubkeys
             ],
@@ -595,7 +603,13 @@ def verify_genesis_ceremony_plan(plan: GenesisCeremonyPlan) -> None:
         raise ValueError("ceremony plan EVM chain is not Sepolia")
     plan.funding.validate()
     if plan.admin_quorum.threshold != GENESIS_ADMIN_THRESHOLD:
-        raise ValueError("ceremony plan admin authority is not 2-of-3")
+        raise ValueError("ceremony plan admin authority requires two signatures")
+    if (
+        plan.admin_quorum.owner_index != GENESIS_ADMIN_OWNER_INDEX
+        or plan.admin_quorum.coadmin_indices != GENESIS_ADMIN_COADMIN_INDICES
+        or plan.admin_quorum.coadmin_threshold != GENESIS_ADMIN_COADMIN_THRESHOLD
+    ):
+        raise ValueError("ceremony plan admin authority is not owner-plus-one")
     if plan.validator_threshold != GENESIS_VALIDATOR_THRESHOLD:
         raise ValueError("ceremony plan validator authority is not 2-of-3")
     if len(plan.validator_pubkeys) != 3 or len(set(plan.validator_pubkeys)) != 3:

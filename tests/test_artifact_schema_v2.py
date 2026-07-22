@@ -83,6 +83,9 @@ def test_artifact_has_complete_signed_v2_surface() -> None:
     assert value["sgtGenesisCoinId"].startswith("0x")
     assert value["sgtTailHash"] == value["puzzleHashes"]["sgtTailHash"]
     assert value["adminAuthority"]["threshold"] == 2
+    assert value["adminAuthority"]["policy"] == "owner-plus-one"
+    assert value["adminAuthority"]["ownerIndex"] == 0
+    assert value["adminAuthority"]["coadminIndices"] == [1, 2]
     assert len(value["validatorSet"]["pubkeys"]) == 3
     assert len(value["bridgePolicy"]["bridgeCoinIds"]) == 32
     verify_public_artifact(value, signature_verifier=accept_test_signature)
@@ -150,6 +153,10 @@ def test_artifact_requires_two_distinct_roster_signatures() -> None:
     duplicate = artifact(signed_slots=(1, 1))
     with pytest.raises(ValueError, match="distinct roster slots"):
         verify_public_artifact(duplicate, signature_verifier=accept_test_signature)
+
+    coadmins_only = artifact(signed_slots=(1, 2))
+    with pytest.raises(ValueError, match="slot 0 and one coadministrator"):
+        verify_public_artifact(coadmins_only, signature_verifier=accept_test_signature)
 
 
 def test_artifact_rejects_wrong_roster_key_and_invalid_signature() -> None:

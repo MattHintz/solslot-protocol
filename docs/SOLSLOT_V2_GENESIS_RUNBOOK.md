@@ -9,7 +9,7 @@ commits.
 
 `internal-engineering-testnet` is the disposable test path. It is accepted
 only on testnet11, requires three distinct administrator wallets and normal
-2-of-3 plan/artifact signatures, and marks the signed artifact `testOnly: true`
+slot-0-plus-one-coadmin plan/artifact signatures, and marks the signed artifact `testOnly: true`
 and `auditStatus: "unaudited"`. It does not satisfy an independently reviewed
 release or permit mainnet.
 
@@ -194,7 +194,7 @@ cd solslot-protocol
   --release-attestation /secure/ceremony/release-attestation.json
 ```
 
-The post-genesis gate verifies canonical artifact content, 2-of-3 signature
+The post-genesis gate verifies canonical artifact content, owner-plus-one signature
 binding, locked ceremony state, three-confirmation policy, retired-coordinate
 separation, checksummed evidence, clean source SHAs, consumer pins, and write
 locks. Signature recovery and live chain confirmation are enforced by the API

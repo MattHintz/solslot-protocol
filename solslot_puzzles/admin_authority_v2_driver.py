@@ -30,7 +30,6 @@ from chia.wallet.puzzles.singleton_top_layer_v1_1 import (
     SINGLETON_MOD_HASH,
 )
 from chia.wallet.puzzles.custody.custody_architecture import MofN, PuzzleWithRestrictions
-from chia_puzzles_py import programs as chia_puzzle_programs
 from chia_rs.sized_bytes import bytes32
 from chia_rs.sized_ints import uint64
 
@@ -183,10 +182,14 @@ class _ProgramMember:
 
 @dataclass(frozen=True)
 class GenesisAdminQuorum:
-    """Canonical three-slot, two-signature genesis authority."""
+    """Canonical authority requiring slot 0 and either coadministrator."""
 
     admins: tuple[AdminRecord, AdminRecord, AdminRecord]
     threshold: int
+    owner_index: int
+    coadmin_indices: tuple[int, int]
+    coadmin_threshold: int
+    mips_policy: MofN
     mips_reveal: Program
     mips_root_hash: bytes32
     admins_hash: bytes32
@@ -203,7 +206,8 @@ def build_genesis_eip712_admin_quorum(
 
     The ceremony never accepts an operator-supplied ``MIPS_ROOT_HASH``.  It
     receives exactly three compressed secp256k1 keys and deterministically
-    builds three EIP-712 members plus the CHIP-0043 2-of-3 reveal.
+    builds three EIP-712 members plus a nested CHIP-0043 policy requiring
+    permanent owner slot 0 and one of coadministrator slots 1 or 2.
     """
     pubkeys = tuple(bytes(value) for value in compressed_pubkeys)
     if len(pubkeys) != 3:
@@ -242,28 +246,44 @@ def build_genesis_eip712_admin_quorum(
     if threshold != 2:
         raise ValueError("fresh V2 genesis admin threshold must be two")
 
-    quorum = MofN(
-        m=threshold,
-        members=[
-            PuzzleWithRestrictions(
-                nonce=index + 1,
-                restrictions=[],
-                puzzle=_ProgramMember(member),
-            )
-            for index, member in enumerate(member_puzzles)
-        ],
+    owner_index = 0
+    coadmin_indices = (1, 2)
+    coadmin_threshold = 1
+
+    # Build ``slot 0 AND (slot 1 OR slot 2)`` with the upstream CHIP-0043
+    # drivers. Keeping the policy object alongside its reveal lets callers
+    # construct and test the exact nested proof instead of duplicating the
+    # OneOfN Merkle-solution format.
+    owner_branch = PuzzleWithRestrictions(
+        nonce=1,
+        restrictions=[],
+        puzzle=_ProgramMember(member_puzzles[owner_index]),
     )
-    # Chia's custody driver keeps MofN_MOD as a module-level Program. Program
-    # LazyNodes are thread-affine, so calling ``quorum.puzzle`` from an API
-    # event-loop thread can panic when the custody module was imported on the
-    # process main thread. Rehydrate the canonical bytecode on the caller's
-    # thread and curry the exact same threshold/root instead.
-    mips_reveal = Program.from_bytes(chia_puzzle_programs.M_OF_N).curry(
-        threshold, quorum._merkle_tree.calculate_root()
+    coadmin_members = [
+        PuzzleWithRestrictions(
+            nonce=index + 1,
+            restrictions=[],
+            puzzle=_ProgramMember(member_puzzles[index]),
+        )
+        for index in coadmin_indices
+    ]
+    coadmin_branch = PuzzleWithRestrictions(
+        nonce=4,
+        restrictions=[],
+        puzzle=MofN(m=coadmin_threshold, members=coadmin_members),
     )
+    mips_policy = MofN(
+        m=2,
+        members=[owner_branch, coadmin_branch],
+    )
+    mips_reveal = mips_policy.puzzle(0)
     return GenesisAdminQuorum(
         admins=admins,  # type: ignore[arg-type]
         threshold=threshold,
+        owner_index=owner_index,
+        coadmin_indices=coadmin_indices,
+        coadmin_threshold=coadmin_threshold,
+        mips_policy=mips_policy,
         mips_reveal=mips_reveal,
         mips_root_hash=bytes32(mips_reveal.get_tree_hash()),
         admins_hash=compute_admins_hash(admins),

@@ -100,6 +100,10 @@ def _ceremony_plan() -> tuple[dict, dict, dict, dict]:
         },
         "adminAuthority": {
             "threshold": 2,
+            "policy": "owner-plus-one",
+            "ownerIndex": 0,
+            "coadminIndices": [1, 2],
+            "coadminThreshold": 1,
             "compressedPubkeys": admin_keys,
             "adminsHash": roster_hash,
             "mipsRootHash": _hex(221),
@@ -235,6 +239,10 @@ def _public_artifact(record: dict, plan: dict) -> dict:
         "stateVersions": plan["stateVersions"],
         "adminAuthority": {
             "threshold": 2,
+            "policy": "owner-plus-one",
+            "ownerIndex": 0,
+            "coadminIndices": [1, 2],
+            "coadminThreshold": 1,
             "rosterHash": plan["adminAuthority"]["adminsHash"],
             "mipsRootHash": plan["adminAuthority"]["mipsRootHash"],
             "compressedPubkeys": admin_keys,
@@ -254,6 +262,10 @@ def _public_artifact(record: dict, plan: dict) -> dict:
         "signaturePolicy": {
             "type": "SolslotGenesisArtifact",
             "threshold": 2,
+            "policy": "owner-plus-one",
+            "ownerIndex": 0,
+            "coadminIndices": [1, 2],
+            "coadminThreshold": 1,
             "rosterHash": plan["adminAuthority"]["adminsHash"],
         },
         "signatures": [
