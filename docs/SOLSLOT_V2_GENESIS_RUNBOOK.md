@@ -132,7 +132,7 @@ Do not manually edit an artifact, lock, checksum file, or ceremony database.
 ## Freeze The RC19 Source Set
 
 RC19 uses source manifest V3. It binds exactly nine repositories: protocol,
-EVM, Omnichain, API, the legacy Stripe adapter, Key of Solomon, Samuel,
+EVM, Omnichain, API, the guarded payment adapter, Key of Solomon, Samuel,
 customer web, and admin portal. A six-source RC17 draft is invalid even when
 all of its commits still exist.
 
@@ -145,7 +145,7 @@ checked out at `release/testnet-alpha-rc19-20260721`:
   --evm-repo /release/solslot-evm \
   --omnichain-repo /release/omnichain \
   --api-repo /release/solslot-api \
-  --legacy-backend-repo /release/solslot-legacy-backend \
+  --legacy-backend-repo /release/solslot-backend \
   --key-of-solomon-repo /release/key-of-solomon \
   --samuel-repo /release/samuel \
   --customer-web-repo /release/solslot \

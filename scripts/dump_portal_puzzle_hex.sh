@@ -37,6 +37,8 @@ write_module admin_authority_v2_inner ADMIN_AUTHORITY_V2_INNER_PUZZLE_HEX \
   src/app/services/admin-authority-v2/admin-authority-v2.puzzle-hex.ts
 write_module mint_offer_delegate MINT_OFFER_DELEGATE_PUZZLE_HEX \
   src/app/services/mint-proposal-v2/mint-offer-delegate.puzzle-hex.ts
+write_module mint_offer_delegate_v2 MINT_OFFER_DELEGATE_V2_PUZZLE_HEX \
+  src/app/services/mint-proposal-v2/mint-offer-delegate-v2.puzzle-hex.ts
 write_module mint_proposal_inner_v2 MINT_PROPOSAL_INNER_V2_PUZZLE_HEX \
   src/app/services/mint-proposal-v2/mint-proposal-v2.puzzle-hex.ts
 write_module property_registry_inner PROPERTY_REGISTRY_INNER_PUZZLE_HEX \

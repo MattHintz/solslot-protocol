@@ -58,6 +58,7 @@ from solslot_puzzles.mint_publish_driver import (
     BILL_MINT_TAG,
     SINGLETON_AMOUNT,
     MintPublishArtifacts,
+    PrimaryPurchaseMintConfig,
     ProposalEveLaunchSpend,
     build_mint_publish_artifacts,
     build_sgt_first_vote_coin_spend,
@@ -72,6 +73,10 @@ from solslot_puzzles.mint_publish_driver import (
     make_mint_offer_eve_inner,
     make_smart_deed_inner,
     proposal_singleton_launcher_coin_for_parent,
+)
+from solslot_puzzles.primary_purchase_v2_driver import (
+    PrimaryMintTermsV2,
+    make_mint_offer_v2_inner,
 )
 
 
@@ -922,6 +927,74 @@ class TestArtifactsCrossDriver:
         expected = bytes32(full.get_tree_hash())
 
         assert artifacts.deed_full_puzhash == expected
+
+    def test_collection_mint_uses_native_purchase_eve(self):
+        metadata_root = _b(0xD1)
+        provider_id = _b(0xD2)
+        validators = tuple(bytes([value]) * 48 for value in (0x11, 0x22, 0x33))
+        config = PrimaryPurchaseMintConfig(
+            network="testnet11",
+            usd_amount_minor=125_000,
+            protocol_treasury_puzhash=_b(0xD4),
+            validator_pubkeys=validators,
+            provider_id=provider_id,
+        )
+        artifacts = build_mint_publish_artifacts(
+            **_default_kwargs(),
+            metadata_root=metadata_root,
+            primary_purchase=config,
+        )
+        struct = deed_singleton_struct(
+            deed_launcher_id=artifacts.deed_launcher_id,
+            protocol_did_singleton_struct=PROTOCOL_DID_SINGLETON_STRUCT,
+        )
+        smart = make_smart_deed_inner(
+            deed_singleton_struct_program=struct,
+            protocol_did_puzhash=PROTOCOL_DID_PUZHASH,
+            par_value_mojos=PAR_VALUE,
+            asset_class=ASSET_CLASS,
+            property_id_canon=PROPERTY_ID,
+            collection_id_canon=COLLECTION_ID,
+            share_ppm=SHARE_PPM,
+            jurisdiction=JURISDICTION,
+            royalty_puzhash=ROYALTY_PUZHASH,
+            royalty_bps=ROYALTY_BPS,
+            pool_singleton_launcher_id=POOL_SINGLETON_LAUNCHER_ID,
+            pool_singleton_launcher_puzzle_hash=POOL_SINGLETON_LAUNCHER_PUZZLE_HASH,
+            p2_pool_mod_hash=P2_POOL_MOD_HASH,
+            p2_vault_mod_hash=P2_VAULT_MOD_HASH,
+        )
+        expected_inner = make_mint_offer_v2_inner(
+            PrimaryMintTermsV2(
+                network="testnet11",
+                smart_deed_inner_hash=bytes32(smart.get_tree_hash()),
+                deed_launcher_id=artifacts.deed_launcher_id,
+                collection_id=COLLECTION_ID,
+                metadata_root=metadata_root,
+                metadata_anchor_id=artifacts.deed_launcher_id,
+                share_ppm=SHARE_PPM,
+                usd_amount_minor=125_000,
+                protocol_puzhash=_b(0xD4),
+                validator_pubkeys=validators,
+                provider_id=provider_id,
+            )
+        )
+        expected = SINGLETON_MOD.curry(struct, expected_inner).get_tree_hash()
+        assert artifacts.deed_full_puzhash == expected
+
+    def test_native_purchase_mint_requires_metadata(self):
+        config = PrimaryPurchaseMintConfig(
+            network="testnet11",
+            usd_amount_minor=1,
+            protocol_treasury_puzhash=_b(0xD4),
+            validator_pubkeys=tuple(bytes([value]) * 48 for value in (1, 2, 3)),
+            provider_id=_b(0xD3),
+        )
+        with pytest.raises(ValueError, match="metadata_root"):
+            build_mint_publish_artifacts(
+                **_default_kwargs(),
+                primary_purchase=config,
+            )
 
 
 # ─── Sub-brick 4d.1 — Spend-bundle builders ────────────────────────────────

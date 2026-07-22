@@ -40,7 +40,7 @@ SOURCE_DEFAULTS = {
     "evm": WORKSPACE_ROOT / "solslot-evm",
     "omnichain": WORKSPACE_ROOT / "omnichain",
     "api": WORKSPACE_ROOT / "solslot-api",
-    "legacyBackend": WORKSPACE_ROOT / "solslot-legacy-backend",
+    "legacyBackend": WORKSPACE_ROOT / "research" / "solslot-backend",
     "keyOfSolomon": WORKSPACE_ROOT / "key-of-solomon",
     "samuel": WORKSPACE_ROOT / "samuel",
     "customerWeb": WORKSPACE_ROOT / "solslot",

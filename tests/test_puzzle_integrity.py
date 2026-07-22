@@ -48,6 +48,12 @@ def test_solslot_v2_pool_modules_are_canonical_and_loadable():
         assert load_puzzle(filename).get_tree_hash() is not None
 
 
+def test_native_primary_purchase_module_is_canonical_and_loadable():
+    filename = "mint_offer_delegate_v2.clsp"
+    assert filename in PUZZLE_FILENAMES
+    assert load_puzzle(filename).get_tree_hash() is not None
+
+
 def test_no_duplicate_puzzle_filenames():
     """Canonical order must not contain duplicates (would double-count the checksum)."""
     assert len(PUZZLE_FILENAMES) == len(set(PUZZLE_FILENAMES))

@@ -22,7 +22,7 @@ SOURCE_REPOSITORIES = {
     "evm": "https://github.com/MattHintz/solslot-evm",
     "omnichain": "https://github.com/solslot/omnichain",
     "api": "https://github.com/MattHintz/solslot-api",
-    "legacyBackend": "https://github.com/mothsoft/solslot-backend",
+    "legacyBackend": "https://github.com/solslot/solslot-backend",
     "keyOfSolomon": "https://github.com/solslot/KeyofSolomon",
     "samuel": "https://github.com/solslot/Samuel",
     "customerWeb": "https://github.com/solslot/solslot",

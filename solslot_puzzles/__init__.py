@@ -33,6 +33,7 @@ PUZZLE_FILENAMES = (
     "governance_singleton_inner.clsp",
     "quorum_did_inner.clsp",
     "mint_offer_delegate.clsp",
+    "mint_offer_delegate_v2.clsp",
     "purchase_payment.clsp",
     "p2_deed_settlement.clsp",
     "sgt_tail.clsp",
@@ -106,8 +107,11 @@ FROZEN_CHECKSUM: Optional[str] = (
     #   - five-spend governance/DID/registry/proposal/deed mint execution;
     #   - RC17 MINT EXECUTE requires the immutable, dedicated KoS co-signer
     #     public key to sign the governance singleton/proposal commitment;
-    #   - no retired contract implementations in the canonical package.
-    "65183d630b61bea65a4f85fdb0f77785bc00a454412e1e2b4181741df50f6f04"
+    #   - no retired contract implementations in the canonical package;
+    #   - RC19 native XCH/CAT primary purchases use a dedicated on-demand
+    #     offer delegate that binds one exact deed to one canonical vault and
+    #     exposes no standalone external-payment escrow branch.
+    "e7a17cebcbde693bda9b3f4ce8a6aed849dda151e8f848f83c3a572ad281032a"
 )
 
 # ── Cache ──
