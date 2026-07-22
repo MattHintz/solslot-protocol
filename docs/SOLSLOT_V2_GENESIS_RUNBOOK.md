@@ -129,6 +129,34 @@ signatures.
 
 Do not manually edit an artifact, lock, checksum file, or ceremony database.
 
+## Freeze The RC19 Source Set
+
+RC19 uses source manifest V3. It binds exactly nine repositories: protocol,
+EVM, Omnichain, API, the legacy Stripe adapter, Key of Solomon, Samuel,
+customer web, and admin portal. A six-source RC17 draft is invalid even when
+all of its commits still exist.
+
+Generate the deterministic manifest only after every repository is clean and
+checked out at `release/testnet-alpha-rc19-20260721`:
+
+```bash
+.venv/bin/python scripts/build_release_source_manifest.py \
+  --protocol-repo /release/solslot-protocol \
+  --evm-repo /release/solslot-evm \
+  --omnichain-repo /release/omnichain \
+  --api-repo /release/solslot-api \
+  --legacy-backend-repo /release/solslot-legacy-backend \
+  --key-of-solomon-repo /release/key-of-solomon \
+  --samuel-repo /release/samuel \
+  --customer-web-repo /release/solslot \
+  --admin-portal-repo /release/solslot-portal \
+  --output /secure/ceremony/source-manifest-v3.json
+```
+
+Copy `sourceShas` from that generated evidence into the ceremony draft. Do
+not commit the generated manifest into a source repository: doing so would
+make the protocol repository SHA self-referential.
+
 ## Deploy Consumers
 
 Deploy the API, customer web, and admin portal atomically from the artifact's

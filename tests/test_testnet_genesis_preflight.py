@@ -33,10 +33,13 @@ def _source_shas() -> dict[str, str]:
     return {
         "protocol": "1" * 40,
         "evm": "2" * 40,
-        "api": "3" * 40,
-        "legacyBackend": "6" * 40,
-        "customerWeb": "4" * 40,
-        "adminPortal": "5" * 40,
+        "omnichain": "3" * 40,
+        "api": "4" * 40,
+        "legacyBackend": "5" * 40,
+        "keyOfSolomon": "6" * 40,
+        "samuel": "7" * 40,
+        "customerWeb": "8" * 40,
+        "adminPortal": "9" * 40,
     }
 
 
@@ -53,6 +56,7 @@ def _ceremony_plan() -> tuple[dict, dict, dict, dict]:
     validator_keys = [_hex(index, 48) for index in (31, 32, 33)]
     plan = {
         "schema": "solslot-genesis-plan-v2",
+        "sourceManifestVersion": 3,
         "protocolVersion": "solslot-v2",
         "ceremonyId": ceremony_id,
         "network": "testnet11",
@@ -123,6 +127,7 @@ def _ceremony_plan() -> tuple[dict, dict, dict, dict]:
         "state": "plan_approved",
         "draft": {
             "schemaVersion": 2,
+            "sourceManifestVersion": 3,
             "network": "testnet11",
             "evmChainId": 11155111,
             "reviewClass": "independent-release-review",
@@ -157,6 +162,7 @@ def _ceremony_plan() -> tuple[dict, dict, dict, dict]:
     spend_bundle_id = _hex(230)
     approval = {
         "schemaVersion": 2,
+        "sourceManifestVersion": 3,
         "ceremonyId": ceremony_id,
         "planHash": plan["planHash"],
         "sourceShas": sources,
@@ -200,6 +206,7 @@ def _public_artifact(record: dict, plan: dict) -> dict:
     admin_keys = plan["adminAuthority"]["compressedPubkeys"]
     artifact = {
         "schemaVersion": 2,
+        "sourceManifestVersion": 3,
         "protocolVersion": "solslot-v2",
         "network": "testnet11",
         "evmChainId": 11155111,
@@ -401,6 +408,7 @@ def test_post_genesis_accepts_locked_checksummed_release(tmp_path: Path) -> None
     ]
     lock = {
         "schemaVersion": 2,
+        "sourceManifestVersion": 3,
         "protocolVersion": "solslot-v2",
         "reviewClass": artifact["reviewClass"],
         "testOnly": artifact["testOnly"],
@@ -416,6 +424,7 @@ def test_post_genesis_accepts_locked_checksummed_release(tmp_path: Path) -> None
     _write_evidence(evidence_dir, plan, approval, artifact)
     attestation = {
         "schemaVersion": 2,
+        "sourceManifestVersion": 3,
         "protocolVersion": "solslot-v2",
         "network": "testnet11",
         "artifactHash": artifact["artifactHash"],

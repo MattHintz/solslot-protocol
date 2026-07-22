@@ -36,6 +36,7 @@ from solslot_puzzles.genesis_constants import GENESIS_EVM_CHAIN_ID, GENESIS_NETW
 
 
 GENESIS_PLAN_SCHEMA = "solslot-genesis-plan-v2"
+SOURCE_MANIFEST_VERSION = 3
 GENESIS_ADMIN_THRESHOLD = 2
 GENESIS_VALIDATOR_THRESHOLD = 2
 GENESIS_BRIDGE_BATCH_SIZE = 32
@@ -44,8 +45,11 @@ GENESIS_VAULT_VERSION = 2
 REQUIRED_SOURCE_SHAS = (
     "protocol",
     "evm",
+    "omnichain",
     "api",
     "legacyBackend",
+    "keyOfSolomon",
+    "samuel",
     "customerWeb",
     "adminPortal",
 )
@@ -252,6 +256,7 @@ def _plan_payload(
         "network": plan.network,
         "evmChainId": plan.evm_chain_id,
         "expiresAt": plan.expires_at,
+        "sourceManifestVersion": SOURCE_MANIFEST_VERSION,
         "sourceShas": dict(plan.source_shas),
         "evmAddresses": dict(plan.evm_addresses),
         "kosMintExecutePubkey": _hex(plan.base_protocol.kos_mint_execute_pubkey),
@@ -809,6 +814,7 @@ def build_genesis_ceremony_bundle(
 
 __all__ = [
     "GENESIS_PLAN_SCHEMA",
+    "SOURCE_MANIFEST_VERSION",
     "GENESIS_NETWORK",
     "GENESIS_EVM_CHAIN_ID",
     "GENESIS_BRIDGE_BATCH_SIZE",

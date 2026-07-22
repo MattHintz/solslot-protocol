@@ -17,6 +17,7 @@ from solslot_puzzles.genesis_ceremony import (
     GENESIS_ADMIN_THRESHOLD,
     GENESIS_EVM_CHAIN_ID,
     GENESIS_NETWORK,
+    SOURCE_MANIFEST_VERSION,
     GenesisCeremonyPlan,
     verify_genesis_ceremony_plan,
 )
@@ -41,8 +42,11 @@ REVIEW_CLASSES = frozenset(
 REQUIRED_SOURCE_REFS = (
     "protocol",
     "evm",
+    "omnichain",
     "api",
     "legacyBackend",
+    "keyOfSolomon",
+    "samuel",
     "customerWeb",
     "adminPortal",
 )
@@ -175,6 +179,7 @@ def build_public_artifact(
         "testOnly": internal_test,
         "auditStatus": "unaudited" if internal_test else "independently-reviewed",
         "buildTimestamp": timestamp,
+        "sourceManifestVersion": SOURCE_MANIFEST_VERSION,
         "ceremony": {
             "ceremonyId": _hex32(plan.ceremony_id, "ceremonyId"),
             "planHash": _hex32(plan.plan_hash, "planHash"),
@@ -434,6 +439,8 @@ def _verify_artifact_content(payload: Mapping[str, Any]) -> None:
         raise ValueError("independently reviewed artifact metadata is invalid")
     if payload.get("artifactHash") != artifact_hash(payload):
         raise ValueError("artifactHash does not match canonical payload")
+    if payload.get("sourceManifestVersion") != SOURCE_MANIFEST_VERSION:
+        raise ValueError("artifact sourceManifestVersion is unsupported")
 
     sources = payload.get("sourceShas")
     if not isinstance(sources, Mapping) or set(sources) != set(REQUIRED_SOURCE_REFS):
