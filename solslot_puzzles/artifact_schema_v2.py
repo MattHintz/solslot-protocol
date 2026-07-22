@@ -454,7 +454,6 @@ def _verify_artifact_content(payload: Mapping[str, Any]) -> None:
     for key in (
         "didInnerPuzzleHash",
         "didFullPuzzleHash",
-        "protocolTreasuryPuzzleHash",
         "governanceInnerPuzzleHash",
         "governanceFullPuzzleHash",
         "propertyRegistryFullPuzzleHash",
