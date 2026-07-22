@@ -23,9 +23,8 @@ SOURCE_SHAS = {
     "protocol": "1" * 40,
     "evm": "2" * 40,
     "api": "3" * 40,
-    "legacyBackend": "4" * 40,
-    "customerWeb": "5" * 40,
-    "adminPortal": "6" * 40,
+    "customerWeb": "4" * 40,
+    "adminPortal": "5" * 40,
 }
 EVM_ADDRESSES = {
     "forwarder": "0x" + "11" * 20,

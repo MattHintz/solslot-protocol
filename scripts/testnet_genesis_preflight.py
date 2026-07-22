@@ -23,21 +23,11 @@ from typing import Any, Mapping, Sequence
 
 PROTOCOL_ROOT = Path(__file__).resolve().parents[1]
 WORKSPACE_ROOT = PROTOCOL_ROOT.parent
-SOURCE_NAMES = (
-    "protocol",
-    "evm",
-    "api",
-    "legacyBackend",
-    "customerWeb",
-    "adminPortal",
-)
+SOURCE_NAMES = ("protocol", "evm", "api", "customerWeb", "adminPortal")
 SOURCE_DEFAULTS = {
     "protocol": PROTOCOL_ROOT,
-    # The ceremony EVM evidence is the zkPassport bridge deployment, not the
-    # separately gated CCIP/Warp payment rail.
     "evm": WORKSPACE_ROOT / "solslot-evm",
     "api": WORKSPACE_ROOT / "solslot-api",
-    "legacyBackend": WORKSPACE_ROOT / "research" / "solslot-backend",
     "customerWeb": WORKSPACE_ROOT / "solslot",
     "adminPortal": WORKSPACE_ROOT / "solslot-portal",
 }
@@ -87,11 +77,6 @@ def _add_common_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--protocol-repo", type=Path, default=SOURCE_DEFAULTS["protocol"])
     parser.add_argument("--evm-repo", type=Path, default=SOURCE_DEFAULTS["evm"])
     parser.add_argument("--api-repo", type=Path, default=SOURCE_DEFAULTS["api"])
-    parser.add_argument(
-        "--legacy-backend-repo",
-        type=Path,
-        default=SOURCE_DEFAULTS["legacyBackend"],
-    )
     parser.add_argument(
         "--customer-web-repo", type=Path, default=SOURCE_DEFAULTS["customerWeb"]
     )
@@ -260,7 +245,6 @@ def repository_paths(args: argparse.Namespace) -> dict[str, Path]:
         "protocol": args.protocol_repo,
         "evm": args.evm_repo,
         "api": args.api_repo,
-        "legacyBackend": args.legacy_backend_repo,
         "customerWeb": args.customer_web_repo,
         "adminPortal": args.admin_portal_repo,
     }
@@ -716,17 +700,6 @@ def _validate_artifact(
         or policy.get("rosterHash") != admin.get("rosterHash")
     ):
         findings.append(Finding("error", "artifact signature policy differs from administrator authority"))
-
-    governance = _require_mapping(
-        artifact.get("governanceStruct"), "artifact.governanceStruct", findings
-    )
-    if governance:
-        _require_hex(
-            governance.get("mintExecuteCosignerPubkey"),
-            48,
-            "artifact governance MINT co-signer public key",
-            findings,
-        )
 
     signatures = artifact.get("signatures")
     if not isinstance(signatures, list) or not (2 <= len(signatures) <= 3):
