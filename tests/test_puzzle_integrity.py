@@ -6,6 +6,9 @@ chainId change to Base Sepolia) silently drift the compiled puzzles away from
 accompanied by a refreeze, or ``test_frozen_checksum_matches_compiled_puzzles``
 fails loudly in CI.
 """
+import hashlib
+import json
+from pathlib import Path
 from solslot_puzzles import (
     FROZEN_CHECKSUM,
     PUZZLE_FILENAMES,
@@ -49,11 +52,49 @@ def test_solslot_v2_pool_modules_are_canonical_and_loadable():
 
 
 def test_native_primary_purchase_module_is_canonical_and_loadable():
-    filename = "mint_offer_delegate_v2.clsp"
-    assert filename in PUZZLE_FILENAMES
-    assert load_puzzle(filename).get_tree_hash() is not None
+    for filename in (
+        "mint_offer_delegate_v2.clsp",
+        "mint_offer_delegate_v3.clsp",
+        "mint_offer_delegate_v4.clsp",
+    ):
+        assert filename in PUZZLE_FILENAMES
+        assert load_puzzle(filename).get_tree_hash() is not None
 
 
 def test_no_duplicate_puzzle_filenames():
     """Canonical order must not contain duplicates (would double-count the checksum)."""
     assert len(PUZZLE_FILENAMES) == len(set(PUZZLE_FILENAMES))
+
+
+def test_rc20_manifest_preserves_every_rc19_puzzle_hash():
+    manifest_path = (
+        Path(__file__).resolve().parents[1]
+        / "release-manifests"
+        / "rc20-puzzle-hashes.json"
+    )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    preserved = manifest["preservedPuzzleHashes"]
+    canonical_names = PUZZLE_FILENAMES[: len(preserved)]
+    assert set(preserved) == set(canonical_names)
+
+    checksum = hashlib.sha256()
+    for filename in canonical_names:
+        expected_hash = preserved[filename]
+        actual = bytes(load_puzzle(filename).get_tree_hash())
+        assert actual.hex() == expected_hash
+        checksum.update(actual)
+    assert checksum.hexdigest() == manifest["preservedCanonicalChecksum"]
+
+
+def test_rc20_manifest_records_every_new_puzzle_hash():
+    manifest_path = (
+        Path(__file__).resolve().parents[1]
+        / "release-manifests"
+        / "rc20-puzzle-hashes.json"
+    )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    additions = manifest["newPuzzleHashes"]
+    assert tuple(additions) == PUZZLE_FILENAMES[-len(additions) :]
+    for filename, expected_hash in additions.items():
+        assert bytes(load_puzzle(filename).get_tree_hash()).hex() == expected_hash
+    assert compute_puzzles_checksum() == manifest["canonicalChecksum"]

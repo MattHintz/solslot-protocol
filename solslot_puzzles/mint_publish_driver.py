@@ -81,7 +81,7 @@ from solslot_puzzles.mint_proposal_v2_driver import (
 )
 from solslot_puzzles.primary_purchase_v2_driver import (
     PrimaryMintTermsV2,
-    make_mint_offer_v2_inner,
+    make_mint_offer_v4_inner,
 )
 from solslot_puzzles.sgt_driver import (
     TRK_PROPOSE,
@@ -731,7 +731,7 @@ def build_mint_publish_artifacts(
         if metadata_root is None:
             raise ValueError("primary purchase mints require metadata_root")
         resolved_anchor = metadata_anchor_id or deed_launcher_id
-        eve_mint_offer_inner = make_mint_offer_v2_inner(
+        eve_mint_offer_inner = make_mint_offer_v4_inner(
             PrimaryMintTermsV2(
                 network=primary_purchase.network,
                 smart_deed_inner_hash=smart_deed_inner_puzhash,

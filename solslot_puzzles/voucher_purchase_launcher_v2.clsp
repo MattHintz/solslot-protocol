@@ -1,0 +1,91 @@
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; RC20 atomic voucher purchase launcher.
+;;;
+;;; A buyer or authenticated bridge first pays this exact puzzle. Its only
+;;; spend creates one standard singleton launcher and one immutable payment
+;;; commitment coin, then pairs that creation with the signed series SALE.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(mod
+  (
+    SINGLETON_LAUNCHER_HASH
+    PRESALE_TERMS_HASH
+    VOUCHER_COMMITMENT_HASH
+    GLOBAL_PAYMENT_ID
+    PAYMENT_PUZZLE_HASH
+    PAYMENT_AMOUNT
+    ;; solution
+    my_id
+    my_parent_id
+    my_puzzle_hash
+    my_amount
+    series_coin_id
+    voucher_full_puzzle_hash
+  )
+
+  (include condition_codes.clib)
+  (include utils.clib)
+  (include utility_macros.clib)
+
+  (defconstant DOMAIN "SOLSLOT_VOUCHER_ISSUANCE_V2")
+
+  (defun-inline coin-id (parent_id puzzle_hash amount)
+    (sha256 parent_id puzzle_hash amount)
+  )
+
+  (defun-inline issuance-message
+      (series_coin_id voucher_launcher_id voucher_full_puzzle_hash payment_coin_id)
+    (sha256tree
+      (list
+        DOMAIN PRESALE_TERMS_HASH series_coin_id my_id
+        voucher_launcher_id voucher_full_puzzle_hash payment_coin_id
+        VOUCHER_COMMITMENT_HASH GLOBAL_PAYMENT_ID))
+  )
+
+  (assert
+    (is-size-b32 SINGLETON_LAUNCHER_HASH)
+    (is-size-b32 PRESALE_TERMS_HASH)
+    (is-size-b32 VOUCHER_COMMITMENT_HASH)
+    (is-size-b32 GLOBAL_PAYMENT_ID)
+    (is-size-b32 PAYMENT_PUZZLE_HASH)
+    (is-uint64 PAYMENT_AMOUNT)
+    (> PAYMENT_AMOUNT 0)
+    (is-size-b32 my_id)
+    (is-size-b32 my_parent_id)
+    (is-size-b32 my_puzzle_hash)
+    (is-uint64 my_amount)
+    (= my_amount (+ PAYMENT_AMOUNT 1))
+    (is-size-b32 series_coin_id)
+    (is-size-b32 voucher_full_puzzle_hash)
+    (list
+      (list ASSERT_MY_COIN_ID my_id)
+      (list ASSERT_MY_PARENT_ID my_parent_id)
+      (list ASSERT_MY_PUZZLEHASH my_puzzle_hash)
+      (list ASSERT_MY_AMOUNT my_amount)
+      (list CREATE_COIN SINGLETON_LAUNCHER_HASH 1
+        (list VOUCHER_COMMITMENT_HASH GLOBAL_PAYMENT_ID))
+      (list CREATE_COIN PAYMENT_PUZZLE_HASH PAYMENT_AMOUNT
+        (list VOUCHER_COMMITMENT_HASH GLOBAL_PAYMENT_ID))
+      (list ASSERT_COIN_ANNOUNCEMENT
+        (sha256
+          (coin-id my_id SINGLETON_LAUNCHER_HASH 1)
+          (sha256tree
+            (list voucher_full_puzzle_hash 1
+              (list VOUCHER_COMMITMENT_HASH GLOBAL_PAYMENT_ID)))))
+      (list ASSERT_COIN_ANNOUNCEMENT
+        (sha256 series_coin_id
+          (issuance-message
+            series_coin_id
+            (coin-id my_id SINGLETON_LAUNCHER_HASH 1)
+            voucher_full_puzzle_hash
+            (coin-id my_id PAYMENT_PUZZLE_HASH PAYMENT_AMOUNT))))
+      (list CREATE_COIN_ANNOUNCEMENT
+        (issuance-message
+          series_coin_id
+          (coin-id my_id SINGLETON_LAUNCHER_HASH 1)
+          voucher_full_puzzle_hash
+          (coin-id my_id PAYMENT_PUZZLE_HASH PAYMENT_AMOUNT)))
+      (list REMARK PROTOCOL_PREFIX "VOUCHER_PURCHASE_LAUNCHER_V2"
+        VOUCHER_COMMITMENT_HASH GLOBAL_PAYMENT_ID))
+  )
+)

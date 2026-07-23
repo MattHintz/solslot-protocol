@@ -1,0 +1,226 @@
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; RC20 Chia receipt for Base Sepolia USDC held by the governed escrow spoke.
+;;;
+;;; The one-mojo receipt carries no payment value. It can only be consumed with
+;;; the exact voucher/series transition and a 2-of-3 attestation over confirmed
+;;; external settlement evidence. The EVM spoke remains the money custodian and
+;;; refunds its immutable original depositor.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(mod
+  (
+    PRESALE_TERMS_HASH
+    VOUCHER_COMMITMENT_HASH
+    GLOBAL_PAYMENT_ID
+    ORIGINAL_PAYER
+    PAYMENT_PRINCIPAL
+    REFUND_DEADLINE
+    EVM_CHAIN_ID
+    ESCROW_CONTRACT
+    TOKEN_CONTRACT
+    PURCHASE_ARTIFACT_HASH
+    DEED_LAUNCHER_ID
+    APPROVED_VAULT_P2_PUZZLE_HASH
+    TRUSTED_PROTOCOL_TREASURY
+    VALIDATOR_PUBKEYS
+    OFFER_MOD_HASH
+    ;; solution
+    voucher_action
+    delivery_deadline
+    series_coin_id
+    voucher_coin_id
+    my_id
+    my_parent_id
+    my_puzzle_hash
+    my_amount
+    external_settlement_evidence_hash
+    signer_indices
+  )
+
+  (include condition_codes.clib)
+  (include utils.clib)
+  (include utility_macros.clib)
+
+  (defconstant DOMAIN "SOLSLOT_VOUCHER_TRANSITION_V2")
+  (defconstant EVIDENCE_DOMAIN "SOLSLOT_BASE_ESCROW_SETTLEMENT_V2")
+  (defconstant ACTION_REFUND_PRESALE 1)
+  (defconstant ACTION_REFUND_EXPIRED 2)
+  (defconstant ACTION_REDEEM 3)
+  (defconstant ACTION_REFUND_CANCELED 4)
+  (defconstant TRANSITION_REFUND 4)
+  (defconstant TRANSITION_REDEEM 5)
+  (defconstant BASE_SEPOLIA_USDC_ASSET_ID 0x000000000000000000000000036cbd53842c5426634e7929541ec2318f3dcf7e)
+  (defconstant RECEIPT_SETTLEMENT_DOMAIN "SOLSLOT_BASE_RECEIPT_SETTLEMENT_V2")
+
+  (defun list-length (items)
+    (if items (+ 1 (list-length (r items))) 0)
+  )
+
+  (defun nth (items index)
+    (if (= index 0) (f items) (nth (r items) (- index 1)))
+  )
+
+  (defun is-sorted-strict (items)
+    (if items
+      (if (r items)
+        (if (> (f (r items)) (f items))
+          (is-sorted-strict (r items))
+          ())
+        1)
+      1)
+  )
+
+  (defun all-indices-in-range (indices bound)
+    (if indices
+      (and
+        (not (> 0 (f indices)))
+        (> bound (f indices))
+        (all-indices-in-range (r indices) bound))
+      1)
+  )
+
+  (defun emit-sigs (pubkeys indices message)
+    (if indices
+      (c
+        (list AGG_SIG_ME (nth pubkeys (f indices)) message)
+        (emit-sigs pubkeys (r indices) message))
+      ())
+  )
+
+  (defun-inline transition-tag (action)
+    (if (= action ACTION_REDEEM) TRANSITION_REDEEM TRANSITION_REFUND)
+  )
+
+  (defun-inline transition-message
+      (action delivery_deadline series_coin_id)
+    (sha256tree
+      (list
+        DOMAIN PRESALE_TERMS_HASH VOUCHER_COMMITMENT_HASH GLOBAL_PAYMENT_ID
+        action (transition-tag action) delivery_deadline series_coin_id my_id))
+  )
+
+  (defun-inline evidence-message (action evidence_hash)
+    (sha256tree
+      (list
+        EVIDENCE_DOMAIN EVM_CHAIN_ID ESCROW_CONTRACT TOKEN_CONTRACT
+        GLOBAL_PAYMENT_ID ORIGINAL_PAYER PAYMENT_PRINCIPAL
+        PURCHASE_ARTIFACT_HASH action evidence_hash))
+  )
+
+  (defun-inline receipt-settlement-message
+      (action evidence_hash transition_message purchase_artifact_hash
+       deed_launcher_id approved_vault_p2_puzzle_hash)
+    (sha256tree
+      (list
+        RECEIPT_SETTLEMENT_DOMAIN purchase_artifact_hash deed_launcher_id
+        approved_vault_p2_puzzle_hash action evidence_hash
+        transition_message))
+  )
+
+  (defun-inline time-conditions (action delivery_deadline)
+    (if (= action ACTION_REFUND_PRESALE)
+      (list (list ASSERT_BEFORE_SECONDS_ABSOLUTE REFUND_DEADLINE))
+      (if (= action ACTION_REFUND_CANCELED)
+        ()
+        (if (= action ACTION_REFUND_EXPIRED)
+          (list (list ASSERT_SECONDS_ABSOLUTE delivery_deadline))
+          (list (list ASSERT_BEFORE_SECONDS_ABSOLUTE delivery_deadline)))))
+  )
+
+  (defun-inline settlement-conditions
+      (action evidence_hash transition_message purchase_artifact_hash
+       deed_launcher_id approved_vault_p2_puzzle_hash)
+    (if (= action ACTION_REDEEM)
+      (list
+        (list CREATE_COIN OFFER_MOD_HASH 1
+          (list PURCHASE_ARTIFACT_HASH DEED_LAUNCHER_ID
+            APPROVED_VAULT_P2_PUZZLE_HASH))
+        (list CREATE_COIN_ANNOUNCEMENT
+          (receipt-settlement-message
+            action evidence_hash transition_message purchase_artifact_hash
+            deed_launcher_id approved_vault_p2_puzzle_hash)))
+      (list
+        (list CREATE_COIN_ANNOUNCEMENT
+          (receipt-settlement-message
+            action evidence_hash transition_message purchase_artifact_hash
+            deed_launcher_id approved_vault_p2_puzzle_hash))))
+  )
+
+  (assert
+    (is-size-b32 PRESALE_TERMS_HASH)
+    (is-size-b32 VOUCHER_COMMITMENT_HASH)
+    (is-size-b32 GLOBAL_PAYMENT_ID)
+    (is-size-b32 ORIGINAL_PAYER)
+    (is-uint64 PAYMENT_PRINCIPAL)
+    (> PAYMENT_PRINCIPAL 0)
+    (is-uint64 REFUND_DEADLINE)
+    (= EVM_CHAIN_ID 84532)
+    (is-size-b32 ESCROW_CONTRACT)
+    (not (= ESCROW_CONTRACT 0x0000000000000000000000000000000000000000000000000000000000000000))
+    (is-size-b32 TOKEN_CONTRACT)
+    (= TOKEN_CONTRACT BASE_SEPOLIA_USDC_ASSET_ID)
+    (is-size-b32 PURCHASE_ARTIFACT_HASH)
+    (not (= PURCHASE_ARTIFACT_HASH 0x0000000000000000000000000000000000000000000000000000000000000000))
+    (is-size-b32 DEED_LAUNCHER_ID)
+    (not (= DEED_LAUNCHER_ID 0x0000000000000000000000000000000000000000000000000000000000000000))
+    (is-size-b32 APPROVED_VAULT_P2_PUZZLE_HASH)
+    (not (= APPROVED_VAULT_P2_PUZZLE_HASH 0x0000000000000000000000000000000000000000000000000000000000000000))
+    (is-size-b32 TRUSTED_PROTOCOL_TREASURY)
+    (is-size-b32 OFFER_MOD_HASH)
+    (= (list-length VALIDATOR_PUBKEYS) 3)
+    (all-bls-g1-pubkeys VALIDATOR_PUBKEYS)
+    (has-no-duplicates VALIDATOR_PUBKEYS ())
+    (or
+      (= voucher_action ACTION_REFUND_PRESALE)
+      (= voucher_action ACTION_REFUND_EXPIRED)
+      (= voucher_action ACTION_REDEEM)
+      (= voucher_action ACTION_REFUND_CANCELED))
+    (is-uint64 delivery_deadline)
+    (if (or
+          (= voucher_action ACTION_REFUND_PRESALE)
+          (= voucher_action ACTION_REFUND_CANCELED))
+      (= delivery_deadline 0)
+      (> delivery_deadline REFUND_DEADLINE))
+    (is-size-b32 series_coin_id)
+    (is-size-b32 voucher_coin_id)
+    (is-size-b32 my_id)
+    (is-size-b32 my_parent_id)
+    (is-size-b32 my_puzzle_hash)
+    (= my_amount 1)
+    (is-size-b32 external_settlement_evidence_hash)
+    (is-sorted-strict signer_indices)
+    (not (> 2 (list-length signer_indices)))
+    (all-indices-in-range signer_indices 3)
+    (merge-lists
+      (list
+        (list ASSERT_MY_COIN_ID my_id)
+        (list ASSERT_MY_PARENT_ID my_parent_id)
+        (list ASSERT_MY_PUZZLEHASH my_puzzle_hash)
+        (list ASSERT_MY_AMOUNT 1))
+      (merge-lists
+        (time-conditions voucher_action delivery_deadline)
+        (merge-lists
+          (emit-sigs VALIDATOR_PUBKEYS signer_indices
+            (evidence-message
+              voucher_action external_settlement_evidence_hash))
+          (merge-lists
+            (settlement-conditions
+              voucher_action external_settlement_evidence_hash
+              (transition-message
+                voucher_action delivery_deadline series_coin_id)
+              PURCHASE_ARTIFACT_HASH DEED_LAUNCHER_ID
+              APPROVED_VAULT_P2_PUZZLE_HASH)
+            (list
+              (list ASSERT_COIN_ANNOUNCEMENT
+                (sha256 series_coin_id
+                  (transition-message
+                    voucher_action delivery_deadline series_coin_id)))
+              (list ASSERT_COIN_ANNOUNCEMENT
+                (sha256 voucher_coin_id
+                  (transition-message
+                    voucher_action delivery_deadline series_coin_id)))
+              (list REMARK PROTOCOL_PREFIX "VOUCHER_BASE_RECEIPT_V2"
+                GLOBAL_PAYMENT_ID ORIGINAL_PAYER PAYMENT_PRINCIPAL
+                external_settlement_evidence_hash voucher_action))))))
+  )
+)

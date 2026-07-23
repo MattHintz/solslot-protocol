@@ -16,6 +16,7 @@ from typing import Any
 import pytest
 
 from solslot_puzzles.property_registry_driver import canonicalise_property_id
+from solslot_puzzles.real_estate_profiles import ASSET_CLASS_CODES
 
 
 PROTOCOL_ROOT = Path(__file__).resolve().parents[1]
@@ -112,9 +113,11 @@ def test_property_id_and_asset_class_contract_matches_protocol_and_portal() -> N
     assert canonicalise_property_id(" us-tx-travis-9001 ").hex() == (
         hashlib.sha256(b"US-TX-TRAVIS-9001").hexdigest()
     )
-    assert _ts_string_number_map(text, "ALPHA_ASSET_CLASS_CODES") == SCHEMA[
-        "mint_publish"
-    ]["asset_classes"]
+    expected_classes = SCHEMA["mint_publish"]["asset_classes"]
+    assert {key: int(value) for key, value in ASSET_CLASS_CODES.items()} == (
+        expected_classes
+    )
+    assert _ts_string_number_map(text, "ALPHA_ASSET_CLASS_CODES") == expected_classes
 
 
 def test_zkpassport_schema_matches_evm_and_portal() -> None:

@@ -76,7 +76,7 @@ from solslot_puzzles.mint_publish_driver import (
 )
 from solslot_puzzles.primary_purchase_v2_driver import (
     PrimaryMintTermsV2,
-    make_mint_offer_v2_inner,
+    make_mint_offer_v4_inner,
 )
 
 
@@ -964,7 +964,7 @@ class TestArtifactsCrossDriver:
             p2_pool_mod_hash=P2_POOL_MOD_HASH,
             p2_vault_mod_hash=P2_VAULT_MOD_HASH,
         )
-        expected_inner = make_mint_offer_v2_inner(
+        expected_inner = make_mint_offer_v4_inner(
             PrimaryMintTermsV2(
                 network="testnet11",
                 smart_deed_inner_hash=bytes32(smart.get_tree_hash()),

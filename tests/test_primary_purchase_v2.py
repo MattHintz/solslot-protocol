@@ -33,9 +33,9 @@ from solslot_puzzles.payment_artifacts_v2 import (
 from solslot_puzzles.primary_purchase_v2_driver import (
     PrimaryMintTermsV2,
     build_chia_primary_offer,
-    chia_offer_v2_solution,
+    chia_offer_v3_solution,
     chia_cat_driver,
-    make_mint_offer_v2_inner,
+    make_mint_offer_v3_inner,
     prepare_chia_buyer_offer,
     smart_deed_singleton_driver,
 )
@@ -341,7 +341,7 @@ def test_xch_buyer_offer_and_governed_deed_offer_balance_atomically() -> None:
     artifact = _artifact(PaymentRail.CHIA_XCH)
     terms = _mint_terms(artifact)
     buyer_offer = _buyer_xch_offer(artifact, terms)
-    inner = make_mint_offer_v2_inner(terms)
+    inner = make_mint_offer_v3_inner(terms)
     singleton_struct = Program.to(
         (
             SINGLETON_MOD_HASH,
@@ -383,7 +383,7 @@ def test_xch_buyer_offer_and_governed_deed_offer_balance_atomically() -> None:
     assert len(restored.to_valid_spend().coin_spends) == 4
 
     native_conditions = inner.run(
-        chia_offer_v2_solution(
+        chia_offer_v3_solution(
             deed_coin=deed_coin,
             artifact=artifact,
             buyer_offer_nonce=next(
@@ -424,7 +424,7 @@ def test_cat_buyer_offer_and_governed_deed_offer_balance_atomically() -> None:
     )
     terms = _mint_terms(artifact)
     buyer_offer = _buyer_cat_offer(artifact, terms, tail)
-    inner = make_mint_offer_v2_inner(terms)
+    inner = make_mint_offer_v3_inner(terms)
     singleton_struct = Program.to(
         (
             SINGLETON_MOD_HASH,
@@ -467,7 +467,7 @@ def test_cat_buyer_offer_and_governed_deed_offer_balance_atomically() -> None:
     assert len(restored.to_valid_spend().coin_spends) == 4
 
     native_conditions = inner.run(
-        chia_offer_v2_solution(
+        chia_offer_v3_solution(
             deed_coin=deed_coin,
             artifact=artifact,
             buyer_offer_nonce=next(
@@ -500,7 +500,7 @@ def test_mint_offer_rejects_noncanonical_vault_destination() -> None:
     )
     deed_coin = Coin(_b32(60), _b32(62), uint64(1))
     with pytest.raises(PaymentArtifactError, match="not canonical"):
-        chia_offer_v2_solution(
+        chia_offer_v3_solution(
             deed_coin=deed_coin,
             artifact=artifact,
             buyer_offer_nonce=_b32(63),

@@ -1,0 +1,216 @@
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; RC20 native-XCH refundable payment escrow.
+;;;
+;;; REFUND returns the exact escrow amount to the immutable original payer.
+;;; REDEEM turns this coin into the buyer half of the existing governed
+;;; SmartDeed offer, requesting the exact deed at the exact approved vault.
+;;; Both paths require the paired voucher and presale-series transition.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(mod
+  (
+    SINGLETON_MOD_HASH
+    SINGLETON_LAUNCHER_HASH
+    OFFER_MOD_HASH
+    PRESALE_TERMS_HASH
+    VOUCHER_COMMITMENT_HASH
+    GLOBAL_PAYMENT_ID
+    ORIGINAL_PAYER_PUZZLE_HASH
+    PAYMENT_PRINCIPAL
+    REFUND_DEADLINE
+    DEED_LAUNCHER_ID
+    SMART_DEED_INNER_HASH
+    METADATA_ROOT
+    PURCHASE_ID
+    PURCHASE_ARTIFACT_HASH
+    APPROVED_VAULT_P2_PUZZLE_HASH
+    VALIDATOR_PUBKEYS
+    ;; solution
+    voucher_action
+    delivery_deadline
+    series_coin_id
+    voucher_coin_id
+    my_id
+    my_parent_id
+    my_puzzle_hash
+    my_amount
+    signer_indices
+  )
+
+  (include condition_codes.clib)
+  (include utils.clib)
+  (include utility_macros.clib)
+
+  (defconstant DOMAIN "SOLSLOT_VOUCHER_TRANSITION_V2")
+  (defconstant ACTION_REFUND_PRESALE 1)
+  (defconstant ACTION_REFUND_EXPIRED 2)
+  (defconstant ACTION_REDEEM 3)
+  (defconstant ACTION_REFUND_CANCELED 4)
+  (defconstant TRANSITION_REFUND 4)
+  (defconstant TRANSITION_REDEEM 5)
+
+  (defun list-length (items)
+    (if items (+ 1 (list-length (r items))) 0)
+  )
+
+  (defun nth (items index)
+    (if (= index 0) (f items) (nth (r items) (- index 1)))
+  )
+
+  (defun is-sorted-strict (items)
+    (if items
+      (if (r items)
+        (if (> (f (r items)) (f items))
+          (is-sorted-strict (r items))
+          ())
+        1)
+      1)
+  )
+
+  (defun all-indices-in-range (indices bound)
+    (if indices
+      (and
+        (not (> 0 (f indices)))
+        (> bound (f indices))
+        (all-indices-in-range (r indices) bound))
+      1)
+  )
+
+  (defun emit-sigs (pubkeys indices message)
+    (if indices
+      (c
+        (list AGG_SIG_ME (nth pubkeys (f indices)) message)
+        (emit-sigs pubkeys (r indices) message))
+      ())
+  )
+
+  (defun-inline transition-tag (action)
+    (if (= action ACTION_REDEEM) TRANSITION_REDEEM TRANSITION_REFUND)
+  )
+
+  (defun-inline transition-message
+      (action delivery_deadline series_coin_id escrow_coin_id)
+    (sha256tree
+      (list
+        DOMAIN
+        PRESALE_TERMS_HASH
+        VOUCHER_COMMITMENT_HASH
+        GLOBAL_PAYMENT_ID
+        action
+        (transition-tag action)
+        delivery_deadline
+        series_coin_id
+        escrow_coin_id))
+  )
+
+  (defun-inline buyer-offer-nonce (parent_id puzzle_hash amount)
+    (sha256tree (list (list parent_id puzzle_hash amount)))
+  )
+
+  (defun-inline deed-offer-puzzle-hash ()
+    (calculate_full_puzzle_hash
+      (c SINGLETON_MOD_HASH
+        (c DEED_LAUNCHER_ID SINGLETON_LAUNCHER_HASH))
+      OFFER_MOD_HASH)
+  )
+
+  (defun-inline deed-delivery-message (buyer_nonce)
+    (sha256tree
+      (c buyer_nonce
+        (list
+          (list APPROVED_VAULT_P2_PUZZLE_HASH 1
+            (list DEED_LAUNCHER_ID SMART_DEED_INNER_HASH
+              METADATA_ROOT PURCHASE_ID PURCHASE_ARTIFACT_HASH)))))
+  )
+
+  (defun-inline time-conditions (action delivery_deadline)
+    (if (= action ACTION_REFUND_PRESALE)
+      (list (list ASSERT_BEFORE_SECONDS_ABSOLUTE REFUND_DEADLINE))
+      (if (= action ACTION_REFUND_CANCELED)
+        ()
+        (if (= action ACTION_REFUND_EXPIRED)
+          (list (list ASSERT_SECONDS_ABSOLUTE delivery_deadline))
+          (list (list ASSERT_BEFORE_SECONDS_ABSOLUTE delivery_deadline)))))
+  )
+
+  (defun-inline terminal-conditions
+      (action my_parent_id my_puzzle_hash my_amount)
+    (if (= action ACTION_REDEEM)
+      (list
+        (list CREATE_COIN OFFER_MOD_HASH PAYMENT_PRINCIPAL (list OFFER_MOD_HASH))
+        (list ASSERT_PUZZLE_ANNOUNCEMENT
+          (sha256
+            (deed-offer-puzzle-hash)
+            (deed-delivery-message
+              (buyer-offer-nonce my_parent_id my_puzzle_hash my_amount)))))
+      (list
+        (list CREATE_COIN ORIGINAL_PAYER_PUZZLE_HASH PAYMENT_PRINCIPAL
+          (list ORIGINAL_PAYER_PUZZLE_HASH))))
+  )
+
+  (assert
+    (is-size-b32 PRESALE_TERMS_HASH)
+    (is-size-b32 VOUCHER_COMMITMENT_HASH)
+    (is-size-b32 GLOBAL_PAYMENT_ID)
+    (is-size-b32 ORIGINAL_PAYER_PUZZLE_HASH)
+    (is-uint64 PAYMENT_PRINCIPAL)
+    (> PAYMENT_PRINCIPAL 0)
+    (is-uint64 REFUND_DEADLINE)
+    (is-size-b32 DEED_LAUNCHER_ID)
+    (is-size-b32 SMART_DEED_INNER_HASH)
+    (is-size-b32 METADATA_ROOT)
+    (is-size-b32 PURCHASE_ID)
+    (is-size-b32 PURCHASE_ARTIFACT_HASH)
+    (is-size-b32 APPROVED_VAULT_P2_PUZZLE_HASH)
+    (= (list-length VALIDATOR_PUBKEYS) 3)
+    (all-bls-g1-pubkeys VALIDATOR_PUBKEYS)
+    (has-no-duplicates VALIDATOR_PUBKEYS ())
+    (or
+      (= voucher_action ACTION_REFUND_PRESALE)
+      (= voucher_action ACTION_REFUND_EXPIRED)
+      (= voucher_action ACTION_REDEEM)
+      (= voucher_action ACTION_REFUND_CANCELED))
+    (is-uint64 delivery_deadline)
+    (if (or
+          (= voucher_action ACTION_REFUND_PRESALE)
+          (= voucher_action ACTION_REFUND_CANCELED))
+      (= delivery_deadline 0)
+      (> delivery_deadline REFUND_DEADLINE))
+    (is-size-b32 series_coin_id)
+    (is-size-b32 voucher_coin_id)
+    (is-size-b32 my_id)
+    (is-size-b32 my_parent_id)
+    (is-size-b32 my_puzzle_hash)
+    (is-uint64 my_amount)
+    (= my_amount PAYMENT_PRINCIPAL)
+    (is-sorted-strict signer_indices)
+    (not (> 2 (list-length signer_indices)))
+    (all-indices-in-range signer_indices 3)
+    (merge-lists
+      (list
+        (list ASSERT_MY_COIN_ID my_id)
+        (list ASSERT_MY_PARENT_ID my_parent_id)
+        (list ASSERT_MY_PUZZLEHASH my_puzzle_hash)
+        (list ASSERT_MY_AMOUNT my_amount))
+      (merge-lists
+        (time-conditions voucher_action delivery_deadline)
+        (merge-lists
+          (emit-sigs VALIDATOR_PUBKEYS signer_indices
+            (transition-message
+              voucher_action delivery_deadline series_coin_id my_id))
+          (merge-lists
+            (list
+              (list ASSERT_COIN_ANNOUNCEMENT
+                (sha256 series_coin_id
+                  (transition-message
+                    voucher_action delivery_deadline series_coin_id my_id)))
+              (list ASSERT_COIN_ANNOUNCEMENT
+                (sha256 voucher_coin_id
+                  (transition-message
+                    voucher_action delivery_deadline series_coin_id my_id)))
+              (list REMARK PROTOCOL_PREFIX "VOUCHER_ESCROW_V2"
+                VOUCHER_COMMITMENT_HASH GLOBAL_PAYMENT_ID voucher_action))
+            (terminal-conditions
+              voucher_action my_parent_id my_puzzle_hash my_amount)))))
+  )
+)
