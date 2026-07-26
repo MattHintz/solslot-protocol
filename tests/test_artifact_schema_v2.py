@@ -62,6 +62,18 @@ def accept_test_signature(
 def test_artifact_has_complete_signed_v2_surface() -> None:
     value = artifact()
     assert value["schemaVersion"] == 2
+    assert value["sourceManifestVersion"] == 3
+    assert set(value["sourceShas"]) == {
+        "protocol",
+        "evm",
+        "omnichain",
+        "api",
+        "legacyBackend",
+        "keyOfSolomon",
+        "samuel",
+        "customerWeb",
+        "adminPortal",
+    }
     assert value["protocolVersion"] == "solslot-v2"
     assert value["network"] == "testnet11"
     assert value["evmChainId"] == 11155111
@@ -71,6 +83,9 @@ def test_artifact_has_complete_signed_v2_surface() -> None:
     assert value["sgtGenesisCoinId"].startswith("0x")
     assert value["sgtTailHash"] == value["puzzleHashes"]["sgtTailHash"]
     assert value["adminAuthority"]["threshold"] == 2
+    assert value["adminAuthority"]["policy"] == "owner-plus-one"
+    assert value["adminAuthority"]["ownerIndex"] == 0
+    assert value["adminAuthority"]["coadminIndices"] == [1, 2]
     assert len(value["validatorSet"]["pubkeys"]) == 3
     assert len(value["bridgePolicy"]["bridgeCoinIds"]) == 32
     verify_public_artifact(value, signature_verifier=accept_test_signature)
@@ -96,6 +111,15 @@ def test_artifact_hash_is_canonical_and_tamper_evident() -> None:
     tampered["network"] = "mainnet"
     with pytest.raises(ValueError, match="network|artifactHash"):
         verify_public_artifact(tampered, signature_verifier=accept_test_signature)
+
+
+def test_artifact_rejects_retired_six_repository_source_manifest() -> None:
+    value = artifact()
+    for name in ("omnichain", "keyOfSolomon", "samuel"):
+        del value["sourceShas"][name]
+    value["artifactHash"] = artifact_hash(value)
+    with pytest.raises(ValueError, match="sourceShas are incomplete"):
+        verify_public_artifact(value, signature_verifier=accept_test_signature)
 
 
 def test_artifact_rejects_empty_mint_execute_cosigner() -> None:
@@ -129,6 +153,10 @@ def test_artifact_requires_two_distinct_roster_signatures() -> None:
     duplicate = artifact(signed_slots=(1, 1))
     with pytest.raises(ValueError, match="distinct roster slots"):
         verify_public_artifact(duplicate, signature_verifier=accept_test_signature)
+
+    coadmins_only = artifact(signed_slots=(1, 2))
+    with pytest.raises(ValueError, match="slot 0 and one coadministrator"):
+        verify_public_artifact(coadmins_only, signature_verifier=accept_test_signature)
 
 
 def test_artifact_rejects_wrong_roster_key_and_invalid_signature() -> None:

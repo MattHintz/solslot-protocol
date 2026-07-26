@@ -81,7 +81,7 @@ from solslot_puzzles.mint_proposal_v2_driver import (
 )
 from solslot_puzzles.primary_purchase_v2_driver import (
     PrimaryMintTermsV2,
-    make_mint_offer_v2_inner,
+    make_mint_offer_v4_inner,
 )
 from solslot_puzzles.sgt_driver import (
     TRK_PROPOSE,
@@ -586,11 +586,11 @@ class MintPublishArtifacts:
 
 @dataclass(frozen=True)
 class PrimaryPurchaseMintConfig:
-    """Immutable purchase terms sealed into a collection deed at mint.
+    """Native purchase terms sealed into a collection deed at mint.
 
-    The deed launcher ID and collection commitments are derived inside
-    :func:`build_mint_publish_artifacts`; callers supply only values that are
-    fixed by the signed release artifact and sealed dossier.
+    The deed launcher and collection commitments are derived by
+    :func:`build_mint_publish_artifacts`. External rails do not spend this
+    delegate; their delivery is coordinated by Omnichain/KoS/Samuel.
     """
 
     network: str
@@ -718,9 +718,9 @@ def build_mint_publish_artifacts(
     )
     smart_deed_inner_puzhash = bytes32(smart_deed_inner.get_tree_hash())
 
-    # Step 3: mint-offer eve inner + deed_full_puzhash. Collection mints use
-    # the purchase-aware V2 delegate; the legacy fixed-mojo delegate remains
-    # available for historical fixtures and recall-only records.
+    # Step 3: mint-offer eve inner + deed_full_puzhash. New collection mints
+    # use the native purchase delegate; the fixed-mojo delegate remains only
+    # for historical fixtures and recall-only records.
     if primary_purchase is None:
         eve_mint_offer_inner = make_mint_offer_eve_inner(
             smart_deed_inner_hash=smart_deed_inner_puzhash,
@@ -731,7 +731,7 @@ def build_mint_publish_artifacts(
         if metadata_root is None:
             raise ValueError("primary purchase mints require metadata_root")
         resolved_anchor = metadata_anchor_id or deed_launcher_id
-        eve_mint_offer_inner = make_mint_offer_v2_inner(
+        eve_mint_offer_inner = make_mint_offer_v4_inner(
             PrimaryMintTermsV2(
                 network=primary_purchase.network,
                 smart_deed_inner_hash=smart_deed_inner_puzhash,

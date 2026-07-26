@@ -33,6 +33,7 @@ PUZZLE_FILENAMES = (
     "governance_singleton_inner.clsp",
     "quorum_did_inner.clsp",
     "mint_offer_delegate.clsp",
+    "mint_offer_delegate_v2.clsp",
     "purchase_payment.clsp",
     "p2_deed_settlement.clsp",
     "sgt_tail.clsp",
@@ -70,13 +71,31 @@ PUZZLE_FILENAMES = (
     # fast-track / SGT-tracker routine).  See
     # research/SOLSLOT_VAULT_UPGRADE_DESIGN.md and the puzzle docstring.
     "vault_version_registry_inner.clsp",
+    "voucher_presale_series_v1.clsp",
+    "voucher_nft_inner_v1.clsp",
+    # RC20 refundable presale. These are additive modules; RC19 puzzle bytes
+    # remain frozen and their individual hashes are asserted by release tests.
+    "voucher_burn_v2.clsp",
+    "voucher_presale_series_v2.clsp",
+    "voucher_nft_inner_v2.clsp",
+    "voucher_payment_escrow_v2.clsp",
+    "voucher_external_escrow_receipt_v2.clsp",
+    "voucher_base_result_authorization_v2.clsp",
+    "voucher_purchase_launcher_v2.clsp",
+    "mint_offer_delegate_v3.clsp",
+    "mint_offer_delegate_v4.clsp",
 )
 
 # ── Frozen checksum — update after every intentional puzzle change ──
 # Set to None to skip verification (development mode).
 # Generate with: python -c "from solslot_puzzles import compute_puzzles_checksum; print(compute_puzzles_checksum())"
 FROZEN_CHECKSUM: Optional[str] = (
-    # 2026-07-19 PA16 exact version increments for protocol_config and
+    # RC20 preserves every RC19 module byte-for-byte and appends the strictly
+    # bound refundable voucher series, non-transferable voucher singleton,
+    # XCH escrow, external escrow receipt, chain-authorized Base result handoff,
+    # atomic issuance launcher, and voucher-bound primary deed settlement
+    # delegates.
+    # RC19 includes 2026-07-19 PA16 exact version increments for protocol_config and
     # vault_version_registry + PA3 governance PROPOSE bill-tag whitelist +
     # 2026-07-18 PA17 live acquisition KYC pairing +
     # PA2 operation-bound admin member signatures + PA4 exact admin authority
@@ -104,8 +123,11 @@ FROZEN_CHECKSUM: Optional[str] = (
     #   - five-spend governance/DID/registry/proposal/deed mint execution;
     #   - RC17 MINT EXECUTE requires the immutable, dedicated KoS co-signer
     #     public key to sign the governance singleton/proposal commitment;
-    #   - no retired contract implementations in the canonical package.
-    "ea5b46bc20b2ea626c233d9535235d8be597f343d0bd23947f74f124df2ccaff"
+    #   - no retired contract implementations in the canonical package;
+    #   - RC19 native XCH/CAT primary purchases use a dedicated on-demand
+    #     offer delegate that binds one exact deed to one canonical vault and
+    #     exposes no standalone external-payment escrow branch.
+    "5cfb8d524809c1cb605c9d44ddec273a73babc2763cb6fd9f4cf43b847e8e018"
 )
 
 # ── Cache ──

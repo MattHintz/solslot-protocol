@@ -33,18 +33,14 @@ def _source_shas() -> dict[str, str]:
     return {
         "protocol": "1" * 40,
         "evm": "2" * 40,
-        "api": "3" * 40,
-        "legacyBackend": "4" * 40,
-        "customerWeb": "5" * 40,
-        "adminPortal": "6" * 40,
+        "omnichain": "3" * 40,
+        "api": "4" * 40,
+        "legacyBackend": "5" * 40,
+        "keyOfSolomon": "6" * 40,
+        "samuel": "7" * 40,
+        "customerWeb": "8" * 40,
+        "adminPortal": "9" * 40,
     }
-
-
-def test_source_defaults_bind_the_zkpassport_evm_contract_repository() -> None:
-    assert preflight.SOURCE_DEFAULTS["evm"] == preflight.WORKSPACE_ROOT / "solslot-evm"
-    assert preflight.SOURCE_DEFAULTS["evm"] != (
-        preflight.WORKSPACE_ROOT / "research" / "solslot-omnichain"
-    )
 
 
 def _ceremony_plan() -> tuple[dict, dict, dict, dict]:
@@ -60,6 +56,7 @@ def _ceremony_plan() -> tuple[dict, dict, dict, dict]:
     validator_keys = [_hex(index, 48) for index in (31, 32, 33)]
     plan = {
         "schema": "solslot-genesis-plan-v2",
+        "sourceManifestVersion": 3,
         "protocolVersion": "solslot-v2",
         "ceremonyId": ceremony_id,
         "network": "testnet11",
@@ -103,12 +100,15 @@ def _ceremony_plan() -> tuple[dict, dict, dict, dict]:
         },
         "adminAuthority": {
             "threshold": 2,
+            "policy": "owner-plus-one",
+            "ownerIndex": 0,
+            "coadminIndices": [1, 2],
+            "coadminThreshold": 1,
             "compressedPubkeys": admin_keys,
             "adminsHash": roster_hash,
             "mipsRootHash": _hex(221),
         },
         "validatorSet": {"threshold": 2, "pubkeys": validator_keys},
-        "kosMintExecutePubkey": _hex(34, 48),
         "bridgeBatch": {
             "count": 32,
             "lowWaterMark": 8,
@@ -131,6 +131,7 @@ def _ceremony_plan() -> tuple[dict, dict, dict, dict]:
         "state": "plan_approved",
         "draft": {
             "schemaVersion": 2,
+            "sourceManifestVersion": 3,
             "network": "testnet11",
             "evmChainId": 11155111,
             "reviewClass": "independent-release-review",
@@ -165,6 +166,7 @@ def _ceremony_plan() -> tuple[dict, dict, dict, dict]:
     spend_bundle_id = _hex(230)
     approval = {
         "schemaVersion": 2,
+        "sourceManifestVersion": 3,
         "ceremonyId": ceremony_id,
         "planHash": plan["planHash"],
         "sourceShas": sources,
@@ -208,6 +210,7 @@ def _public_artifact(record: dict, plan: dict) -> dict:
     admin_keys = plan["adminAuthority"]["compressedPubkeys"]
     artifact = {
         "schemaVersion": 2,
+        "sourceManifestVersion": 3,
         "protocolVersion": "solslot-v2",
         "network": "testnet11",
         "evmChainId": 11155111,
@@ -236,6 +239,10 @@ def _public_artifact(record: dict, plan: dict) -> dict:
         "stateVersions": plan["stateVersions"],
         "adminAuthority": {
             "threshold": 2,
+            "policy": "owner-plus-one",
+            "ownerIndex": 0,
+            "coadminIndices": [1, 2],
+            "coadminThreshold": 1,
             "rosterHash": plan["adminAuthority"]["adminsHash"],
             "mipsRootHash": plan["adminAuthority"]["mipsRootHash"],
             "compressedPubkeys": admin_keys,
@@ -255,6 +262,10 @@ def _public_artifact(record: dict, plan: dict) -> dict:
         "signaturePolicy": {
             "type": "SolslotGenesisArtifact",
             "threshold": 2,
+            "policy": "owner-plus-one",
+            "ownerIndex": 0,
+            "coadminIndices": [1, 2],
+            "coadminThreshold": 1,
             "rosterHash": plan["adminAuthority"]["adminsHash"],
         },
         "signatures": [
@@ -409,6 +420,7 @@ def test_post_genesis_accepts_locked_checksummed_release(tmp_path: Path) -> None
     ]
     lock = {
         "schemaVersion": 2,
+        "sourceManifestVersion": 3,
         "protocolVersion": "solslot-v2",
         "reviewClass": artifact["reviewClass"],
         "testOnly": artifact["testOnly"],
@@ -424,6 +436,7 @@ def test_post_genesis_accepts_locked_checksummed_release(tmp_path: Path) -> None
     _write_evidence(evidence_dir, plan, approval, artifact)
     attestation = {
         "schemaVersion": 2,
+        "sourceManifestVersion": 3,
         "protocolVersion": "solslot-v2",
         "network": "testnet11",
         "artifactHash": artifact["artifactHash"],
@@ -464,44 +477,6 @@ def test_post_genesis_accepts_locked_checksummed_release(tmp_path: Path) -> None
         broken_findings,
     )
     assert any("customerWeb" in item.message for item in broken_findings)
-
-
-def test_preflight_rejects_missing_or_malformed_mint_cosigner_public_key(tmp_path: Path) -> None:
-    record, plan, _approval, _api_evidence = _ceremony_plan()
-    record.update(
-        state="locked",
-        spend_bundle_id=_hex(230),
-        confirmed_block_index=1234,
-    )
-    artifact = _public_artifact(record, plan)
-    valid_findings: list[preflight.Finding] = []
-    preflight._validate_artifact(artifact, valid_findings)
-    assert valid_findings == []
-
-    artifact["governanceStruct"].pop("mintExecuteCosignerPubkey")
-    artifact["artifactHash"] = preflight.artifact_hash(artifact)
-    findings: list[preflight.Finding] = []
-    preflight._validate_artifact(artifact, findings)
-
-    assert any("MINT co-signer" in item.message for item in findings)
-
-    record, plan, approval, api_evidence = _ceremony_plan()
-    plan.pop("kosMintExecutePubkey")
-    plan["planHash"] = preflight.plan_hash(plan)
-    record["plan"] = plan
-    record["plan_hash"] = plan["planHash"]
-    api_evidence["planHash"] = plan["planHash"]
-    api_evidence["auditApprovalHash"] = preflight.canonical_hash(approval)
-    blocked: list[preflight.Finding] = []
-    preflight.check_pre_broadcast(
-        record,
-        api_evidence,
-        approval,
-        tmp_path / "new-output",
-        blocked,
-        now=1_900_000_000,
-    )
-    assert any("plan.kosMintExecutePubkey" in item.message for item in blocked)
 
 
 def test_repository_gate_rejects_dirty_or_wrong_frozen_commit(tmp_path: Path) -> None:

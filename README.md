@@ -53,7 +53,8 @@ The base protocol stack (12 production puzzles, before the A.x trust-root and SG
 | `p2_vault` / `p2_pool` | Escrow puzzles enforcing singleton-controlled custody. |
 | `singleton_launcher_with_did` | DID-approved singleton launcher for deed minting. |
 | `quorum_did_inner` | DID inner puzzle requiring governance message (quorum gate). |
-| `mint_offer_delegate` | Eve deed inner — on-chain standing offer for primary purchase. |
+| `mint_offer_delegate` | Legacy fixed-mojo eve inner retained for historical fixtures and recall-only records. |
+| `mint_offer_delegate_v2` | Native XCH/CAT eve inner — exact on-demand quote, exact deed, canonical verified-vault delivery, and 2-of-3 validator authorization. |
 | `purchase_payment` | Ephemeral payment enforcer — atomic purchase in a single block. |
 | `p2_deed_settlement` | Settlement leaf puzzle — burn deed, receive XCH share (secure-the-bag pattern). |
 

@@ -1,0 +1,393 @@
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; RC20 refundable voucher series singleton.
+;;;
+;;; One state machine is authoritative for inventory and voucher outcomes.
+;;; Every transition is signed by at least two of the ceremony validator keys.
+;;; Refund/redemption announcements use the exact message independently
+;;; re-derived by the voucher and payment escrow puzzles.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(mod
+  (
+    SELF_MOD_HASH
+    SINGLETON_STRUCT
+    PRESALE_TERMS_HASH
+    INVENTORY_CAP
+    SALE_OPEN
+    SALE_CLOSE
+    REFUND_DEADLINE
+    LAUNCH_DEADLINE
+    DELIVERY_WINDOW_SECONDS
+    VALIDATOR_PUBKEYS
+    SOLD_COUNT
+    REDEEMED_COUNT
+    REFUNDED_COUNT
+    PHASE
+    LAUNCHED_AT
+    ;; solution
+    my_id
+    my_inner_puzzle_hash
+    my_amount
+    transition_tag
+    voucher_action
+    voucher_commitment_hash
+    global_payment_id
+    escrow_coin_id
+    launch_anchor
+    voucher_launcher_id
+    voucher_full_puzzle_hash
+    purchase_launcher_coin_id
+    signer_indices
+  )
+
+  (include condition_codes.clib)
+  (include utils.clib)
+  (include utility_macros.clib)
+
+  (defconstant SERIES_DOMAIN "SOLSLOT_VOUCHER_SERIES_V2")
+  (defconstant ISSUANCE_DOMAIN "SOLSLOT_VOUCHER_ISSUANCE_V2")
+  (defconstant VOUCHER_DOMAIN "SOLSLOT_VOUCHER_TRANSITION_V2")
+  (defconstant PHASE_PRESALE 1)
+  (defconstant PHASE_LIVE 2)
+  (defconstant PHASE_CANCELED 3)
+  (defconstant TRANSITION_SALE 1)
+  (defconstant TRANSITION_LAUNCH 2)
+  (defconstant TRANSITION_CANCEL 3)
+  (defconstant TRANSITION_REFUND 4)
+  (defconstant TRANSITION_REDEEM 5)
+  (defconstant ACTION_NONE 0)
+  (defconstant ACTION_REFUND_PRESALE 1)
+  (defconstant ACTION_REFUND_EXPIRED 2)
+  (defconstant ACTION_REDEEM 3)
+  (defconstant ACTION_REFUND_CANCELED 4)
+  (defconstant ZERO_B32 0x0000000000000000000000000000000000000000000000000000000000000000)
+
+  (defun list-length (items)
+    (if items (+ 1 (list-length (r items))) 0)
+  )
+
+  (defun nth (items index)
+    (if (= index 0) (f items) (nth (r items) (- index 1)))
+  )
+
+  (defun is-sorted-strict (items)
+    (if items
+      (if (r items)
+        (if (> (f (r items)) (f items))
+          (is-sorted-strict (r items))
+          ())
+        1)
+      1)
+  )
+
+  (defun all-indices-in-range (indices bound)
+    (if indices
+      (and
+        (not (> 0 (f indices)))
+        (> bound (f indices))
+        (all-indices-in-range (r indices) bound))
+      1)
+  )
+
+  (defun emit-sigs (pubkeys indices message)
+    (if indices
+      (c
+        (list AGG_SIG_ME (nth pubkeys (f indices)) message)
+        (emit-sigs pubkeys (r indices) message))
+      ())
+  )
+
+  (defun-inline next-inner-hash
+      (sold redeemed refunded phase launched_at)
+    (curry_hashes
+      SELF_MOD_HASH
+      (sha256 1 SELF_MOD_HASH)
+      (sha256tree SINGLETON_STRUCT)
+      (sha256 1 PRESALE_TERMS_HASH)
+      (sha256 1 INVENTORY_CAP)
+      (sha256 1 SALE_OPEN)
+      (sha256 1 SALE_CLOSE)
+      (sha256 1 REFUND_DEADLINE)
+      (sha256 1 LAUNCH_DEADLINE)
+      (sha256 1 DELIVERY_WINDOW_SECONDS)
+      (sha256tree VALIDATOR_PUBKEYS)
+      (sha256 1 sold)
+      (sha256 1 redeemed)
+      (sha256 1 refunded)
+      (sha256 1 phase)
+      (sha256 1 launched_at))
+  )
+
+  (defun-inline voucher-transition-message
+      (voucher_action transition_tag delivery_deadline
+       voucher_commitment_hash global_payment_id escrow_coin_id)
+    (sha256tree
+      (list
+        VOUCHER_DOMAIN
+        PRESALE_TERMS_HASH
+        voucher_commitment_hash
+        global_payment_id
+        voucher_action
+        transition_tag
+        delivery_deadline
+        my_id
+        escrow_coin_id))
+  )
+
+  (defun-inline series-transition-message
+      (transition_tag voucher_action voucher_commitment_hash
+       global_payment_id escrow_coin_id launch_anchor
+       voucher_launcher_id voucher_full_puzzle_hash purchase_launcher_coin_id)
+    (if (= transition_tag TRANSITION_SALE)
+      (sha256tree
+        (list
+          ISSUANCE_DOMAIN PRESALE_TERMS_HASH my_id
+          purchase_launcher_coin_id voucher_launcher_id
+          voucher_full_puzzle_hash escrow_coin_id
+          voucher_commitment_hash global_payment_id))
+      (sha256tree
+        (list
+          SERIES_DOMAIN
+          PRESALE_TERMS_HASH
+          SOLD_COUNT
+          REDEEMED_COUNT
+          REFUNDED_COUNT
+          PHASE
+          LAUNCHED_AT
+          transition_tag
+          voucher_action
+          voucher_commitment_hash
+          global_payment_id
+          escrow_coin_id
+          launch_anchor)))
+  )
+
+  (defun-inline transition-message
+      (transition_tag voucher_action voucher_commitment_hash
+       global_payment_id escrow_coin_id launch_anchor
+       voucher_launcher_id voucher_full_puzzle_hash purchase_launcher_coin_id)
+    (if (or
+          (= transition_tag TRANSITION_REFUND)
+          (= transition_tag TRANSITION_REDEEM))
+      (voucher-transition-message
+        voucher_action transition_tag
+        (if (= PHASE PHASE_LIVE)
+          (+ LAUNCHED_AT DELIVERY_WINDOW_SECONDS)
+          0)
+        voucher_commitment_hash global_payment_id escrow_coin_id)
+      (series-transition-message
+        transition_tag voucher_action voucher_commitment_hash
+        global_payment_id escrow_coin_id launch_anchor
+        voucher_launcher_id voucher_full_puzzle_hash purchase_launcher_coin_id))
+  )
+
+  (defun-inline transition-time-conditions
+      (transition_tag voucher_action launch_anchor)
+    (if (= transition_tag TRANSITION_SALE)
+      (list
+        (list ASSERT_SECONDS_ABSOLUTE SALE_OPEN)
+        (list ASSERT_BEFORE_SECONDS_ABSOLUTE SALE_CLOSE))
+      (if (= transition_tag TRANSITION_LAUNCH)
+        (list
+          (list ASSERT_SECONDS_ABSOLUTE launch_anchor)
+          (list ASSERT_BEFORE_SECONDS_ABSOLUTE (+ launch_anchor 600)))
+        (if (= transition_tag TRANSITION_REFUND)
+          (if (= voucher_action ACTION_REFUND_PRESALE)
+            (list (list ASSERT_BEFORE_SECONDS_ABSOLUTE REFUND_DEADLINE))
+            (if (= voucher_action ACTION_REFUND_EXPIRED)
+              (list
+                (list ASSERT_SECONDS_ABSOLUTE
+                  (+ LAUNCHED_AT DELIVERY_WINDOW_SECONDS)))
+              ()))
+          (if (= transition_tag TRANSITION_REDEEM)
+            (list
+              (list ASSERT_BEFORE_SECONDS_ABSOLUTE
+                (+ LAUNCHED_AT DELIVERY_WINDOW_SECONDS)))
+            ()))))
+  )
+
+  (defun-inline next-state-condition (transition_tag launch_anchor)
+    (if (= transition_tag TRANSITION_SALE)
+      (list CREATE_COIN
+        (next-inner-hash
+          (+ SOLD_COUNT 1) REDEEMED_COUNT REFUNDED_COUNT PHASE 0)
+        my_amount)
+      (if (= transition_tag TRANSITION_LAUNCH)
+        (list CREATE_COIN
+          (next-inner-hash
+            SOLD_COUNT REDEEMED_COUNT REFUNDED_COUNT PHASE_LIVE launch_anchor)
+          my_amount)
+        (if (= transition_tag TRANSITION_CANCEL)
+          (list CREATE_COIN
+            (next-inner-hash
+              SOLD_COUNT REDEEMED_COUNT REFUNDED_COUNT PHASE_CANCELED 0)
+            my_amount)
+          (if (= transition_tag TRANSITION_REFUND)
+            (list CREATE_COIN
+              (next-inner-hash
+                SOLD_COUNT REDEEMED_COUNT (+ REFUNDED_COUNT 1)
+                PHASE LAUNCHED_AT)
+              my_amount)
+            (list CREATE_COIN
+              (next-inner-hash
+                SOLD_COUNT (+ REDEEMED_COUNT 1) REFUNDED_COUNT
+                PHASE LAUNCHED_AT)
+              my_amount)))))
+  )
+
+  (defun-inline transition-is-valid
+      (transition_tag voucher_action voucher_commitment_hash
+       global_payment_id escrow_coin_id launch_anchor
+       voucher_launcher_id voucher_full_puzzle_hash purchase_launcher_coin_id)
+    (if (= transition_tag TRANSITION_SALE)
+      (and
+        (= PHASE PHASE_PRESALE)
+        (= LAUNCHED_AT 0)
+        (> INVENTORY_CAP SOLD_COUNT)
+        (= voucher_action ACTION_NONE)
+        (not (= voucher_commitment_hash ZERO_B32))
+        (not (= global_payment_id ZERO_B32))
+        (not (= escrow_coin_id ZERO_B32))
+        (not (= voucher_launcher_id ZERO_B32))
+        (not (= voucher_full_puzzle_hash ZERO_B32))
+        (not (= purchase_launcher_coin_id ZERO_B32))
+        (= launch_anchor 0))
+      (if (= transition_tag TRANSITION_LAUNCH)
+        (and
+          (= PHASE PHASE_PRESALE)
+          (= LAUNCHED_AT 0)
+          (= voucher_action ACTION_NONE)
+          (= voucher_commitment_hash ZERO_B32)
+          (= global_payment_id ZERO_B32)
+          (= escrow_coin_id ZERO_B32)
+          (= voucher_launcher_id ZERO_B32)
+          (= voucher_full_puzzle_hash ZERO_B32)
+          (= purchase_launcher_coin_id ZERO_B32)
+          (not (> SALE_CLOSE launch_anchor))
+          (not (> launch_anchor LAUNCH_DEADLINE)))
+        (if (= transition_tag TRANSITION_CANCEL)
+          (and
+            (= PHASE PHASE_PRESALE)
+            (= voucher_action ACTION_NONE)
+            (= voucher_commitment_hash ZERO_B32)
+            (= global_payment_id ZERO_B32)
+            (= escrow_coin_id ZERO_B32)
+            (= voucher_launcher_id ZERO_B32)
+            (= voucher_full_puzzle_hash ZERO_B32)
+            (= purchase_launcher_coin_id ZERO_B32)
+            (= launch_anchor 0))
+          (if (= transition_tag TRANSITION_REFUND)
+            (and
+              (> SOLD_COUNT (+ REFUNDED_COUNT REDEEMED_COUNT))
+              (not (= voucher_commitment_hash ZERO_B32))
+              (not (= global_payment_id ZERO_B32))
+              (not (= escrow_coin_id ZERO_B32))
+              (= voucher_launcher_id ZERO_B32)
+              (= voucher_full_puzzle_hash ZERO_B32)
+              (= purchase_launcher_coin_id ZERO_B32)
+              (= launch_anchor 0)
+              (or
+                (and
+                  (= PHASE PHASE_PRESALE)
+                  (= voucher_action ACTION_REFUND_PRESALE))
+                (and
+                  (= PHASE PHASE_LIVE)
+                  (= voucher_action ACTION_REFUND_EXPIRED))
+                (and
+                  (= PHASE PHASE_CANCELED)
+                  (= voucher_action ACTION_REFUND_CANCELED))))
+            (and
+              (= transition_tag TRANSITION_REDEEM)
+              (= PHASE PHASE_LIVE)
+              (= voucher_action ACTION_REDEEM)
+              (> SOLD_COUNT (+ REFUNDED_COUNT REDEEMED_COUNT))
+              (not (= voucher_commitment_hash ZERO_B32))
+              (not (= global_payment_id ZERO_B32))
+              (not (= escrow_coin_id ZERO_B32))
+              (= voucher_launcher_id ZERO_B32)
+              (= voucher_full_puzzle_hash ZERO_B32)
+              (= purchase_launcher_coin_id ZERO_B32)
+              (= launch_anchor 0))))))
+  )
+
+  (assert
+    (is-size-b32 SELF_MOD_HASH)
+    (is-size-b32 PRESALE_TERMS_HASH)
+    (is-uint64 INVENTORY_CAP)
+    (> INVENTORY_CAP 0)
+    (is-uint64 SALE_OPEN)
+    (is-uint64 SALE_CLOSE)
+    (is-uint64 REFUND_DEADLINE)
+    (is-uint64 LAUNCH_DEADLINE)
+    (> SALE_CLOSE SALE_OPEN)
+    (not (> SALE_CLOSE REFUND_DEADLINE))
+    (not (> REFUND_DEADLINE LAUNCH_DEADLINE))
+    (= DELIVERY_WINDOW_SECONDS 172800)
+    (= (list-length VALIDATOR_PUBKEYS) 3)
+    (all-bls-g1-pubkeys VALIDATOR_PUBKEYS)
+    (has-no-duplicates VALIDATOR_PUBKEYS ())
+    (is-uint64 SOLD_COUNT)
+    (is-uint64 REDEEMED_COUNT)
+    (is-uint64 REFUNDED_COUNT)
+    (not (> SOLD_COUNT INVENTORY_CAP))
+    (not (> (+ REDEEMED_COUNT REFUNDED_COUNT) SOLD_COUNT))
+    (or (= PHASE PHASE_PRESALE) (= PHASE PHASE_LIVE) (= PHASE PHASE_CANCELED))
+    (is-uint64 LAUNCHED_AT)
+    (if (= PHASE PHASE_LIVE) (> LAUNCHED_AT 0) (= LAUNCHED_AT 0))
+    (is-size-b32 my_id)
+    (is-size-b32 my_inner_puzzle_hash)
+    (is-uint64 my_amount)
+    (= my_amount 1)
+    (is-uint64 transition_tag)
+    (is-uint64 voucher_action)
+    (is-size-b32 voucher_commitment_hash)
+    (is-size-b32 global_payment_id)
+    (is-size-b32 escrow_coin_id)
+    (is-uint64 launch_anchor)
+    (is-size-b32 voucher_launcher_id)
+    (is-size-b32 voucher_full_puzzle_hash)
+    (is-size-b32 purchase_launcher_coin_id)
+    (is-sorted-strict signer_indices)
+    (not (> 2 (list-length signer_indices)))
+    (all-indices-in-range signer_indices 3)
+    (transition-is-valid
+      transition_tag voucher_action voucher_commitment_hash
+      global_payment_id escrow_coin_id launch_anchor
+      voucher_launcher_id voucher_full_puzzle_hash purchase_launcher_coin_id)
+    (merge-lists
+      (list
+        (list ASSERT_MY_COIN_ID my_id)
+        (list ASSERT_MY_AMOUNT my_amount)
+        (list ASSERT_MY_PUZZLEHASH
+          (calculate_full_puzzle_hash SINGLETON_STRUCT my_inner_puzzle_hash)))
+      (merge-lists
+        (transition-time-conditions transition_tag voucher_action launch_anchor)
+        (merge-lists
+          (emit-sigs VALIDATOR_PUBKEYS signer_indices
+            (transition-message
+              transition_tag voucher_action voucher_commitment_hash
+              global_payment_id escrow_coin_id launch_anchor
+              voucher_launcher_id voucher_full_puzzle_hash
+              purchase_launcher_coin_id))
+          (list
+            (list CREATE_COIN_ANNOUNCEMENT
+              (transition-message
+                transition_tag voucher_action voucher_commitment_hash
+                global_payment_id escrow_coin_id launch_anchor
+                voucher_launcher_id voucher_full_puzzle_hash
+                purchase_launcher_coin_id))
+            (if (= transition_tag TRANSITION_SALE)
+              (list ASSERT_COIN_ANNOUNCEMENT
+                (sha256 purchase_launcher_coin_id
+                  (transition-message
+                    transition_tag voucher_action voucher_commitment_hash
+                    global_payment_id escrow_coin_id launch_anchor
+                    voucher_launcher_id voucher_full_puzzle_hash
+                    purchase_launcher_coin_id)))
+              (list REMARK PROTOCOL_PREFIX "VOUCHER_SERIES_PAIR_V2"))
+            (next-state-condition transition_tag launch_anchor)
+            (list REMARK PROTOCOL_PREFIX "VOUCHER_SERIES_V2"
+              PRESALE_TERMS_HASH transition_tag voucher_commitment_hash
+              global_payment_id)))))
+)
+)

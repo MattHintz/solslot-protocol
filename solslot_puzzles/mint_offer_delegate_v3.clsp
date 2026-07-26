@@ -1,13 +1,11 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;; Native XCH/CAT primary SmartDeed offer.
+;;; RC20 native primary SmartDeed offer.
 ;;;
-;;; The buyer offers one exact system-quoted XCH/CAT payment and requests one
-;;; exact governed SmartDeed at the canonical p2_vault derived from the
-;;; zkPassport-approved vault launcher. The issuer half never leaves the
-;;; coordinator; both halves settle atomically through Chia's Offer puzzle.
-;;;
-;;; External payment rails are intentionally absent. They settle through the
-;;; separately reviewed Omnichain/KoS/Samuel path.
+;;; DIRECT preserves the short-lived H-system quote enforced by V2.
+;;; VOUCHER consumes an already-paid, immutable XCH voucher commitment after
+;;; mint. It may outlive the original oracle quote, but only when the exact
+;;; voucher singleton emits its validator-governed REDEEM announcement in the
+;;; same atomic offer that delivers this deed to the committed vault.
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (mod
@@ -47,6 +45,9 @@
     oracle_price_usd_minor_per_asset
     source_evidence_root
     buyer_offer_nonce
+    purchase_mode
+    voucher_coin_id
+    voucher_transition_message
     signer_indices
   )
 
@@ -55,6 +56,8 @@
   (include utility_macros.clib)
 
   (defconstant PAYMENT_ARTIFACT_VERSION 2)
+  (defconstant MODE_DIRECT 1)
+  (defconstant MODE_VOUCHER 2)
   (defconstant RAIL_CHIA_XCH 3)
   (defconstant RAIL_CHIA_CAT 4)
   (defconstant ZERO_B32 0x0000000000000000000000000000000000000000000000000000000000000000)
@@ -212,12 +215,35 @@
             oracle_price_usd_minor_per_asset))))
   )
 
+  (defun-inline mode-is-valid
+      (purchase_mode rail voucher_coin_id voucher_transition_message)
+    (or
+      (and
+        (= purchase_mode MODE_DIRECT)
+        (= voucher_coin_id ZERO_B32)
+        (= voucher_transition_message ZERO_B32))
+      (and
+        (= purchase_mode MODE_VOUCHER)
+        (= rail RAIL_CHIA_XCH)
+        (not (= voucher_coin_id ZERO_B32))
+        (not (= voucher_transition_message ZERO_B32))))
+  )
+
+  (defun-inline mode-conditions
+      (purchase_mode quote_expires_at voucher_coin_id voucher_transition_message)
+    (if (= purchase_mode MODE_DIRECT)
+      (list (list ASSERT_BEFORE_SECONDS_ABSOLUTE quote_expires_at))
+      (list
+        (list ASSERT_COIN_ANNOUNCEMENT
+          (sha256 voucher_coin_id voucher_transition_message))))
+  )
+
   (defun offer-conditions
       (SINGLETON_MOD_HASH SINGLETON_LAUNCHER_HASH OFFER_MOD_HASH CAT_MOD_HASH
        DEED_LAUNCHER_ID PROTOCOL_PUZHASH SMART_DEED_INNER_HASH METADATA_ROOT
        PROVIDER_ID artifact_hash purchase_id my_parent_id my_puzzlehash my_amount
        rail rail_asset_id rail_amount vault_p2_puzzle_hash buyer_offer_nonce
-       VALIDATOR_PUBKEYS signer_indices)
+       purchase_mode VALIDATOR_PUBKEYS signer_indices)
     (merge-lists
       (emit-sigs VALIDATOR_PUBKEYS signer_indices artifact_hash)
       (list
@@ -242,8 +268,8 @@
               purchase_id artifact_hash)))
         (list CREATE_COIN OFFER_MOD_HASH 1
           (list DEED_LAUNCHER_ID purchase_id artifact_hash))
-        (list REMARK PROTOCOL_PREFIX "MINT_PURCHASE_CHIA_OFFER_V2"
-          DEED_LAUNCHER_ID purchase_id artifact_hash
+        (list REMARK PROTOCOL_PREFIX "MINT_PURCHASE_CHIA_OFFER_V3"
+          DEED_LAUNCHER_ID purchase_id artifact_hash purchase_mode
           vault_p2_puzzle_hash SMART_DEED_INNER_HASH METADATA_ROOT
           PROVIDER_ID)))
   )
@@ -294,34 +320,41 @@
       USD_AMOUNT_MINOR oracle_round_hash oracle_price_usd_minor_per_asset
       source_evidence_root)
     (is-size-b32 buyer_offer_nonce)
+    (is-uint64 purchase_mode)
+    (is-size-b32 voucher_coin_id)
+    (is-size-b32 voucher_transition_message)
+    (mode-is-valid
+      purchase_mode rail voucher_coin_id voucher_transition_message)
     (is-sorted-strict signer_indices)
     (not (> 2 (list-length signer_indices)))
     (all-indices-in-range signer_indices 3)
     (merge-lists
-      (list
-        (list ASSERT_MY_COIN_ID my_id)
-        (list ASSERT_BEFORE_SECONDS_ABSOLUTE quote_expires_at))
-      (offer-conditions
-        SINGLETON_MOD_HASH SINGLETON_LAUNCHER_HASH OFFER_MOD_HASH
-        CAT_MOD_HASH DEED_LAUNCHER_ID PROTOCOL_PUZHASH
-        SMART_DEED_INNER_HASH METADATA_ROOT PROVIDER_ID
-        (purchase-artifact-hash
-          NETWORK COLLECTION_ID DEED_LAUNCHER_ID
-          METADATA_ROOT METADATA_ANCHOR_ID SHARE_PPM USD_AMOUNT_MINOR
-          rail rail_chain_id rail_asset_id rail_asset_decimals rail_amount
-          vault_launcher_id vault_p2_puzzle_hash authorization_nonce
-          authorization_expires_at quote_expires_at oracle_round_hash
-          oracle_price_usd_minor_per_asset source_evidence_root)
-        (purchase-id
+      (list (list ASSERT_MY_COIN_ID my_id))
+      (merge-lists
+        (mode-conditions
+          purchase_mode quote_expires_at voucher_coin_id
+          voucher_transition_message)
+        (offer-conditions
+          SINGLETON_MOD_HASH SINGLETON_LAUNCHER_HASH OFFER_MOD_HASH
+          CAT_MOD_HASH DEED_LAUNCHER_ID PROTOCOL_PUZHASH
+          SMART_DEED_INNER_HASH METADATA_ROOT PROVIDER_ID
           (purchase-artifact-hash
             NETWORK COLLECTION_ID DEED_LAUNCHER_ID
             METADATA_ROOT METADATA_ANCHOR_ID SHARE_PPM USD_AMOUNT_MINOR
             rail rail_chain_id rail_asset_id rail_asset_decimals rail_amount
             vault_launcher_id vault_p2_puzzle_hash authorization_nonce
             authorization_expires_at quote_expires_at oracle_round_hash
-            oracle_price_usd_minor_per_asset source_evidence_root))
-        my_parent_id my_puzzlehash my_amount rail rail_asset_id rail_amount
-        vault_p2_puzzle_hash buyer_offer_nonce
-        VALIDATOR_PUBKEYS signer_indices))
+            oracle_price_usd_minor_per_asset source_evidence_root)
+          (purchase-id
+            (purchase-artifact-hash
+              NETWORK COLLECTION_ID DEED_LAUNCHER_ID
+              METADATA_ROOT METADATA_ANCHOR_ID SHARE_PPM USD_AMOUNT_MINOR
+              rail rail_chain_id rail_asset_id rail_asset_decimals rail_amount
+              vault_launcher_id vault_p2_puzzle_hash authorization_nonce
+              authorization_expires_at quote_expires_at oracle_round_hash
+              oracle_price_usd_minor_per_asset source_evidence_root))
+          my_parent_id my_puzzlehash my_amount rail rail_asset_id rail_amount
+          vault_p2_puzzle_hash buyer_offer_nonce purchase_mode
+          VALIDATOR_PUBKEYS signer_indices)))
   )
 )

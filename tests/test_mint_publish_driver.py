@@ -76,7 +76,7 @@ from solslot_puzzles.mint_publish_driver import (
 )
 from solslot_puzzles.primary_purchase_v2_driver import (
     PrimaryMintTermsV2,
-    make_mint_offer_v2_inner,
+    make_mint_offer_v4_inner,
 )
 
 
@@ -928,7 +928,7 @@ class TestArtifactsCrossDriver:
 
         assert artifacts.deed_full_puzhash == expected
 
-    def test_collection_mint_uses_purchase_aware_v2_eve(self):
+    def test_collection_mint_uses_native_purchase_eve(self):
         metadata_root = _b(0xD1)
         provider_id = _b(0xD2)
         validators = tuple(bytes([value]) * 48 for value in (0x11, 0x22, 0x33))
@@ -964,7 +964,7 @@ class TestArtifactsCrossDriver:
             p2_pool_mod_hash=P2_POOL_MOD_HASH,
             p2_vault_mod_hash=P2_VAULT_MOD_HASH,
         )
-        expected_inner = make_mint_offer_v2_inner(
+        expected_inner = make_mint_offer_v4_inner(
             PrimaryMintTermsV2(
                 network="testnet11",
                 smart_deed_inner_hash=bytes32(smart.get_tree_hash()),
@@ -982,7 +982,7 @@ class TestArtifactsCrossDriver:
         expected = SINGLETON_MOD.curry(struct, expected_inner).get_tree_hash()
         assert artifacts.deed_full_puzhash == expected
 
-    def test_purchase_aware_mint_requires_metadata(self):
+    def test_native_purchase_mint_requires_metadata(self):
         config = PrimaryPurchaseMintConfig(
             network="testnet11",
             usd_amount_minor=1,

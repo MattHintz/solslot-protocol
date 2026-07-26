@@ -14,9 +14,14 @@ from chia_rs.sized_bytes import bytes32
 
 from solslot_puzzles import property_registry_driver as property_registry
 from solslot_puzzles.genesis_ceremony import (
+    GENESIS_ADMIN_COADMIN_INDICES,
+    GENESIS_ADMIN_COADMIN_THRESHOLD,
+    GENESIS_ADMIN_OWNER_INDEX,
+    GENESIS_ADMIN_POLICY,
     GENESIS_ADMIN_THRESHOLD,
     GENESIS_EVM_CHAIN_ID,
     GENESIS_NETWORK,
+    SOURCE_MANIFEST_VERSION,
     GenesisCeremonyPlan,
     verify_genesis_ceremony_plan,
 )
@@ -41,8 +46,11 @@ REVIEW_CLASSES = frozenset(
 REQUIRED_SOURCE_REFS = (
     "protocol",
     "evm",
+    "omnichain",
     "api",
     "legacyBackend",
+    "keyOfSolomon",
+    "samuel",
     "customerWeb",
     "adminPortal",
 )
@@ -175,6 +183,7 @@ def build_public_artifact(
         "testOnly": internal_test,
         "auditStatus": "unaudited" if internal_test else "independently-reviewed",
         "buildTimestamp": timestamp,
+        "sourceManifestVersion": SOURCE_MANIFEST_VERSION,
         "ceremony": {
             "ceremonyId": _hex32(plan.ceremony_id, "ceremonyId"),
             "planHash": _hex32(plan.plan_hash, "planHash"),
@@ -331,6 +340,10 @@ def build_public_artifact(
         },
         "adminAuthority": {
             "threshold": plan.admin_quorum.threshold,
+            "policy": GENESIS_ADMIN_POLICY,
+            "ownerIndex": plan.admin_quorum.owner_index,
+            "coadminIndices": list(plan.admin_quorum.coadmin_indices),
+            "coadminThreshold": plan.admin_quorum.coadmin_threshold,
             "rosterHash": _hex32(plan.admin_quorum.admins_hash, "adminRosterHash"),
             "mipsRootHash": _hex32(
                 plan.admin_quorum.mips_root_hash, "adminMipsRootHash"
@@ -374,6 +387,10 @@ def build_public_artifact(
         "signaturePolicy": {
             "type": ARTIFACT_SIGNATURE_TYPE,
             "threshold": GENESIS_ADMIN_THRESHOLD,
+            "policy": GENESIS_ADMIN_POLICY,
+            "ownerIndex": GENESIS_ADMIN_OWNER_INDEX,
+            "coadminIndices": list(GENESIS_ADMIN_COADMIN_INDICES),
+            "coadminThreshold": GENESIS_ADMIN_COADMIN_THRESHOLD,
             "rosterHash": _hex32(plan.admin_quorum.admins_hash, "adminRosterHash"),
         },
         "signatures": [dict(signature) for signature in signatures],
@@ -434,6 +451,8 @@ def _verify_artifact_content(payload: Mapping[str, Any]) -> None:
         raise ValueError("independently reviewed artifact metadata is invalid")
     if payload.get("artifactHash") != artifact_hash(payload):
         raise ValueError("artifactHash does not match canonical payload")
+    if payload.get("sourceManifestVersion") != SOURCE_MANIFEST_VERSION:
+        raise ValueError("artifact sourceManifestVersion is unsupported")
 
     sources = payload.get("sourceShas")
     if not isinstance(sources, Mapping) or set(sources) != set(REQUIRED_SOURCE_REFS):
@@ -454,7 +473,6 @@ def _verify_artifact_content(payload: Mapping[str, Any]) -> None:
     for key in (
         "didInnerPuzzleHash",
         "didFullPuzzleHash",
-        "protocolTreasuryPuzzleHash",
         "governanceInnerPuzzleHash",
         "governanceFullPuzzleHash",
         "propertyRegistryFullPuzzleHash",
@@ -585,7 +603,14 @@ def _verify_artifact_content(payload: Mapping[str, Any]) -> None:
     if not isinstance(admin, Mapping) or not isinstance(policy, Mapping):
         raise ValueError("artifact admin signature policy is missing")
     if admin.get("threshold") != GENESIS_ADMIN_THRESHOLD:
-        raise ValueError("artifact admin authority is not 2-of-3")
+        raise ValueError("artifact admin authority does not require two signatures")
+    if (
+        admin.get("policy") != GENESIS_ADMIN_POLICY
+        or admin.get("ownerIndex") != GENESIS_ADMIN_OWNER_INDEX
+        or admin.get("coadminIndices") != list(GENESIS_ADMIN_COADMIN_INDICES)
+        or admin.get("coadminThreshold") != GENESIS_ADMIN_COADMIN_THRESHOLD
+    ):
+        raise ValueError("artifact admin authority is not owner-plus-one")
     pubkeys = admin.get("compressedPubkeys")
     if not isinstance(pubkeys, list) or len(pubkeys) != 3:
         raise ValueError("artifact must contain three administrator keys")
@@ -598,6 +623,10 @@ def _verify_artifact_content(payload: Mapping[str, Any]) -> None:
     if (
         policy.get("type") != ARTIFACT_SIGNATURE_TYPE
         or policy.get("threshold") != GENESIS_ADMIN_THRESHOLD
+        or policy.get("policy") != GENESIS_ADMIN_POLICY
+        or policy.get("ownerIndex") != GENESIS_ADMIN_OWNER_INDEX
+        or policy.get("coadminIndices") != list(GENESIS_ADMIN_COADMIN_INDICES)
+        or policy.get("coadminThreshold") != GENESIS_ADMIN_COADMIN_THRESHOLD
         or policy.get("rosterHash") != admin.get("rosterHash")
     ):
         raise ValueError("artifact signature policy does not match the roster")
@@ -639,7 +668,7 @@ def verify_public_artifact(
     *,
     signature_verifier: ArtifactSignatureVerifier | None = None,
 ) -> None:
-    """Fail closed unless two roster-bound artifact signatures are valid."""
+    """Fail closed unless slot 0 and one coadmin signed the artifact."""
     _verify_artifact_content(payload)
     if signature_verifier is None:
         raise ValueError("artifact signature verifier is required")
@@ -675,6 +704,10 @@ def verify_public_artifact(
             bytes.fromhex(signature_hex[2:]),
         ):
             raise ValueError("artifact administrator signature is invalid")
+    if GENESIS_ADMIN_OWNER_INDEX not in seen or not (
+        seen & set(GENESIS_ADMIN_COADMIN_INDICES)
+    ):
+        raise ValueError("artifact requires slot 0 and one coadministrator signature")
 
 
 __all__ = [

@@ -1,7 +1,14 @@
-"""Drivers for external escrow and native Chia primary purchase offers."""
+"""Drivers for vault-bound native Chia primary purchase offers.
+
+External payment rails are coordinated by the Omnichain/KoS/Samuel path. This
+module intentionally has no standalone escrow or external-payment release
+mode: it can only atomically exchange one quoted XCH/CAT payment for one exact
+governed SmartDeed delivered to the artifact's canonical vault.
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import IntEnum
 import hashlib
 from typing import Sequence
 
@@ -37,29 +44,32 @@ from chia_rs.sized_ints import uint64
 from solslot_puzzles import load_puzzle
 from solslot_puzzles.payment_artifacts_v2 import (
     PaymentArtifactError,
-    PaymentAttestationV1,
     PaymentRail,
-    PaymentResolution,
-    PaymentTransition,
     PurchaseArtifactV2,
-    validate_manual_release,
 )
 from solslot_puzzles.vault_driver import puzzle_hash_for_p2_vault
 
 
 PROTOCOL_PREFIX = b"\x53"
-DELIVERY_DOMAIN = b"solslot-payment-delivery-v1"
 PROVIDER_THRESHOLD = 2
 PROVIDER_COUNT = 3
-EXTERNAL_RAIL_MARKER_AMOUNT = 1
-MINT_MODE_CHIA_OFFER = 1
-MINT_MODE_EXTERNAL_ESCROW = 2
 PRIMARY_PURCHASE_PROVIDER_ID = bytes32(
     hashlib.sha256(b"SOLSLOT_H_SYSTEM_PRIMARY_PURCHASE_V2").digest()
 )
 
-_PAYMENT_ESCROW_MOD: Program | None = None
 _MINT_OFFER_V2_MOD: Program | None = None
+_MINT_OFFER_V3_MOD: Program | None = None
+_MINT_OFFER_V4_MOD: Program | None = None
+
+BASE_SEPOLIA_USDC_ASSET_ID = bytes32(
+    b"\x00" * 12
+    + bytes.fromhex("036cbd53842c5426634e7929541ec2318f3dcf7e")
+)
+
+
+class PrimaryPurchaseMode(IntEnum):
+    DIRECT = 1
+    VOUCHER = 2
 
 
 @dataclass(frozen=True)
@@ -97,14 +107,6 @@ class PrimaryMintTermsV2:
 
 
 @dataclass(frozen=True)
-class PaymentEscrowSpend:
-    puzzle: Program
-    solution: Program
-    coin_spend: CoinSpend
-    attestation_hash: bytes32
-
-
-@dataclass(frozen=True)
 class ChiaPrimaryOffer:
     buyer_offer: Offer
     issuer_offer: Offer
@@ -121,17 +123,6 @@ class PreparedChiaBuyerOffer:
     payment_puzzle: Program
 
 
-def payment_escrow_v1_mod() -> Program:
-    global _PAYMENT_ESCROW_MOD
-    if _PAYMENT_ESCROW_MOD is None:
-        _PAYMENT_ESCROW_MOD = load_puzzle("payment_escrow_v1.clsp")
-    return _PAYMENT_ESCROW_MOD
-
-
-def payment_escrow_v1_mod_hash() -> bytes32:
-    return bytes32(payment_escrow_v1_mod().get_tree_hash())
-
-
 def mint_offer_delegate_v2_mod() -> Program:
     global _MINT_OFFER_V2_MOD
     if _MINT_OFFER_V2_MOD is None:
@@ -143,75 +134,31 @@ def mint_offer_delegate_v2_mod_hash() -> bytes32:
     return bytes32(mint_offer_delegate_v2_mod().get_tree_hash())
 
 
-def delivery_message(
-    *,
-    purchase_id: bytes32,
-    artifact_hash: bytes32,
-    vault_p2_puzzle_hash: bytes32,
-) -> bytes32:
-    for value, name in (
-        (purchase_id, "purchase_id"),
-        (artifact_hash, "artifact_hash"),
-        (vault_p2_puzzle_hash, "vault_p2_puzzle_hash"),
-    ):
-        _require_bytes32(value, name)
-    return bytes32(
-        Program.to(
-            [
-                DELIVERY_DOMAIN,
-                bytes(purchase_id),
-                bytes(artifact_hash),
-                bytes(vault_p2_puzzle_hash),
-            ]
-        ).get_tree_hash()
-    )
+def mint_offer_delegate_v3_mod() -> Program:
+    global _MINT_OFFER_V3_MOD
+    if _MINT_OFFER_V3_MOD is None:
+        _MINT_OFFER_V3_MOD = load_puzzle("mint_offer_delegate_v3.clsp")
+    return _MINT_OFFER_V3_MOD
 
 
-def escrow_coin_amount(artifact: PurchaseArtifactV2) -> int:
-    if artifact.rail in (PaymentRail.CHIA_XCH, PaymentRail.CHIA_CAT):
-        raise PaymentArtifactError(
-            "native Chia purchases settle through offer files, not escrow"
-        )
-    return EXTERNAL_RAIL_MARKER_AMOUNT
+def mint_offer_delegate_v3_mod_hash() -> bytes32:
+    return bytes32(mint_offer_delegate_v3_mod().get_tree_hash())
 
 
-def make_payment_escrow_puzzle(
-    *,
-    artifact: PurchaseArtifactV2,
-    pending_attestation: PaymentAttestationV1,
-    protocol_puzhash: bytes32,
-    refund_puzhash: bytes32,
-    validator_pubkeys: Sequence[bytes],
-) -> Program:
-    if artifact.rail in (PaymentRail.CHIA_XCH, PaymentRail.CHIA_CAT):
-        raise PaymentArtifactError(
-            "native Chia purchases cannot create an external payment escrow"
-        )
-    _assert_pending_matches_artifact(pending_attestation, artifact)
-    _require_bytes32(protocol_puzhash, "protocol_puzhash")
-    _require_bytes32(refund_puzhash, "refund_puzhash")
-    validators = _require_validator_set(validator_pubkeys)
-    return payment_escrow_v1_mod().curry(
-        list(validators),
-        PROVIDER_THRESHOLD,
-        artifact.purchase_id,
-        artifact.artifact_hash,
-        pending_attestation.provider_id,
-        pending_attestation.external_reference_hash,
-        pending_attestation.attestation_hash,
-        pending_attestation.observed_at,
-        int(artifact.rail),
-        artifact.rail_amount,
-        protocol_puzhash,
-        refund_puzhash,
-        artifact.vault_p2_puzzle_hash,
-    )
+def mint_offer_delegate_v4_mod() -> Program:
+    global _MINT_OFFER_V4_MOD
+    if _MINT_OFFER_V4_MOD is None:
+        _MINT_OFFER_V4_MOD = load_puzzle("mint_offer_delegate_v4.clsp")
+    return _MINT_OFFER_V4_MOD
+
+
+def mint_offer_delegate_v4_mod_hash() -> bytes32:
+    return bytes32(mint_offer_delegate_v4_mod().get_tree_hash())
 
 
 def make_mint_offer_v2_inner(terms: PrimaryMintTermsV2) -> Program:
     return mint_offer_delegate_v2_mod().curry(
         terms.smart_deed_inner_hash,
-        payment_escrow_v1_mod_hash(),
         bytes32(load_puzzle("p2_vault.clsp").get_tree_hash()),
         SINGLETON_MOD_HASH,
         SINGLETON_LAUNCHER_HASH,
@@ -226,7 +173,50 @@ def make_mint_offer_v2_inner(terms: PrimaryMintTermsV2) -> Program:
         terms.usd_amount_minor,
         terms.protocol_puzhash,
         list(terms.validator_pubkeys),
-        PROVIDER_THRESHOLD,
+        terms.provider_id,
+    )
+
+
+def make_mint_offer_v3_inner(terms: PrimaryMintTermsV2) -> Program:
+    """Return the RC20 direct-or-voucher primary delivery inner puzzle."""
+    return mint_offer_delegate_v3_mod().curry(
+        terms.smart_deed_inner_hash,
+        bytes32(load_puzzle("p2_vault.clsp").get_tree_hash()),
+        SINGLETON_MOD_HASH,
+        SINGLETON_LAUNCHER_HASH,
+        bytes32(CAT_MOD.get_tree_hash()),
+        OFFER_MOD_HASH,
+        terms.network.encode("ascii"),
+        terms.deed_launcher_id,
+        terms.collection_id,
+        terms.metadata_root,
+        terms.metadata_anchor_id,
+        terms.share_ppm,
+        terms.usd_amount_minor,
+        terms.protocol_puzhash,
+        list(terms.validator_pubkeys),
+        terms.provider_id,
+    )
+
+
+def make_mint_offer_v4_inner(terms: PrimaryMintTermsV2) -> Program:
+    """Return the RC20 native-or-Base voucher primary delivery puzzle."""
+    return mint_offer_delegate_v4_mod().curry(
+        terms.smart_deed_inner_hash,
+        bytes32(load_puzzle("p2_vault.clsp").get_tree_hash()),
+        SINGLETON_MOD_HASH,
+        SINGLETON_LAUNCHER_HASH,
+        bytes32(CAT_MOD.get_tree_hash()),
+        OFFER_MOD_HASH,
+        terms.network.encode("ascii"),
+        terms.deed_launcher_id,
+        terms.collection_id,
+        terms.metadata_root,
+        terms.metadata_anchor_id,
+        terms.share_ppm,
+        terms.usd_amount_minor,
+        terms.protocol_puzhash,
+        list(terms.validator_pubkeys),
         terms.provider_id,
     )
 
@@ -259,59 +249,6 @@ def assert_artifact_matches_mint(
         )
 
 
-def mint_offer_v2_solution(
-    *,
-    deed_coin_id: bytes32,
-    artifact: PurchaseArtifactV2,
-    pending_attestation: PaymentAttestationV1,
-    refund_puzhash: bytes32,
-    terms: PrimaryMintTermsV2,
-) -> Program:
-    _require_bytes32(deed_coin_id, "deed_coin_id")
-    _require_bytes32(refund_puzhash, "refund_puzhash")
-    assert_artifact_matches_mint(artifact, terms)
-    if artifact.rail not in (
-        PaymentRail.STRIPE,
-        PaymentRail.EVM_TEST_USD,
-    ):
-        raise PaymentArtifactError(
-            "external mint solution requires Stripe or EVM rail"
-        )
-    _assert_pending_matches_artifact(pending_attestation, artifact)
-    if pending_attestation.provider_id != terms.provider_id:
-        raise PaymentArtifactError(
-            "pending attestation provider does not match mint terms"
-        )
-    return Program.to(
-        [
-            MINT_MODE_EXTERNAL_ESCROW,
-            deed_coin_id,
-            bytes32.zeros,
-            bytes32.zeros,
-            0,
-            artifact.vault_launcher_id,
-            artifact.vault_p2_puzzle_hash,
-            artifact.authorization_nonce,
-            artifact.authorization_expires_at,
-            artifact.quote_expires_at,
-            int(artifact.rail),
-            artifact.rail_chain_id,
-            artifact.rail_asset_id,
-            artifact.rail_asset_decimals,
-            artifact.rail_amount,
-            artifact.oracle_round_hash,
-            artifact.oracle_price_usd_minor_per_asset,
-            artifact.source_evidence_root,
-            pending_attestation.external_reference_hash,
-            pending_attestation.attestation_hash,
-            pending_attestation.observed_at,
-            refund_puzhash,
-            bytes32.zeros,
-            [],
-        ]
-    )
-
-
 def chia_offer_v2_solution(
     *,
     deed_coin: Coin,
@@ -329,7 +266,6 @@ def chia_offer_v2_solution(
     _require_bytes32(buyer_offer_nonce, "buyer_offer_nonce")
     return Program.to(
         [
-            MINT_MODE_CHIA_OFFER,
             deed_coin.name(),
             deed_coin.parent_coin_info,
             deed_coin.puzzle_hash,
@@ -347,119 +283,10 @@ def chia_offer_v2_solution(
             artifact.oracle_round_hash,
             artifact.oracle_price_usd_minor_per_asset,
             artifact.source_evidence_root,
-            bytes32.zeros,
-            bytes32.zeros,
-            0,
-            bytes32.zeros,
             buyer_offer_nonce,
             list(indices),
         ]
     )
-
-
-def payment_escrow_solution(
-    *,
-    escrow_coin: Coin,
-    escrow_puzzle: Program,
-    resolution_attestation: PaymentAttestationV1,
-    signer_indices: Sequence[int],
-) -> Program:
-    if escrow_coin.puzzle_hash != escrow_puzzle.get_tree_hash():
-        raise PaymentArtifactError(
-            "escrow coin puzzle hash does not match payment escrow puzzle"
-        )
-    indices = _validate_signer_indices(signer_indices)
-    if resolution_attestation.transition not in (
-        PaymentTransition.SUCCEEDED,
-        PaymentTransition.FAILED,
-        PaymentTransition.MANUAL_RELEASE,
-    ):
-        raise PaymentArtifactError("escrow requires a resolution attestation")
-    return Program.to(
-        [
-            escrow_coin.name(),
-            escrow_puzzle.get_tree_hash(),
-            escrow_coin.amount,
-            int(resolution_attestation.transition),
-            int(resolution_attestation.resolution),
-            resolution_attestation.evidence_hash,
-            resolution_attestation.observed_at,
-            resolution_attestation.reason_hash,
-            list(indices),
-        ]
-    )
-
-
-def build_payment_escrow_spend(
-    *,
-    escrow_coin: Coin,
-    artifact: PurchaseArtifactV2,
-    pending_attestation: PaymentAttestationV1,
-    resolution_attestation: PaymentAttestationV1,
-    protocol_puzhash: bytes32,
-    refund_puzhash: bytes32,
-    validator_pubkeys: Sequence[bytes],
-    signer_indices: Sequence[int],
-) -> PaymentEscrowSpend:
-    _assert_resolution_matches_pending(
-        resolution_attestation=resolution_attestation,
-        pending_attestation=pending_attestation,
-    )
-    puzzle = make_payment_escrow_puzzle(
-        artifact=artifact,
-        pending_attestation=pending_attestation,
-        protocol_puzhash=protocol_puzhash,
-        refund_puzhash=refund_puzhash,
-        validator_pubkeys=validator_pubkeys,
-    )
-    expected_amount = escrow_coin_amount(artifact)
-    if int(escrow_coin.amount) != expected_amount:
-        raise PaymentArtifactError(
-            f"escrow coin amount must be {expected_amount}"
-        )
-    solution = payment_escrow_solution(
-        escrow_coin=escrow_coin,
-        escrow_puzzle=puzzle,
-        resolution_attestation=resolution_attestation,
-        signer_indices=signer_indices,
-    )
-    return PaymentEscrowSpend(
-        puzzle=puzzle,
-        solution=solution,
-        coin_spend=make_spend(escrow_coin, puzzle, solution),
-        attestation_hash=resolution_attestation.attestation_hash,
-    )
-
-
-def build_mint_offer_v2_spend(
-    *,
-    deed_coin: Coin,
-    deed_singleton_struct: Program,
-    lineage_proof: LineageProof,
-    artifact: PurchaseArtifactV2,
-    pending_attestation: PaymentAttestationV1,
-    refund_puzhash: bytes32,
-    terms: PrimaryMintTermsV2,
-) -> CoinSpend:
-    inner = make_mint_offer_v2_inner(terms)
-    full_puzzle = SINGLETON_MOD.curry(deed_singleton_struct, inner)
-    if deed_coin.puzzle_hash != full_puzzle.get_tree_hash():
-        raise PaymentArtifactError(
-            "deed coin puzzle hash does not match mint offer v2"
-        )
-    inner_solution = mint_offer_v2_solution(
-        deed_coin_id=bytes32(deed_coin.name()),
-        artifact=artifact,
-        pending_attestation=pending_attestation,
-        refund_puzhash=refund_puzhash,
-        terms=terms,
-    )
-    full_solution = solution_for_singleton(
-        lineage_proof,
-        uint64(deed_coin.amount),
-        inner_solution,
-    )
-    return make_spend(deed_coin, full_puzzle, full_solution)
 
 
 def build_chia_mint_offer_v2_spend(
@@ -491,6 +318,239 @@ def build_chia_mint_offer_v2_spend(
         inner_solution,
     )
     return make_spend(deed_coin, full_puzzle, full_solution)
+
+
+def chia_offer_v3_solution(
+    *,
+    deed_coin: Coin,
+    artifact: PurchaseArtifactV2,
+    buyer_offer_nonce: bytes32,
+    signer_indices: Sequence[int],
+    terms: PrimaryMintTermsV2,
+    purchase_mode: PrimaryPurchaseMode = PrimaryPurchaseMode.DIRECT,
+    voucher_coin_id: bytes32 = bytes32.zeros,
+    voucher_transition_message: bytes32 = bytes32.zeros,
+) -> Program:
+    assert_artifact_matches_mint(artifact, terms)
+    if artifact.rail not in (PaymentRail.CHIA_XCH, PaymentRail.CHIA_CAT):
+        raise PaymentArtifactError("Chia offer solution requires XCH or CAT rail")
+    if purchase_mode == PrimaryPurchaseMode.DIRECT:
+        if voucher_coin_id != bytes32.zeros or voucher_transition_message != bytes32.zeros:
+            raise PaymentArtifactError("direct purchase cannot carry voucher evidence")
+    elif purchase_mode == PrimaryPurchaseMode.VOUCHER:
+        if artifact.rail != PaymentRail.CHIA_XCH:
+            raise PaymentArtifactError("voucher redemption requires native XCH")
+        if bytes32.zeros in {voucher_coin_id, voucher_transition_message}:
+            raise PaymentArtifactError("voucher redemption evidence must be nonzero")
+    else:
+        raise PaymentArtifactError("unsupported primary purchase mode")
+    indices = _validate_signer_indices(signer_indices)
+    _require_bytes32(buyer_offer_nonce, "buyer_offer_nonce")
+    return Program.to(
+        [
+            deed_coin.name(),
+            deed_coin.parent_coin_info,
+            deed_coin.puzzle_hash,
+            deed_coin.amount,
+            artifact.vault_launcher_id,
+            artifact.vault_p2_puzzle_hash,
+            artifact.authorization_nonce,
+            artifact.authorization_expires_at,
+            artifact.quote_expires_at,
+            int(artifact.rail),
+            artifact.rail_chain_id,
+            artifact.rail_asset_id,
+            artifact.rail_asset_decimals,
+            artifact.rail_amount,
+            artifact.oracle_round_hash,
+            artifact.oracle_price_usd_minor_per_asset,
+            artifact.source_evidence_root,
+            buyer_offer_nonce,
+            int(purchase_mode),
+            voucher_coin_id,
+            voucher_transition_message,
+            list(indices),
+        ]
+    )
+
+
+def build_chia_mint_offer_v3_spend(
+    *,
+    deed_coin: Coin,
+    deed_singleton_struct: Program,
+    lineage_proof: LineageProof,
+    artifact: PurchaseArtifactV2,
+    buyer_offer_nonce: bytes32,
+    signer_indices: Sequence[int],
+    terms: PrimaryMintTermsV2,
+    purchase_mode: PrimaryPurchaseMode = PrimaryPurchaseMode.DIRECT,
+    voucher_coin_id: bytes32 = bytes32.zeros,
+    voucher_transition_message: bytes32 = bytes32.zeros,
+) -> CoinSpend:
+    inner = make_mint_offer_v3_inner(terms)
+    full_puzzle = SINGLETON_MOD.curry(deed_singleton_struct, inner)
+    if deed_coin.puzzle_hash != full_puzzle.get_tree_hash():
+        raise PaymentArtifactError("deed coin puzzle hash does not match mint offer v3")
+    return make_spend(
+        deed_coin,
+        full_puzzle,
+        solution_for_singleton(
+            lineage_proof,
+            uint64(deed_coin.amount),
+            chia_offer_v3_solution(
+                deed_coin=deed_coin,
+                artifact=artifact,
+                buyer_offer_nonce=buyer_offer_nonce,
+                signer_indices=signer_indices,
+                terms=terms,
+                purchase_mode=purchase_mode,
+                voucher_coin_id=voucher_coin_id,
+                voucher_transition_message=voucher_transition_message,
+            ),
+        ),
+    )
+
+
+def universal_offer_v4_solution(
+    *,
+    deed_coin: Coin,
+    artifact: PurchaseArtifactV2,
+    buyer_offer_nonce: bytes32,
+    signer_indices: Sequence[int],
+    terms: PrimaryMintTermsV2,
+    purchase_mode: PrimaryPurchaseMode = PrimaryPurchaseMode.DIRECT,
+    voucher_coin_id: bytes32 = bytes32.zeros,
+    voucher_transition_message: bytes32 = bytes32.zeros,
+    external_receipt_coin_id: bytes32 = bytes32.zeros,
+    external_settlement_evidence_hash: bytes32 = bytes32.zeros,
+) -> Program:
+    assert_artifact_matches_mint(artifact, terms)
+    if purchase_mode == PrimaryPurchaseMode.DIRECT:
+        if artifact.rail not in (PaymentRail.CHIA_XCH, PaymentRail.CHIA_CAT):
+            raise PaymentArtifactError(
+                "direct primary purchase requires XCH or CAT"
+            )
+        if any(
+            value != bytes32.zeros
+            for value in (
+                voucher_coin_id,
+                voucher_transition_message,
+                external_receipt_coin_id,
+                external_settlement_evidence_hash,
+            )
+        ):
+            raise PaymentArtifactError(
+                "direct purchase cannot carry voucher evidence"
+            )
+    elif purchase_mode == PrimaryPurchaseMode.VOUCHER:
+        if bytes32.zeros in {voucher_coin_id, voucher_transition_message}:
+            raise PaymentArtifactError(
+                "voucher redemption evidence must be nonzero"
+            )
+        if artifact.rail == PaymentRail.CHIA_XCH:
+            if (
+                external_receipt_coin_id != bytes32.zeros
+                or external_settlement_evidence_hash != bytes32.zeros
+            ):
+                raise PaymentArtifactError(
+                    "native voucher cannot carry external receipt evidence"
+                )
+        elif artifact.rail == PaymentRail.EVM_TEST_USD:
+            if (
+                artifact.rail_chain_id != 84532
+                or artifact.rail_asset_id != BASE_SEPOLIA_USDC_ASSET_ID
+                or artifact.rail_asset_decimals != 6
+                or bytes32.zeros
+                in {
+                    external_receipt_coin_id,
+                    external_settlement_evidence_hash,
+                }
+            ):
+                raise PaymentArtifactError(
+                    "Base voucher requires the official USDC receipt evidence"
+                )
+        else:
+            raise PaymentArtifactError(
+                "voucher redemption requires XCH or Base Sepolia USDC"
+            )
+    else:
+        raise PaymentArtifactError("unsupported primary purchase mode")
+
+    indices = _validate_signer_indices(signer_indices)
+    _require_bytes32(buyer_offer_nonce, "buyer_offer_nonce")
+    return Program.to(
+        [
+            deed_coin.name(),
+            deed_coin.parent_coin_info,
+            deed_coin.puzzle_hash,
+            deed_coin.amount,
+            artifact.vault_launcher_id,
+            artifact.vault_p2_puzzle_hash,
+            artifact.authorization_nonce,
+            artifact.authorization_expires_at,
+            artifact.quote_expires_at,
+            int(artifact.rail),
+            artifact.rail_chain_id,
+            artifact.rail_asset_id,
+            artifact.rail_asset_decimals,
+            artifact.rail_amount,
+            artifact.oracle_round_hash,
+            artifact.oracle_price_usd_minor_per_asset,
+            artifact.source_evidence_root,
+            buyer_offer_nonce,
+            int(purchase_mode),
+            voucher_coin_id,
+            voucher_transition_message,
+            external_receipt_coin_id,
+            external_settlement_evidence_hash,
+            list(indices),
+        ]
+    )
+
+
+def build_universal_mint_offer_v4_spend(
+    *,
+    deed_coin: Coin,
+    deed_singleton_struct: Program,
+    lineage_proof: LineageProof,
+    artifact: PurchaseArtifactV2,
+    buyer_offer_nonce: bytes32,
+    signer_indices: Sequence[int],
+    terms: PrimaryMintTermsV2,
+    purchase_mode: PrimaryPurchaseMode = PrimaryPurchaseMode.DIRECT,
+    voucher_coin_id: bytes32 = bytes32.zeros,
+    voucher_transition_message: bytes32 = bytes32.zeros,
+    external_receipt_coin_id: bytes32 = bytes32.zeros,
+    external_settlement_evidence_hash: bytes32 = bytes32.zeros,
+) -> CoinSpend:
+    inner = make_mint_offer_v4_inner(terms)
+    full_puzzle = SINGLETON_MOD.curry(deed_singleton_struct, inner)
+    if deed_coin.puzzle_hash != full_puzzle.get_tree_hash():
+        raise PaymentArtifactError(
+            "deed coin puzzle hash does not match mint offer v4"
+        )
+    return make_spend(
+        deed_coin,
+        full_puzzle,
+        solution_for_singleton(
+            lineage_proof,
+            uint64(deed_coin.amount),
+            universal_offer_v4_solution(
+                deed_coin=deed_coin,
+                artifact=artifact,
+                buyer_offer_nonce=buyer_offer_nonce,
+                signer_indices=signer_indices,
+                terms=terms,
+                purchase_mode=purchase_mode,
+                voucher_coin_id=voucher_coin_id,
+                voucher_transition_message=voucher_transition_message,
+                external_receipt_coin_id=external_receipt_coin_id,
+                external_settlement_evidence_hash=(
+                    external_settlement_evidence_hash
+                ),
+            ),
+        ),
+    )
 
 
 def smart_deed_singleton_driver(
@@ -732,6 +792,274 @@ def validate_chia_buyer_offer(
     return bytes32(payment.nonce)
 
 
+def prepare_xch_voucher_redemption_offer(
+    *,
+    terminal_coin_spends: Sequence[CoinSpend],
+    payment_coin: Coin,
+    artifact: PurchaseArtifactV2,
+    terms: PrimaryMintTermsV2,
+) -> Offer:
+    """Wrap the exact voucher terminal spends as the standard buyer offer.
+
+    No wallet signature is introduced here. The buyer authorized the immutable
+    escrow when the voucher was issued; the validator quorum signs the series,
+    voucher, and escrow spends after independently proving the governed deed is
+    available for atomic delivery.
+    """
+    assert_artifact_matches_mint(artifact, terms)
+    if artifact.rail != PaymentRail.CHIA_XCH:
+        raise PaymentArtifactError("voucher redemption buyer offer requires XCH")
+    spends = tuple(terminal_coin_spends)
+    if len(spends) != 3 or sum(spend.coin == payment_coin for spend in spends) != 1:
+        raise PaymentArtifactError(
+            "voucher redemption requires exact series, voucher, and escrow spends"
+        )
+    requested = {
+        artifact.deed_launcher_id: [
+            CreateCoin(
+                artifact.vault_p2_puzzle_hash,
+                uint64(1),
+                [
+                    artifact.deed_launcher_id,
+                    terms.smart_deed_inner_hash,
+                    artifact.metadata_root,
+                    artifact.purchase_id,
+                    artifact.artifact_hash,
+                ],
+            )
+        ]
+    }
+    drivers = {
+        artifact.deed_launcher_id: smart_deed_singleton_driver(
+            artifact.deed_launcher_id
+        )
+    }
+    offer = Offer(
+        Offer.notarize_payments(requested, [payment_coin]),
+        WalletSpendBundle(list(spends), G2Element()),
+        drivers,
+    )
+    validate_chia_buyer_offer(
+        buyer_offer=offer,
+        artifact=artifact,
+        terms=terms,
+    )
+    if offer.fees() != 0:
+        raise PaymentArtifactError("voucher redemption offer must be zero fee")
+    return offer
+
+
+def prepare_base_voucher_redemption_offer(
+    *,
+    terminal_coin_spends: Sequence[CoinSpend],
+    receipt_coin: Coin,
+    artifact: PurchaseArtifactV2,
+    terms: PrimaryMintTermsV2,
+) -> Offer:
+    """Wrap the exact Base receipt terminal spends as the buyer offer half."""
+    assert_artifact_matches_mint(artifact, terms)
+    _assert_base_usdc_artifact(artifact)
+    spends = tuple(terminal_coin_spends)
+    if len(spends) != 3 or sum(
+        spend.coin == receipt_coin for spend in spends
+    ) != 1:
+        raise PaymentArtifactError(
+            "Base voucher redemption requires exact series, voucher, and receipt spends"
+        )
+    requested = {
+        artifact.deed_launcher_id: [
+            CreateCoin(
+                artifact.vault_p2_puzzle_hash,
+                uint64(1),
+                [
+                    artifact.deed_launcher_id,
+                    terms.smart_deed_inner_hash,
+                    artifact.metadata_root,
+                    artifact.purchase_id,
+                    artifact.artifact_hash,
+                ],
+            )
+        ]
+    }
+    offer = Offer(
+        Offer.notarize_payments(requested, [receipt_coin]),
+        WalletSpendBundle(list(spends), G2Element()),
+        {
+            artifact.deed_launcher_id: smart_deed_singleton_driver(
+                artifact.deed_launcher_id
+            )
+        },
+    )
+    validate_base_voucher_redemption_offer(
+        buyer_offer=offer,
+        receipt_coin=receipt_coin,
+        artifact=artifact,
+        terms=terms,
+    )
+    return offer
+
+
+def validate_base_voucher_redemption_offer(
+    *,
+    buyer_offer: Offer,
+    receipt_coin: Coin,
+    artifact: PurchaseArtifactV2,
+    terms: PrimaryMintTermsV2,
+) -> bytes32:
+    """Validate the technical one-mojo Base receipt offer."""
+    assert_artifact_matches_mint(artifact, terms)
+    _assert_base_usdc_artifact(artifact)
+    requested = buyer_offer.requested_payments
+    if set(requested) != {artifact.deed_launcher_id}:
+        raise PaymentArtifactError(
+            "Base voucher offer must request only the governed SmartDeed"
+        )
+    payments = requested[artifact.deed_launcher_id]
+    if len(payments) != 1:
+        raise PaymentArtifactError(
+            "Base voucher offer must contain one SmartDeed destination"
+        )
+    payment = payments[0]
+    expected_memos = [
+        artifact.deed_launcher_id,
+        terms.smart_deed_inner_hash,
+        artifact.metadata_root,
+        artifact.purchase_id,
+        artifact.artifact_hash,
+    ]
+    if (
+        payment.puzzle_hash != artifact.vault_p2_puzzle_hash
+        or int(payment.amount) != 1
+        or list(payment.memos) != expected_memos
+    ):
+        raise PaymentArtifactError(
+            "Base voucher offer does not deliver the exact deed to its vault"
+        )
+    if buyer_offer.get_offered_amounts() != {None: 1}:
+        raise PaymentArtifactError(
+            "Base voucher offer must expose only the receipt's one technical mojo"
+        )
+    if buyer_offer.fees() != 0:
+        raise PaymentArtifactError("Base voucher redemption offer must be zero fee")
+    spends = buyer_offer.coin_spends()
+    if len(spends) != 3 or sum(
+        spend.coin == receipt_coin for spend in spends
+    ) != 1:
+        raise PaymentArtifactError(
+            "Base voucher offer must contain the exact receipt spend"
+        )
+    expected_driver = smart_deed_singleton_driver(
+        artifact.deed_launcher_id
+    )
+    actual_driver = buyer_offer.driver_dict.get(artifact.deed_launcher_id)
+    if actual_driver is None or actual_driver.info != expected_driver.info:
+        raise PaymentArtifactError(
+            "Base voucher offer uses an unexpected SmartDeed singleton driver"
+        )
+    return bytes32(payment.nonce)
+
+
+def build_universal_primary_offer_v4(
+    *,
+    buyer_offer: Offer,
+    deed_coin: Coin,
+    deed_singleton_struct: Program,
+    lineage_proof: LineageProof,
+    artifact: PurchaseArtifactV2,
+    signer_indices: Sequence[int],
+    terms: PrimaryMintTermsV2,
+    purchase_mode: PrimaryPurchaseMode = PrimaryPurchaseMode.DIRECT,
+    voucher_coin_id: bytes32 = bytes32.zeros,
+    voucher_transition_message: bytes32 = bytes32.zeros,
+    external_receipt_coin: Coin | None = None,
+    external_settlement_evidence_hash: bytes32 = bytes32.zeros,
+) -> ChiaPrimaryOffer:
+    """Build the RC20 native direct/voucher or Base voucher aggregate offer."""
+    if (
+        purchase_mode == PrimaryPurchaseMode.VOUCHER
+        and artifact.rail == PaymentRail.EVM_TEST_USD
+    ):
+        if external_receipt_coin is None:
+            raise PaymentArtifactError(
+                "Base voucher delivery requires its receipt coin"
+            )
+        buyer_offer_nonce = validate_base_voucher_redemption_offer(
+            buyer_offer=buyer_offer,
+            receipt_coin=external_receipt_coin,
+            artifact=artifact,
+            terms=terms,
+        )
+        payment_asset = None
+        settlement_amount = 1
+        external_receipt_coin_id = external_receipt_coin.name()
+    else:
+        if external_receipt_coin is not None:
+            raise PaymentArtifactError(
+                "native purchase cannot carry an external receipt coin"
+            )
+        buyer_offer_nonce = validate_chia_buyer_offer(
+            buyer_offer=buyer_offer,
+            artifact=artifact,
+            terms=terms,
+        )
+        payment_asset = (
+            None
+            if artifact.rail == PaymentRail.CHIA_XCH
+            else artifact.rail_asset_id
+        )
+        settlement_amount = artifact.rail_amount
+        external_receipt_coin_id = bytes32.zeros
+
+    deed_spend = build_universal_mint_offer_v4_spend(
+        deed_coin=deed_coin,
+        deed_singleton_struct=deed_singleton_struct,
+        lineage_proof=lineage_proof,
+        artifact=artifact,
+        buyer_offer_nonce=buyer_offer_nonce,
+        signer_indices=signer_indices,
+        terms=terms,
+        purchase_mode=purchase_mode,
+        voucher_coin_id=voucher_coin_id,
+        voucher_transition_message=voucher_transition_message,
+        external_receipt_coin_id=external_receipt_coin_id,
+        external_settlement_evidence_hash=external_settlement_evidence_hash,
+    )
+    requested_payments = {
+        payment_asset: [
+            CreateCoin(
+                terms.protocol_puzhash,
+                uint64(settlement_amount),
+                [artifact.purchase_id, artifact.artifact_hash],
+            )
+        ]
+    }
+    drivers = {
+        artifact.deed_launcher_id: smart_deed_singleton_driver(
+            artifact.deed_launcher_id
+        )
+    }
+    if artifact.rail == PaymentRail.CHIA_CAT:
+        drivers[artifact.rail_asset_id] = chia_cat_driver(
+            artifact.rail_asset_id
+        )
+    issuer_offer = Offer(
+        Offer.notarize_payments(requested_payments, [deed_coin]),
+        WalletSpendBundle([deed_spend], G2Element()),
+        drivers,
+    )
+    aggregate_offer = Offer.aggregate([buyer_offer, issuer_offer])
+    if not aggregate_offer.is_valid():
+        raise PaymentArtifactError(
+            "buyer and issuer offer files do not balance exactly"
+        )
+    return ChiaPrimaryOffer(
+        buyer_offer=buyer_offer,
+        issuer_offer=issuer_offer,
+        aggregate_offer=aggregate_offer,
+        deed_spend=deed_spend,
+    )
+
+
 def build_chia_primary_offer(
     *,
     buyer_offer: Offer,
@@ -741,6 +1069,9 @@ def build_chia_primary_offer(
     artifact: PurchaseArtifactV2,
     signer_indices: Sequence[int],
     terms: PrimaryMintTermsV2,
+    purchase_mode: PrimaryPurchaseMode = PrimaryPurchaseMode.DIRECT,
+    voucher_coin_id: bytes32 = bytes32.zeros,
+    voucher_transition_message: bytes32 = bytes32.zeros,
 ) -> ChiaPrimaryOffer:
     """Add the governed deed half to a wallet-signed XCH/CAT offer file."""
 
@@ -749,7 +1080,7 @@ def build_chia_primary_offer(
         artifact=artifact,
         terms=terms,
     )
-    deed_spend = build_chia_mint_offer_v2_spend(
+    deed_spend = build_chia_mint_offer_v3_spend(
         deed_coin=deed_coin,
         deed_singleton_struct=deed_singleton_struct,
         lineage_proof=lineage_proof,
@@ -757,6 +1088,9 @@ def build_chia_primary_offer(
         buyer_offer_nonce=buyer_offer_nonce,
         signer_indices=signer_indices,
         terms=terms,
+        purchase_mode=purchase_mode,
+        voucher_coin_id=voucher_coin_id,
+        voucher_transition_message=voucher_transition_message,
     )
     payment_asset = (
         None
@@ -803,48 +1137,15 @@ def build_chia_primary_offer(
     )
 
 
-def _assert_pending_matches_artifact(
-    pending_attestation: PaymentAttestationV1,
-    artifact: PurchaseArtifactV2,
-) -> None:
+def _assert_base_usdc_artifact(artifact: PurchaseArtifactV2) -> None:
     if (
-        pending_attestation.transition != PaymentTransition.PENDING
-        or pending_attestation.resolution != PaymentResolution.NONE
+        artifact.rail != PaymentRail.EVM_TEST_USD
+        or artifact.rail_chain_id != 84532
+        or artifact.rail_asset_id != BASE_SEPOLIA_USDC_ASSET_ID
+        or artifact.rail_asset_decimals != 6
     ):
         raise PaymentArtifactError(
-            "payment escrow requires a PENDING attestation"
-        )
-    if (
-        pending_attestation.purchase_id != artifact.purchase_id
-        or pending_attestation.artifact_hash != artifact.artifact_hash
-    ):
-        raise PaymentArtifactError(
-            "pending attestation does not match purchase artifact"
-        )
-
-
-def _assert_resolution_matches_pending(
-    *,
-    resolution_attestation: PaymentAttestationV1,
-    pending_attestation: PaymentAttestationV1,
-) -> None:
-    if (
-        resolution_attestation.purchase_id != pending_attestation.purchase_id
-        or resolution_attestation.artifact_hash
-        != pending_attestation.artifact_hash
-        or resolution_attestation.provider_id != pending_attestation.provider_id
-        or resolution_attestation.external_reference_hash
-        != pending_attestation.external_reference_hash
-        or resolution_attestation.previous_attestation_hash
-        != pending_attestation.attestation_hash
-    ):
-        raise PaymentArtifactError(
-            "resolution attestation does not match pending attestation"
-        )
-    if resolution_attestation.transition == PaymentTransition.MANUAL_RELEASE:
-        validate_manual_release(
-            pending_attestation=pending_attestation,
-            release_attestation=resolution_attestation,
+            "Base voucher requires official six-decimal Base Sepolia USDC"
         )
 
 

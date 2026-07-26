@@ -1,5 +1,5 @@
 {
-  "version": 4,
+  "version": 3,
   "mint_publish": {
     "draft_fields": [
       "par_value",
@@ -77,7 +77,13 @@
       "empty_normalized_value": "reject"
     },
     "asset_classes": {
-      "RWA-RE-RES": 1
+      "RWA-RE-RES": 1,
+      "RWA-RE-MFR": 2,
+      "RWA-RE-COM": 3,
+      "RWA-RE-IND": 4,
+      "RWA-RE-HOS": 5,
+      "RWA-RE-LAND": 6,
+      "RWA-RE-MIX": 7
     }
   },
   "zkpassport": {

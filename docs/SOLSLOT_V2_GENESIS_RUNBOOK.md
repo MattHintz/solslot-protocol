@@ -4,12 +4,12 @@
 
 This runbook does not authorize a production or mainnet ceremony. Alpha
 writes, credential enrollment, offers, and minting remain disabled until the
-selected review class and pre-broadcast gate pass against six frozen release
+selected review class and pre-broadcast gate pass against five frozen release
 commits.
 
 `internal-engineering-testnet` is the disposable test path. It is accepted
 only on testnet11, requires three distinct administrator wallets and normal
-2-of-3 plan/artifact signatures, and marks the signed artifact `testOnly: true`
+slot-0-plus-one-coadmin plan/artifact signatures, and marks the signed artifact `testOnly: true`
 and `auditStatus: "unaudited"`. It does not satisfy an independently reviewed
 release or permit mainnet.
 
@@ -33,8 +33,8 @@ administrator signing happen on each administrator's own computer.
 ## Freeze The Release
 
 1. Commit every reviewed change in `solslot-protocol`, `solslot-evm`,
-   `solslot-api`, `research/solslot-backend`, `solslot`, and `solslot-portal`.
-2. Require clean worktrees and record all six full commit SHAs.
+   `solslot-api`, `solslot`, and `solslot-portal`.
+2. Require clean worktrees and record all five full commit SHAs.
 3. Run complete tests, schema drift, namespace, secret, package, and
    reproducibility gates from those exact commits.
 4. Select the review class. For the disposable internal test, record
@@ -53,18 +53,12 @@ administrator signing happen on each administrator's own computer.
 Do not construct a plan from a dirty checkout or before the credential
 carryover checkpoint and fresh EVM deployment are complete.
 
-`research/solslot-omnichain` is a separate CCIP/Warp settlement rail. It is
-not the zkPassport bridge contract source and cannot occupy the ceremony's
-`evm` source-SHA slot. Its contracts remain disabled until a separate reviewed
-deployment record binds their source SHA, runtime code hashes, supported-token
-allowlist, and coordinator external-payment configuration.
-
 ## Build The Plan
 
 The admin portal drives the endpoints below under `/admin/genesis`. Preserve
 the JSON response from every state transition in the private ceremony archive.
 
-1. `POST /drafts` with the six frozen source SHAs and explicit `reviewClass`.
+1. `POST /drafts` with the five frozen source SHAs and explicit `reviewClass`.
 2. `POST /{ceremonyId}/invitations/{slot}` for slots 1, 2, and 3.
 3. Each administrator calls `/invitations/prepare`, signs
    `SolslotGenesisAdminEnrollment`, then calls `/invitations/accept`.
@@ -108,8 +102,8 @@ cd solslot-protocol
   --output-dir /secure/ceremony/output/<ceremony-id>
 ```
 
-Repository paths default to the six canonical repositories. Use the explicit
-`--protocol-repo`, `--evm-repo`, `--api-repo`, `--legacy-backend-repo`,
+Repository paths default to the five sibling canonical repositories. Use the
+explicit `--protocol-repo`, `--evm-repo`, `--api-repo`,
 `--customer-web-repo`, and `--admin-portal-repo` options only when validating
 clean checkouts elsewhere.
 
@@ -134,6 +128,34 @@ signatures.
    and writes the read-only bootstrap lock last.
 
 Do not manually edit an artifact, lock, checksum file, or ceremony database.
+
+## Freeze The RC19 Source Set
+
+RC19 uses source manifest V3. It binds exactly nine repositories: protocol,
+EVM, Omnichain, API, the guarded payment adapter, Key of Solomon, Samuel,
+customer web, and admin portal. A six-source RC17 draft is invalid even when
+all of its commits still exist.
+
+Generate the deterministic manifest only after every repository is clean and
+checked out at `release/testnet-alpha-rc19-20260721`:
+
+```bash
+.venv/bin/python scripts/build_release_source_manifest.py \
+  --protocol-repo /release/solslot-protocol \
+  --evm-repo /release/solslot-evm \
+  --omnichain-repo /release/omnichain \
+  --api-repo /release/solslot-api \
+  --legacy-backend-repo /release/solslot-backend \
+  --key-of-solomon-repo /release/key-of-solomon \
+  --samuel-repo /release/samuel \
+  --customer-web-repo /release/solslot \
+  --admin-portal-repo /release/solslot-portal \
+  --output /secure/ceremony/source-manifest-v3.json
+```
+
+Copy `sourceShas` from that generated evidence into the ceremony draft. Do
+not commit the generated manifest into a source repository: doing so would
+make the protocol repository SHA self-referential.
 
 ## Deploy Consumers
 
@@ -172,7 +194,7 @@ cd solslot-protocol
   --release-attestation /secure/ceremony/release-attestation.json
 ```
 
-The post-genesis gate verifies canonical artifact content, 2-of-3 signature
+The post-genesis gate verifies canonical artifact content, owner-plus-one signature
 binding, locked ceremony state, three-confirmation policy, retired-coordinate
 separation, checksummed evidence, clean source SHAs, consumer pins, and write
 locks. Signature recovery and live chain confirmation are enforced by the API

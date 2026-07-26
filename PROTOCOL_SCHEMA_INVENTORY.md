@@ -26,7 +26,9 @@ defined and which tests should fail on drift.
   - `property_id_canon = sha256(upper(trim(property_id)) UTF-8)`.
   - `par_value_mojos = draft.par_value`; the API draft value is already in
     mojos/cents and is not converted client-side.
-  - `asset_class = 1` for alpha `RWA-RE-RES`; unknown classes reject.
+  - `asset_class` uses the stable RC20 registry: residential `1`, multifamily
+    `2`, commercial `3`, industrial `4`, hospitality `5`, land `6`, and
+    mixed-use `7`; unknown classes reject.
   - `owner_member_hash` from the connected EVM admin pubkey via
     `EvmWalletService.recoverFirstAdminPubkey()` and `Eip712LeafHashService`.
 - Portal registry material: `PropertyRegistryRegistrationMaterialService` is
@@ -143,6 +145,31 @@ defined and which tests should fail on drift.
 - Tests:
   `tests/test_governance.py::TestExecute::test_execute_settle_sends_message_to_pool`
   and `tests/test_pool.py::TestPoolSettlementBinding`.
+
+## RC20 Refundable Voucher Presale
+
+- Canonical terms and transition rules live in `voucher_presale_v2.py`; spend
+  construction and exact successor validation live in
+  `voucher_presale_v2_driver.py`.
+- The consensus modules are `voucher_presale_series_v2.clsp`,
+  `voucher_nft_inner_v2.clsp`, `voucher_payment_escrow_v2.clsp`,
+  `voucher_external_escrow_receipt_v2.clsp`,
+  `voucher_base_result_authorization_v2.clsp`,
+  `voucher_purchase_launcher_v2.clsp`, and the dedicated burn puzzle.
+- Native XCH purchases atomically pair the non-transferable voucher with an
+  exact-principal escrow. Base Sepolia USDC purchases pair the voucher with an
+  authenticated external-payment receipt.
+- A terminal Base voucher output is a one-use result authorization singleton.
+  It binds the voucher commitment, global payment id, principal, result, and
+  trusted Samuel return puzzle. The authorization and Samuel return puzzle
+  require each other's exact announcements in one spend bundle, so a relayer
+  cannot fabricate or redirect the terminal result.
+- `release-manifests/rc20-puzzle-hashes.json` preserves every RC19 module hash,
+  records every additive RC20 module hash in canonical order, and pins the
+  complete RC20 checksum.
+- Tests: `tests/test_voucher_presale_v2.py`,
+  `tests/test_voucher_presale_v2_driver.py`, and
+  `tests/test_puzzle_integrity.py`.
 
 ## Deployment Context
 

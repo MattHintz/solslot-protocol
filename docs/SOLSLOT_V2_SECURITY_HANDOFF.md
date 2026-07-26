@@ -4,7 +4,7 @@
 
 Alpha writes and minting remain locked. No current deployment coordinate is
 eligible for reuse. The next deployment must be built from clean, reviewed
-commits in all six release repositories.
+commits in all five release repositories.
 
 ## Canonical Consensus Surface
 
@@ -23,9 +23,7 @@ checksummed V1 evidence archive.
 
 1. `python scripts/check_namespace.py` passes for tracked files and packaged artifacts.
 2. The complete protocol suite passes with the frozen puzzle checksum.
-3. API, EVM, legacy backend, customer web, and admin portal report their
-   artifact-bound source SHAs; the consumer-facing services report the same
-   artifact hash.
+3. API, EVM, customer web, and admin portal report the same source SHAs and artifact hash.
 4. Independent review closes all open findings against the frozen commits.
 5. Secrets are rotated after the release commits are frozen.
 6. The API live preflight and offline `pre-broadcast` gate pass from a new,

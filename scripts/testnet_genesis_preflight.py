@@ -23,21 +23,26 @@ from typing import Any, Mapping, Sequence
 
 PROTOCOL_ROOT = Path(__file__).resolve().parents[1]
 WORKSPACE_ROOT = PROTOCOL_ROOT.parent
+SOURCE_MANIFEST_VERSION = 3
 SOURCE_NAMES = (
     "protocol",
     "evm",
+    "omnichain",
     "api",
     "legacyBackend",
+    "keyOfSolomon",
+    "samuel",
     "customerWeb",
     "adminPortal",
 )
 SOURCE_DEFAULTS = {
     "protocol": PROTOCOL_ROOT,
-    # The ceremony EVM evidence is the zkPassport bridge deployment, not the
-    # separately gated CCIP/Warp payment rail.
     "evm": WORKSPACE_ROOT / "solslot-evm",
+    "omnichain": WORKSPACE_ROOT / "research" / "solslot-omnichain",
     "api": WORKSPACE_ROOT / "solslot-api",
     "legacyBackend": WORKSPACE_ROOT / "research" / "solslot-backend",
+    "keyOfSolomon": WORKSPACE_ROOT / "research" / "solslot-kos",
+    "samuel": WORKSPACE_ROOT / "research" / "solslot-samuel",
     "customerWeb": WORKSPACE_ROOT / "solslot",
     "adminPortal": WORKSPACE_ROOT / "solslot-portal",
 }
@@ -86,11 +91,18 @@ def _add_common_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--ceremony-state", type=Path, required=True)
     parser.add_argument("--protocol-repo", type=Path, default=SOURCE_DEFAULTS["protocol"])
     parser.add_argument("--evm-repo", type=Path, default=SOURCE_DEFAULTS["evm"])
+    parser.add_argument(
+        "--omnichain-repo", type=Path, default=SOURCE_DEFAULTS["omnichain"]
+    )
     parser.add_argument("--api-repo", type=Path, default=SOURCE_DEFAULTS["api"])
     parser.add_argument(
-        "--legacy-backend-repo",
-        type=Path,
-        default=SOURCE_DEFAULTS["legacyBackend"],
+        "--legacy-backend-repo", type=Path, default=SOURCE_DEFAULTS["legacyBackend"]
+    )
+    parser.add_argument(
+        "--key-of-solomon-repo", type=Path, default=SOURCE_DEFAULTS["keyOfSolomon"]
+    )
+    parser.add_argument(
+        "--samuel-repo", type=Path, default=SOURCE_DEFAULTS["samuel"]
     )
     parser.add_argument(
         "--customer-web-repo", type=Path, default=SOURCE_DEFAULTS["customerWeb"]
@@ -259,8 +271,11 @@ def repository_paths(args: argparse.Namespace) -> dict[str, Path]:
     return {
         "protocol": args.protocol_repo,
         "evm": args.evm_repo,
+        "omnichain": args.omnichain_repo,
         "api": args.api_repo,
         "legacyBackend": args.legacy_backend_repo,
+        "keyOfSolomon": args.key_of_solomon_repo,
+        "samuel": args.samuel_repo,
         "customerWeb": args.customer_web_repo,
         "adminPortal": args.admin_portal_repo,
     }
@@ -380,6 +395,8 @@ def _validate_plan(
     if draft:
         if draft.get("schemaVersion") != 2 or draft.get("network") != "testnet11":
             findings.append(Finding("error", "ceremony draft is not Solslot V2 testnet11"))
+        if draft.get("sourceManifestVersion") != SOURCE_MANIFEST_VERSION:
+            findings.append(Finding("error", "ceremony draft source manifest is not RC20 V3"))
         if draft.get("evmChainId") != 11155111:
             findings.append(Finding("error", "ceremony draft is not bound to Sepolia"))
     if plan is None:
@@ -388,6 +405,8 @@ def _validate_plan(
         findings.append(Finding("error", "ceremony plan schema is not V2"))
     if plan.get("protocolVersion") != "solslot-v2":
         findings.append(Finding("error", "ceremony plan protocolVersion is not solslot-v2"))
+    if plan.get("sourceManifestVersion") != SOURCE_MANIFEST_VERSION:
+        findings.append(Finding("error", "ceremony plan source manifest is not RC20 V3"))
     if plan.get("network") != "testnet11" or plan.get("evmChainId") != 11155111:
         findings.append(Finding("error", "ceremony plan is not testnet11/Sepolia"))
     _require_hex(
@@ -447,7 +466,14 @@ def _validate_plan(
     if admin:
         keys = [str(value).lower() for value in admin.get("compressedPubkeys", [])]
         if admin.get("threshold") != 2 or keys != roster_keys:
-            findings.append(Finding("error", "plan administrator authority is not the frozen 2-of-3 roster"))
+            findings.append(Finding("error", "plan administrator authority does not bind the frozen roster"))
+        if (
+            admin.get("policy") != "owner-plus-one"
+            or admin.get("ownerIndex") != 0
+            or admin.get("coadminIndices") != [1, 2]
+            or admin.get("coadminThreshold") != 1
+        ):
+            findings.append(Finding("error", "plan administrator authority is not owner-plus-one"))
         if admin.get("adminsHash") != record.get("roster_hash"):
             findings.append(Finding("error", "plan administrator hash differs from the frozen roster"))
         _require_hex(admin.get("adminsHash"), 32, "plan.adminAuthority.adminsHash", findings)
@@ -515,6 +541,7 @@ def _validate_audit_approval(
     )
     expected = {
         "schemaVersion": 2,
+        "sourceManifestVersion": SOURCE_MANIFEST_VERSION,
         "ceremonyId": record.get("ceremony_id"),
         "planHash": record.get("plan_hash"),
         "sourceShas": draft_sources,
@@ -652,6 +679,8 @@ def _validate_artifact(
 ) -> dict[str, str] | None:
     if artifact.get("schemaVersion") != 2 or artifact.get("protocolVersion") != "solslot-v2":
         findings.append(Finding("error", "public artifact is not schema/protocol V2"))
+    if artifact.get("sourceManifestVersion") != SOURCE_MANIFEST_VERSION:
+        findings.append(Finding("error", "public artifact source manifest is not RC20 V3"))
     if artifact.get("network") != "testnet11" or artifact.get("evmChainId") != 11155111:
         findings.append(Finding("error", "public artifact is not testnet11/Sepolia"))
     review_class = artifact.get("reviewClass")
@@ -706,27 +735,27 @@ def _validate_artifact(
     if admin:
         admin_keys = [str(value).lower() for value in admin.get("compressedPubkeys", [])]
         if admin.get("threshold") != 2 or len(admin_keys) != 3 or len(set(admin_keys)) != 3:
-            findings.append(Finding("error", "artifact administrator authority is not 2-of-3"))
+            findings.append(Finding("error", "artifact administrator roster is invalid"))
+        if (
+            admin.get("policy") != "owner-plus-one"
+            or admin.get("ownerIndex") != 0
+            or admin.get("coadminIndices") != [1, 2]
+            or admin.get("coadminThreshold") != 1
+        ):
+            findings.append(Finding("error", "artifact administrator authority is not owner-plus-one"))
         for key in admin_keys:
             _require_hex(key, 33, "artifact administrator public key", findings)
     policy = _require_mapping(artifact.get("signaturePolicy"), "artifact.signaturePolicy", findings)
     if admin and policy and (
         policy.get("type") != "SolslotGenesisArtifact"
         or policy.get("threshold") != 2
+        or policy.get("policy") != "owner-plus-one"
+        or policy.get("ownerIndex") != 0
+        or policy.get("coadminIndices") != [1, 2]
+        or policy.get("coadminThreshold") != 1
         or policy.get("rosterHash") != admin.get("rosterHash")
     ):
         findings.append(Finding("error", "artifact signature policy differs from administrator authority"))
-
-    governance = _require_mapping(
-        artifact.get("governanceStruct"), "artifact.governanceStruct", findings
-    )
-    if governance:
-        _require_hex(
-            governance.get("mintExecuteCosignerPubkey"),
-            48,
-            "artifact governance MINT co-signer public key",
-            findings,
-        )
 
     signatures = artifact.get("signatures")
     if not isinstance(signatures, list) or not (2 <= len(signatures) <= 3):
@@ -748,6 +777,8 @@ def _validate_artifact(
             if len(admin_keys) == 3 and str(entry.get("compressedPubkey", "")).lower() != admin_keys[index]:
                 findings.append(Finding("error", f"artifact signature slot {index} has the wrong roster key"))
             _require_hex(entry.get("signature"), 65, f"artifact signature slot {index}", findings)
+        if 0 not in seen or not seen.intersection({1, 2}):
+            findings.append(Finding("error", "artifact requires slot 0 and one coadmin signature"))
 
     validators = _require_mapping(artifact.get("validatorSet"), "artifact.validatorSet", findings)
     if validators:
@@ -820,6 +851,7 @@ def _validate_release_attestation(
 ) -> None:
     if (
         attestation.get("schemaVersion") != 2
+        or attestation.get("sourceManifestVersion") != SOURCE_MANIFEST_VERSION
         or attestation.get("protocolVersion") != "solslot-v2"
         or attestation.get("network") != "testnet11"
         or attestation.get("artifactHash") != artifact.get("artifactHash")
@@ -886,6 +918,7 @@ def check_post_genesis(
 
     lock_expected = {
         "schemaVersion": 2,
+        "sourceManifestVersion": SOURCE_MANIFEST_VERSION,
         "protocolVersion": "solslot-v2",
         "reviewClass": artifact.get("reviewClass"),
         "testOnly": artifact.get("testOnly"),

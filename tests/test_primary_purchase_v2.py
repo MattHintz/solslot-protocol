@@ -26,25 +26,16 @@ from chia_rs.sized_bytes import bytes32
 from chia_rs.sized_ints import uint64
 
 from solslot_puzzles.payment_artifacts_v2 import (
-    MANUAL_RELEASE_DELAY_SECONDS,
     PaymentArtifactError,
-    PaymentAttestationV1,
     PaymentRail,
-    PaymentResolution,
-    PaymentTransition,
     PurchaseArtifactV2,
 )
 from solslot_puzzles.primary_purchase_v2_driver import (
     PrimaryMintTermsV2,
     build_chia_primary_offer,
-    build_payment_escrow_spend,
-    chia_offer_v2_solution,
+    chia_offer_v3_solution,
     chia_cat_driver,
-    delivery_message,
-    escrow_coin_amount,
-    make_mint_offer_v2_inner,
-    make_payment_escrow_puzzle,
-    mint_offer_v2_solution,
+    make_mint_offer_v3_inner,
     prepare_chia_buyer_offer,
     smart_deed_singleton_driver,
 )
@@ -52,13 +43,8 @@ from solslot_puzzles.vault_driver import puzzle_for_p2_vault
 
 
 CREATE_COIN = bytes([51])
-SEND_MESSAGE = bytes([66])
-RECEIVE_MESSAGE = bytes([67])
 AGG_SIG_ME = bytes([50])
-ASSERT_SECONDS_ABSOLUTE = bytes([81])
-ASSERT_BEFORE_SECONDS_ABSOLUTE = bytes([85])
 ASSERT_PUZZLE_ANNOUNCEMENT = bytes([63])
-PROTOCOL_PREFIX = b"\x53"
 
 
 def _b32(seed: int) -> bytes32:
@@ -71,7 +57,6 @@ VALIDATORS = (
     bytes([3]) * 48,
 )
 PROTOCOL_PUZHASH = _b32(4)
-REFUND_PUZHASH = _b32(5)
 PROVIDER_ID = _b32(6)
 VAULT_LAUNCHER_ID = _b32(7)
 VAULT_P2 = bytes32(
@@ -79,7 +64,7 @@ VAULT_P2 = bytes32(
 )
 
 
-def _artifact(rail: PaymentRail = PaymentRail.STRIPE) -> PurchaseArtifactV2:
+def _artifact(rail: PaymentRail = PaymentRail.CHIA_XCH) -> PurchaseArtifactV2:
     common = {
         "network": "testnet11",
         "collection_id": _b32(20),
@@ -94,24 +79,6 @@ def _artifact(rail: PaymentRail = PaymentRail.STRIPE) -> PurchaseArtifactV2:
         "authorization_expires_at": 1_800_001_200,
         "quote_expires_at": 1_800_000_600,
     }
-    if rail == PaymentRail.STRIPE:
-        return PurchaseArtifactV2(
-            **common,
-            rail=rail,
-            rail_chain_id=0,
-            rail_asset_id=bytes32.zeros,
-            rail_asset_decimals=2,
-            rail_amount=125_000,
-        )
-    if rail == PaymentRail.EVM_TEST_USD:
-        return PurchaseArtifactV2(
-            **common,
-            rail=rail,
-            rail_chain_id=84532,
-            rail_asset_id=_b32(27),
-            rail_asset_decimals=6,
-            rail_amount=1_250_000_000,
-        )
     if rail == PaymentRail.CHIA_CAT:
         return PurchaseArtifactV2(
             **common,
@@ -134,43 +101,6 @@ def _artifact(rail: PaymentRail = PaymentRail.STRIPE) -> PurchaseArtifactV2:
         oracle_round_hash=_b32(28),
         oracle_price_usd_minor_per_asset=2_125,
         source_evidence_root=_b32(29),
-    )
-
-
-def _pending(artifact: PurchaseArtifactV2) -> PaymentAttestationV1:
-    return PaymentAttestationV1(
-        purchase_id=artifact.purchase_id,
-        artifact_hash=artifact.artifact_hash,
-        transition=PaymentTransition.PENDING,
-        resolution=PaymentResolution.NONE,
-        provider_id=PROVIDER_ID,
-        external_reference_hash=_b32(30),
-        evidence_hash=_b32(31),
-        previous_attestation_hash=bytes32.zeros,
-        observed_at=1_800_000_000,
-    )
-
-
-def _resolution(
-    artifact: PurchaseArtifactV2,
-    *,
-    transition: PaymentTransition = PaymentTransition.SUCCEEDED,
-    resolution: PaymentResolution = PaymentResolution.DELIVER,
-    observed_at: int = 1_800_000_100,
-    reason_hash: bytes32 = bytes32.zeros,
-) -> PaymentAttestationV1:
-    pending = _pending(artifact)
-    return PaymentAttestationV1(
-        purchase_id=artifact.purchase_id,
-        artifact_hash=artifact.artifact_hash,
-        transition=transition,
-        resolution=resolution,
-        provider_id=PROVIDER_ID,
-        external_reference_hash=pending.external_reference_hash,
-        evidence_hash=_b32(32),
-        previous_attestation_hash=pending.attestation_hash,
-        observed_at=observed_at,
-        reason_hash=reason_hash,
     )
 
 
@@ -395,230 +325,23 @@ def test_prepare_cat_buyer_offer_binds_asset_and_requires_lineage() -> None:
     )
 
 
-def test_stripe_success_emits_two_signatures_payment_and_delivery() -> None:
-    artifact = _artifact()
-    pending = _pending(artifact)
-    resolution = _resolution(artifact)
-    puzzle = make_payment_escrow_puzzle(
-        artifact=artifact,
-        pending_attestation=pending,
-        protocol_puzhash=PROTOCOL_PUZHASH,
-        refund_puzhash=REFUND_PUZHASH,
-        validator_pubkeys=VALIDATORS,
-    )
-    coin = Coin(_b32(50), bytes32(puzzle.get_tree_hash()), 1)
-    spend = build_payment_escrow_spend(
-        escrow_coin=coin,
-        artifact=artifact,
-        pending_attestation=pending,
-        resolution_attestation=resolution,
-        protocol_puzhash=PROTOCOL_PUZHASH,
-        refund_puzhash=REFUND_PUZHASH,
-        validator_pubkeys=VALIDATORS,
-        signer_indices=(0, 2),
-    )
-    conditions = spend.puzzle.run(spend.solution).as_python()
-    signatures = [item for item in conditions if item[0] == AGG_SIG_ME]
-    assert signatures == [
-        [AGG_SIG_ME, VALIDATORS[0], bytes(resolution.attestation_hash)],
-        [AGG_SIG_ME, VALIDATORS[2], bytes(resolution.attestation_hash)],
-    ]
-    payment = next(item for item in conditions if item[0] == CREATE_COIN)
-    assert payment[1] == PROTOCOL_PUZHASH
-    assert int.from_bytes(payment[2], "big") == 1
-    sent = next(item for item in conditions if item[0] == SEND_MESSAGE)
-    assert sent[2] == PROTOCOL_PREFIX + bytes(
-        delivery_message(
-            purchase_id=artifact.purchase_id,
-            artifact_hash=artifact.artifact_hash,
-            vault_p2_puzzle_hash=artifact.vault_p2_puzzle_hash,
-        )
-    )
+def test_native_driver_has_no_standalone_external_escrow_surface() -> None:
+    from solslot_puzzles import primary_purchase_v2_driver as driver
 
-
-def test_failed_payment_refunds_without_delivery_message() -> None:
-    artifact = _artifact(PaymentRail.EVM_TEST_USD)
-    pending = _pending(artifact)
-    resolution = _resolution(
-        artifact,
-        transition=PaymentTransition.FAILED,
-        resolution=PaymentResolution.REFUND,
-    )
-    puzzle = make_payment_escrow_puzzle(
-        artifact=artifact,
-        pending_attestation=pending,
-        protocol_puzhash=PROTOCOL_PUZHASH,
-        refund_puzhash=REFUND_PUZHASH,
-        validator_pubkeys=VALIDATORS,
-    )
-    coin = Coin(
-        _b32(51),
-        bytes32(puzzle.get_tree_hash()),
-        escrow_coin_amount(artifact),
-    )
-    spend = build_payment_escrow_spend(
-        escrow_coin=coin,
-        artifact=artifact,
-        pending_attestation=pending,
-        resolution_attestation=resolution,
-        protocol_puzhash=PROTOCOL_PUZHASH,
-        refund_puzhash=REFUND_PUZHASH,
-        validator_pubkeys=VALIDATORS,
-        signer_indices=(0, 1),
-    )
-    conditions = spend.puzzle.run(spend.solution).as_python()
-    refund = next(item for item in conditions if item[0] == CREATE_COIN)
-    assert refund[1] == REFUND_PUZHASH
-    assert int.from_bytes(refund[2], "big") == 1
-    assert not any(item[0] == SEND_MESSAGE for item in conditions)
-
-
-def test_manual_release_is_seven_day_locked_and_resolution_bound() -> None:
-    artifact = _artifact()
-    pending = _pending(artifact)
-    release = _resolution(
-        artifact,
-        transition=PaymentTransition.MANUAL_RELEASE,
-        resolution=PaymentResolution.REFUND,
-        observed_at=pending.observed_at + MANUAL_RELEASE_DELAY_SECONDS,
-        reason_hash=_b32(33),
-    )
-    puzzle = make_payment_escrow_puzzle(
-        artifact=artifact,
-        pending_attestation=pending,
-        protocol_puzhash=PROTOCOL_PUZHASH,
-        refund_puzhash=REFUND_PUZHASH,
-        validator_pubkeys=VALIDATORS,
-    )
-    coin = Coin(_b32(52), bytes32(puzzle.get_tree_hash()), 1)
-    spend = build_payment_escrow_spend(
-        escrow_coin=coin,
-        artifact=artifact,
-        pending_attestation=pending,
-        resolution_attestation=release,
-        protocol_puzhash=PROTOCOL_PUZHASH,
-        refund_puzhash=REFUND_PUZHASH,
-        validator_pubkeys=VALIDATORS,
-        signer_indices=(1, 2),
-    )
-    conditions = spend.puzzle.run(spend.solution).as_python()
-    absolute_times = [
-        int.from_bytes(item[1], "big")
-        for item in conditions
-        if item[0] == ASSERT_SECONDS_ABSOLUTE
-    ]
-    assert pending.observed_at + MANUAL_RELEASE_DELAY_SECONDS in absolute_times
-    assert any(item[0] == ASSERT_BEFORE_SECONDS_ABSOLUTE for item in conditions)
-
-
-def test_driver_rejects_early_manual_release_and_duplicate_signers() -> None:
-    artifact = _artifact()
-    pending = _pending(artifact)
-    release = _resolution(
-        artifact,
-        transition=PaymentTransition.MANUAL_RELEASE,
-        resolution=PaymentResolution.DELIVER,
-        observed_at=pending.observed_at + MANUAL_RELEASE_DELAY_SECONDS - 1,
-        reason_hash=_b32(33),
-    )
-    puzzle = make_payment_escrow_puzzle(
-        artifact=artifact,
-        pending_attestation=pending,
-        protocol_puzhash=PROTOCOL_PUZHASH,
-        refund_puzhash=REFUND_PUZHASH,
-        validator_pubkeys=VALIDATORS,
-    )
-    coin = Coin(_b32(53), bytes32(puzzle.get_tree_hash()), 1)
-    with pytest.raises(PaymentArtifactError, match="seven-day"):
-        build_payment_escrow_spend(
-            escrow_coin=coin,
-            artifact=artifact,
-            pending_attestation=pending,
-            resolution_attestation=release,
-            protocol_puzhash=PROTOCOL_PUZHASH,
-            refund_puzhash=REFUND_PUZHASH,
-            validator_pubkeys=VALIDATORS,
-            signer_indices=(0, 2),
-        )
-    with pytest.raises(PaymentArtifactError, match="unique sorted"):
-        build_payment_escrow_spend(
-            escrow_coin=coin,
-            artifact=artifact,
-            pending_attestation=pending,
-            resolution_attestation=_resolution(artifact),
-            protocol_puzhash=PROTOCOL_PUZHASH,
-            refund_puzhash=REFUND_PUZHASH,
-            validator_pubkeys=VALIDATORS,
-            signer_indices=(0, 0),
-        )
-
-
-@pytest.mark.parametrize(
-    "rail",
-    [PaymentRail.STRIPE, PaymentRail.EVM_TEST_USD],
-)
-def test_mint_offer_accepts_exact_escrow_and_delivers_to_p2_vault(
-    rail: PaymentRail,
-) -> None:
-    artifact = _artifact(rail)
-    pending = _pending(artifact)
-    terms = _mint_terms(artifact)
-    inner = make_mint_offer_v2_inner(terms)
-    solution = mint_offer_v2_solution(
-        deed_coin_id=_b32(60),
-        artifact=artifact,
-        pending_attestation=pending,
-        refund_puzhash=REFUND_PUZHASH,
-        terms=terms,
-    )
-    conditions = inner.run(solution).as_python()
-    deed_output = next(item for item in conditions if item[0] == CREATE_COIN)
-    assert deed_output[1] == VAULT_P2
-    assert int.from_bytes(deed_output[2], "big") == 1
-
-    received = next(item for item in conditions if item[0] == RECEIVE_MESSAGE)
-    escrow = make_payment_escrow_puzzle(
-        artifact=artifact,
-        pending_attestation=pending,
-        protocol_puzhash=PROTOCOL_PUZHASH,
-        refund_puzhash=REFUND_PUZHASH,
-        validator_pubkeys=VALIDATORS,
-    )
-    assert received[2] == PROTOCOL_PREFIX + bytes(
-        delivery_message(
-            purchase_id=artifact.purchase_id,
-            artifact_hash=artifact.artifact_hash,
-            vault_p2_puzzle_hash=artifact.vault_p2_puzzle_hash,
-        )
-    )
-    assert received[3] == escrow.get_tree_hash()
-
-
-@pytest.mark.parametrize(
-    "rail",
-    [PaymentRail.CHIA_XCH, PaymentRail.CHIA_CAT],
-)
-def test_native_chia_rails_cannot_enter_external_escrow(
-    rail: PaymentRail,
-) -> None:
-    artifact = _artifact(rail)
-    with pytest.raises(PaymentArtifactError, match="offer files"):
-        escrow_coin_amount(artifact)
-    with pytest.raises(PaymentArtifactError, match="cannot create"):
-        make_payment_escrow_puzzle(
-            artifact=artifact,
-            pending_attestation=_pending(artifact),
-            protocol_puzhash=PROTOCOL_PUZHASH,
-            refund_puzhash=REFUND_PUZHASH,
-            validator_pubkeys=VALIDATORS,
-        )
+    for retired_name in (
+        "make_payment_escrow_puzzle",
+        "build_payment_escrow_spend",
+        "build_mint_offer_v2_spend",
+        "mint_offer_v2_solution",
+    ):
+        assert not hasattr(driver, retired_name)
 
 
 def test_xch_buyer_offer_and_governed_deed_offer_balance_atomically() -> None:
     artifact = _artifact(PaymentRail.CHIA_XCH)
     terms = _mint_terms(artifact)
     buyer_offer = _buyer_xch_offer(artifact, terms)
-    inner = make_mint_offer_v2_inner(terms)
+    inner = make_mint_offer_v3_inner(terms)
     singleton_struct = Program.to(
         (
             SINGLETON_MOD_HASH,
@@ -660,7 +383,7 @@ def test_xch_buyer_offer_and_governed_deed_offer_balance_atomically() -> None:
     assert len(restored.to_valid_spend().coin_spends) == 4
 
     native_conditions = inner.run(
-        chia_offer_v2_solution(
+        chia_offer_v3_solution(
             deed_coin=deed_coin,
             artifact=artifact,
             buyer_offer_nonce=next(
@@ -701,7 +424,7 @@ def test_cat_buyer_offer_and_governed_deed_offer_balance_atomically() -> None:
     )
     terms = _mint_terms(artifact)
     buyer_offer = _buyer_cat_offer(artifact, terms, tail)
-    inner = make_mint_offer_v2_inner(terms)
+    inner = make_mint_offer_v3_inner(terms)
     singleton_struct = Program.to(
         (
             SINGLETON_MOD_HASH,
@@ -744,7 +467,7 @@ def test_cat_buyer_offer_and_governed_deed_offer_balance_atomically() -> None:
     assert len(restored.to_valid_spend().coin_spends) == 4
 
     native_conditions = inner.run(
-        chia_offer_v2_solution(
+        chia_offer_v3_solution(
             deed_coin=deed_coin,
             artifact=artifact,
             buyer_offer_nonce=next(
@@ -771,12 +494,16 @@ def test_cat_buyer_offer_and_governed_deed_offer_balance_atomically() -> None:
 
 
 def test_mint_offer_rejects_noncanonical_vault_destination() -> None:
-    artifact = replace(_artifact(), vault_p2_puzzle_hash=_b32(61))
+    artifact = replace(
+        _artifact(PaymentRail.CHIA_XCH),
+        vault_p2_puzzle_hash=_b32(61),
+    )
+    deed_coin = Coin(_b32(60), _b32(62), uint64(1))
     with pytest.raises(PaymentArtifactError, match="not canonical"):
-        mint_offer_v2_solution(
-            deed_coin_id=_b32(60),
+        chia_offer_v3_solution(
+            deed_coin=deed_coin,
             artifact=artifact,
-            pending_attestation=_pending(artifact),
-            refund_puzhash=REFUND_PUZHASH,
+            buyer_offer_nonce=_b32(63),
+            signer_indices=(0, 1),
             terms=_mint_terms(artifact),
         )

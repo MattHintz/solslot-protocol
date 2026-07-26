@@ -1,0 +1,65 @@
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; RC20 one-use authorization for a Base Sepolia voucher result.
+;;;
+;;; This is the terminal inner puzzle of a consumed Base voucher singleton.
+;;; The preceding voucher transition already required the exact Chia receipt,
+;;; series, deed/refund outcome, and 2-of-3 validator signatures. This puzzle
+;;; carries that result to Samuel without introducing another signing key.
+;;;
+;;; It can only be consumed atomically with the governed return puzzle. The
+;;; singleton creates a coin announcement carrying the exact result while it
+;;; requires the trusted return puzzle to announce that same result. Samuel
+;;; can therefore bind the return spend to this exact one-use coin ID without
+;;; reimplementing the voucher singleton's curry tree.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(mod
+  (
+    VOUCHER_BURN_INNER_HASH
+    TRUSTED_RETURN_PUZZLE_HASH
+    VOUCHER_COMMITMENT_HASH
+    GLOBAL_PAYMENT_ID
+    PAYMENT_PRINCIPAL
+    PASS_FAIL
+    solution
+  )
+
+  (include condition_codes.clib)
+  (include utils.clib)
+  (include utility_macros.clib)
+
+  (defconstant DOMAIN "SOLSLOT_BASE_VOUCHER_RESULT_V2")
+  (defconstant ZERO_B32 0x0000000000000000000000000000000000000000000000000000000000000000)
+
+  (defun-inline result-message ()
+    (sha256tree
+      (list
+        DOMAIN
+        VOUCHER_COMMITMENT_HASH
+        GLOBAL_PAYMENT_ID
+        PAYMENT_PRINCIPAL
+        PASS_FAIL))
+  )
+
+  (assert
+    (= solution ())
+    (is-size-b32 VOUCHER_BURN_INNER_HASH)
+    (not (= VOUCHER_BURN_INNER_HASH ZERO_B32))
+    (is-size-b32 TRUSTED_RETURN_PUZZLE_HASH)
+    (not (= TRUSTED_RETURN_PUZZLE_HASH ZERO_B32))
+    (is-size-b32 VOUCHER_COMMITMENT_HASH)
+    (not (= VOUCHER_COMMITMENT_HASH ZERO_B32))
+    (is-size-b32 GLOBAL_PAYMENT_ID)
+    (not (= GLOBAL_PAYMENT_ID ZERO_B32))
+    (is-uint64 PAYMENT_PRINCIPAL)
+    (> PAYMENT_PRINCIPAL 0)
+    (or (= PASS_FAIL 0) (= PASS_FAIL 1))
+    (list
+      (list CREATE_COIN VOUCHER_BURN_INNER_HASH 1)
+      (list CREATE_COIN_ANNOUNCEMENT (result-message))
+      (list ASSERT_PUZZLE_ANNOUNCEMENT
+        (sha256 TRUSTED_RETURN_PUZZLE_HASH (result-message)))
+      (list REMARK PROTOCOL_PREFIX "VOUCHER_BASE_RESULT_V2"
+        VOUCHER_COMMITMENT_HASH GLOBAL_PAYMENT_ID PAYMENT_PRINCIPAL PASS_FAIL))
+  )
+)

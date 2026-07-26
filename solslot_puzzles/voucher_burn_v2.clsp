@@ -1,0 +1,3 @@
+;;; Terminal inner puzzle for a consumed refundable voucher singleton.
+;;; A voucher sent here remains visible on chain but can never move again.
+(mod () (x))
