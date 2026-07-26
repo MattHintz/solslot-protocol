@@ -38,11 +38,11 @@ SOURCE_NAMES = (
 SOURCE_DEFAULTS = {
     "protocol": PROTOCOL_ROOT,
     "evm": WORKSPACE_ROOT / "solslot-evm",
-    "omnichain": WORKSPACE_ROOT / "omnichain",
+    "omnichain": WORKSPACE_ROOT / "research" / "solslot-omnichain",
     "api": WORKSPACE_ROOT / "solslot-api",
     "legacyBackend": WORKSPACE_ROOT / "research" / "solslot-backend",
-    "keyOfSolomon": WORKSPACE_ROOT / "key-of-solomon",
-    "samuel": WORKSPACE_ROOT / "samuel",
+    "keyOfSolomon": WORKSPACE_ROOT / "research" / "solslot-kos",
+    "samuel": WORKSPACE_ROOT / "research" / "solslot-samuel",
     "customerWeb": WORKSPACE_ROOT / "solslot",
     "adminPortal": WORKSPACE_ROOT / "solslot-portal",
 }

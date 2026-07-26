@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the deterministic nine-repository RC19 source manifest."""
+"""Build the deterministic nine-repository RC20 source manifest."""
 
 from __future__ import annotations
 
@@ -14,8 +14,8 @@ from typing import Mapping, Sequence
 from urllib.parse import urlsplit, urlunsplit
 
 
-RELEASE_ID = "solslot-v2-alpha-rc19-20260721"
-RELEASE_BRANCH = "release/testnet-alpha-rc19-20260721"
+RELEASE_ID = "solslot-v2-alpha-rc20-20260722"
+RELEASE_BRANCH = "release/testnet-alpha-rc20-20260722"
 SOURCE_MANIFEST_VERSION = 3
 SOURCE_REPOSITORIES = {
     "protocol": "https://github.com/MattHintz/solslot-protocol",

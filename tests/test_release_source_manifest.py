@@ -33,6 +33,10 @@ def states():
 def test_manifest_binds_all_nine_release_sources() -> None:
     value = manifest.build_manifest(states())
     assert value["schemaVersion"] == 3
+    assert value["releaseId"] == "solslot-v2-alpha-rc20-20260722"
+    assert {
+        source["branch"] for source in value["sources"].values()
+    } == {"release/testnet-alpha-rc20-20260722"}
     assert tuple(value["sourceShas"]) == tuple(manifest.SOURCE_REPOSITORIES)
     assert len(value["sources"]) == 9
     assert value["manifestHash"] == manifest.manifest_hash(value)
