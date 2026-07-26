@@ -396,7 +396,7 @@ def _validate_plan(
         if draft.get("schemaVersion") != 2 or draft.get("network") != "testnet11":
             findings.append(Finding("error", "ceremony draft is not Solslot V2 testnet11"))
         if draft.get("sourceManifestVersion") != SOURCE_MANIFEST_VERSION:
-            findings.append(Finding("error", "ceremony draft source manifest is not RC19 V3"))
+            findings.append(Finding("error", "ceremony draft source manifest is not RC20 V3"))
         if draft.get("evmChainId") != 11155111:
             findings.append(Finding("error", "ceremony draft is not bound to Sepolia"))
     if plan is None:
@@ -406,7 +406,7 @@ def _validate_plan(
     if plan.get("protocolVersion") != "solslot-v2":
         findings.append(Finding("error", "ceremony plan protocolVersion is not solslot-v2"))
     if plan.get("sourceManifestVersion") != SOURCE_MANIFEST_VERSION:
-        findings.append(Finding("error", "ceremony plan source manifest is not RC19 V3"))
+        findings.append(Finding("error", "ceremony plan source manifest is not RC20 V3"))
     if plan.get("network") != "testnet11" or plan.get("evmChainId") != 11155111:
         findings.append(Finding("error", "ceremony plan is not testnet11/Sepolia"))
     _require_hex(
@@ -680,7 +680,7 @@ def _validate_artifact(
     if artifact.get("schemaVersion") != 2 or artifact.get("protocolVersion") != "solslot-v2":
         findings.append(Finding("error", "public artifact is not schema/protocol V2"))
     if artifact.get("sourceManifestVersion") != SOURCE_MANIFEST_VERSION:
-        findings.append(Finding("error", "public artifact source manifest is not RC19 V3"))
+        findings.append(Finding("error", "public artifact source manifest is not RC20 V3"))
     if artifact.get("network") != "testnet11" or artifact.get("evmChainId") != 11155111:
         findings.append(Finding("error", "public artifact is not testnet11/Sepolia"))
     review_class = artifact.get("reviewClass")
