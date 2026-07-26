@@ -129,15 +129,15 @@ signatures.
 
 Do not manually edit an artifact, lock, checksum file, or ceremony database.
 
-## Freeze The RC19 Source Set
+## Freeze The RC20 Source Set
 
-RC19 uses source manifest V3. It binds exactly nine repositories: protocol,
+RC20 uses source manifest V3. It binds exactly nine repositories: protocol,
 EVM, Omnichain, API, the guarded payment adapter, Key of Solomon, Samuel,
 customer web, and admin portal. A six-source RC17 draft is invalid even when
 all of its commits still exist.
 
 Generate the deterministic manifest only after every repository is clean and
-checked out at `release/testnet-alpha-rc19-20260721`:
+checked out at `release/testnet-alpha-rc20-20260722`:
 
 ```bash
 .venv/bin/python scripts/build_release_source_manifest.py \
