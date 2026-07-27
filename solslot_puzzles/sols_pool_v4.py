@@ -168,6 +168,11 @@ class SolsPoolStateV4:
 @dataclass(frozen=True)
 class SwapReceipt:
     direction: int
+    pool_coin_id: bytes32
+    vault_launcher_id: bytes32
+    vault_coin_id: bytes32
+    counterparty_puzzle_hash: bytes32
+    quote_expires_at: int
     operation_hash: bytes32
     current_state: SolsPoolStateV4
     next_state: SolsPoolStateV4
@@ -351,6 +356,14 @@ def prepare_deed_to_sols(
     )
     return SwapReceipt(
         direction=DEED_TO_SOLS,
+        pool_coin_id=_bytes32("pool_coin_id", pool_coin_id),
+        vault_launcher_id=_bytes32("vault_launcher_id", vault_launcher_id),
+        vault_coin_id=_bytes32("vault_coin_id", vault_coin_id),
+        counterparty_puzzle_hash=_bytes32(
+            "seller_sols_puzzle_hash",
+            seller_sols_puzzle_hash,
+        ),
+        quote_expires_at=quote_expires_at,
         operation_hash=operation_hash,
         current_state=state,
         next_state=next_state,
@@ -440,6 +453,14 @@ def prepare_sols_to_deed(
     )
     return SwapReceipt(
         direction=SOLS_TO_DEED,
+        pool_coin_id=_bytes32("pool_coin_id", pool_coin_id),
+        vault_launcher_id=_bytes32("vault_launcher_id", vault_launcher_id),
+        vault_coin_id=_bytes32("vault_coin_id", vault_coin_id),
+        counterparty_puzzle_hash=_bytes32(
+            "destination_p2_vault_hash",
+            destination_p2_vault_hash,
+        ),
+        quote_expires_at=quote_expires_at,
         operation_hash=operation_hash,
         current_state=state,
         next_state=next_state,
