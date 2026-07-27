@@ -10,6 +10,7 @@ import pytest
 
 from solslot_puzzles.protocol_statutes_driver import (
     build_evidence_spend,
+    build_governance_evidence_spend,
     build_sols_evidence_spend,
     build_update_spend,
     make_inner_puzzle,
@@ -167,6 +168,36 @@ def test_collection_evidence_driver_matches_clvm(
     assert announcement.rest().first().as_atom() == (
         artifacts.expected_evidence_message
     )
+
+
+def test_governance_evidence_driver_matches_clvm(
+    permanent: PermanentRules,
+) -> None:
+    parameters = ProtocolParameters()
+    state = initial_state(
+        parameters=parameters,
+        permanent_rules=permanent,
+    )
+    inner = make_inner_puzzle(
+        singleton_struct=STATUTES_SINGLETON_STRUCT,
+        governance_singleton_struct=GOVERNANCE_SINGLETON_STRUCT,
+        permanent_rules=permanent,
+        state=state,
+    )
+    artifacts = build_governance_evidence_spend(
+        my_id=b32(0xC0),
+        my_inner_puzzle_hash=bytes32(inner.get_tree_hash()),
+        my_amount=1,
+        parameters=parameters,
+    )
+
+    conditions = list(inner.run(artifacts.inner_solution).as_iter())
+    announcement = _condition(conditions, 62)
+    assert announcement.rest().first().as_atom() == (
+        artifacts.expected_evidence_message
+    )
+    create_coin = _condition(conditions, 51)
+    assert bytes32(create_coin.rest().first().as_atom()) == inner.get_tree_hash()
 
 
 def test_sols_batch_evidence_binds_consumer_collection_parameters_and_pause(

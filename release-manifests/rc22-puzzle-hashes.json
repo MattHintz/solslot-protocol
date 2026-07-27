@@ -4,12 +4,12 @@
   "preservedRelease": "RC20",
   "preservedCanonicalChecksum": "5cfb8d524809c1cb605c9d44ddec273a73babc2763cb6fd9f4cf43b847e8e018",
   "newPuzzleHashes": {
-    "governance_singleton_inner_v2.clsp": "4bd0d2cdd90235596ae11608a3d76443c306de9ec3a202a422c5f5d25b8e5bbd",
-    "protocol_statutes_inner_v1.clsp": "aa4ef5b2090e4e3fd73a008619dbf5c2833f17d3c7f6d6ac9103c81d5b138ed6",
+    "governance_singleton_inner_v2.clsp": "cbaeb3ee2cd21386668402c02471fd1f12453e72c01becf10674d6a465cc3b03",
+    "protocol_statutes_inner_v1.clsp": "4dad67134bfa399715b69dfe2c9d51b4436ab48261448b2d69f5249f05c09da2",
     "vault_singleton_inner_v2.clsp": "51886cdab8b1d8219f6fc006ff3ade838fff77244865e0858827faf76dc7b981",
     "pool_singleton_inner_v4.clsp": "c9adc5be8c0260a9ea37eeb6407c4f510b77bfee32d474eaad6701a54572f38e",
     "p2_deed_redemption_v1.clsp": "78a759362ae12e73aee1986043fb6e8e0df21ed6e104ed0dc0bd2831c10816dc",
     "redemption_treasury_v1.clsp": "0d25b689b7c5abdb6e2d882abd70afbd4c025aad0f21ba178c0dddc210090377"
   },
-  "canonicalChecksum": "e6b89bb5f0371b6dbd957be216885ba85364413615849dc0879fed10748ba35f"
+  "canonicalChecksum": "f14409aa2a2021e480e5a9f511471f6db123bdd4d7b5d5960f43c004fb2c6800"
 }

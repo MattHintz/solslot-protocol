@@ -17,9 +17,12 @@ from solslot_puzzles.protocol_statutes_v1 import (
     CollectionStatute,
     MutationKind,
     OracleRound,
+    ProtocolParameters,
     ScopedPause,
     StatuteMutation,
 )
+from solslot_puzzles.protocol_statutes_driver import governance_evidence_message
+from solslot_puzzles.protocol_deployment import singleton_full_puzzle_hash
 from solslot_puzzles.sgt_driver import (
     TEST_KOS_MINT_EXECUTE_PUBKEY,
     admin_governance_proposal_message,
@@ -50,6 +53,13 @@ ADMIN_STRUCT = Program.to(
         (b32(0xA2), SINGLETON_LAUNCHER_HASH),
     )
 )
+STATUTES_STRUCT = Program.to(
+    (
+        SINGLETON_MOD_HASH,
+        (b32(0xA3), SINGLETON_LAUNCHER_HASH),
+    )
+)
+PARAMETERS = [300, 5_000, 10_000, 86_400, 600, 100, 30, 70, 86_400]
 
 
 def tracker(
@@ -58,6 +68,9 @@ def tracker(
     bill: int | Program = 0,
     vote_tally: int = 0,
     deadline: int = 0,
+    quorum_bps: int = 5_000,
+    voting_window_seconds: int = 300,
+    min_proposal_stake: int = 10_000,
 ) -> Program:
     return proposal_tracker_v2_inner_puzzle(
         TRACKER_STRUCT,
@@ -68,10 +81,11 @@ def tracker(
         b32(0x05),
         POOL_STRUCT,
         ADMIN_STRUCT,
-        5_000,
-        300,
+        STATUTES_STRUCT,
+        quorum_bps,
+        voting_window_seconds,
         1_000_000,
-        10_000,
+        min_proposal_stake,
         TEST_KOS_MINT_EXECUTE_PUBKEY,
         proposal_hash,
         bill,
@@ -179,7 +193,7 @@ def test_proposal_requires_exact_admin_authority_approval() -> None:
                 b32(0x42),
                 10_000,
                 300,
-                admin_inner.get_tree_hash(),
+                [admin_inner.get_tree_hash(), b32(0x44), PARAMETERS],
             ],
         ]
     )
@@ -199,8 +213,58 @@ def test_proposal_requires_exact_admin_authority_approval() -> None:
         + admin_governance_proposal_message(item.proposal_hash)
     ).digest()
 
-    assert len(announcement_assertions) == 2
+    statutes_full_puzzle_hash = singleton_full_puzzle_hash(
+        b32(0xA3),
+        b32(0x44),
+    )
+    expected_statutes_assertion = hashlib.sha256(
+        bytes(statutes_full_puzzle_hash)
+        + governance_evidence_message(
+            ProtocolParameters.from_sequence(PARAMETERS)
+        )
+    ).digest()
+
+    assert len(announcement_assertions) == 3
     assert expected_admin_assertion in announcement_assertions
+    assert expected_statutes_assertion in announcement_assertions
+
+
+def test_proposal_snapshots_governed_quorum_window_and_stake() -> None:
+    item = mutation(MutationKind.PARAMETER)
+    governed = [900, 6_000, 20_000, 86_400, 600, 100, 30, 70, 86_400]
+    inner = tracker()
+    solution = Program.to(
+        [
+            b32(0x41),
+            inner.get_tree_hash(),
+            1,
+            1,
+            [
+                item.proposal_hash,
+                item.bill_program(),
+                b32(0x42),
+                20_000,
+                900,
+                [b32(0x43), b32(0x44), governed],
+            ],
+        ]
+    )
+    conditions = list(inner.run(solution).as_iter())
+    created = next(
+        condition
+        for condition in conditions
+        if condition.first().as_int() == 51
+    )
+    expected = tracker(
+        proposal_hash=item.proposal_hash,
+        bill=item.bill_program(),
+        vote_tally=20_000,
+        deadline=900,
+        quorum_bps=6_000,
+        voting_window_seconds=900,
+        min_proposal_stake=20_000,
+    )
+    assert created.rest().first().as_atom() == expected.get_tree_hash()
 
 
 @pytest.mark.parametrize(
@@ -256,7 +320,7 @@ def test_malformed_statute_bill_cannot_enter_open_state() -> None:
                 b32(0x42),
                 10_000,
                 300,
-                b32(0x43),
+                [b32(0x43), b32(0x44), PARAMETERS],
             ],
         ]
     )
@@ -292,7 +356,7 @@ def test_statute_bill_rejects_non_exact_version_increment() -> None:
                 b32(0x42),
                 10_000,
                 300,
-                b32(0x43),
+                [b32(0x43), b32(0x44), PARAMETERS],
             ],
         ]
     )

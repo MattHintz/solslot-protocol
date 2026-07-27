@@ -323,6 +323,7 @@ def proposal_tracker_v2_inner_puzzle(
     protocol_did_puzhash: bytes32,
     pool_singleton_struct: Program,
     admin_authority_struct: Program,
+    statutes_singleton_struct: Program,
     quorum_bps: int,
     voting_window_seconds: int,
     sgt_total_supply: int,
@@ -333,7 +334,7 @@ def proposal_tracker_v2_inner_puzzle(
     vote_tally: int = 0,
     voting_deadline: int = 0,
 ) -> Program:
-    """Curry the RC22 tracker while preserving the RC20 tracker API."""
+    """Curry the RC22 tracker with the governed-statutes singleton."""
     if len(kos_mint_execute_pubkey) != 48:
         raise ValueError("kos_mint_execute_pubkey must be 48 bytes")
     mod = proposal_tracker_v2_mod()
@@ -347,6 +348,7 @@ def proposal_tracker_v2_inner_puzzle(
         protocol_did_puzhash,
         pool_singleton_struct,
         admin_authority_struct,
+        statutes_singleton_struct,
         quorum_bps,
         voting_window_seconds,
         sgt_total_supply,

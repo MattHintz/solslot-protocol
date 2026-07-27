@@ -126,6 +126,12 @@ class SolsEvidenceSpend:
     expected_evidence_message: bytes
 
 
+@dataclass(frozen=True)
+class GovernanceEvidenceSpend:
+    inner_solution: Program
+    expected_evidence_message: bytes
+
+
 def evidence_message(
     *,
     kind: MutationKind,
@@ -146,6 +152,37 @@ def evidence_message(
         ]
     ).get_tree_hash()
     return b"S" + bytes(message_hash)
+
+
+def governance_evidence_message(parameters: ProtocolParameters) -> bytes:
+    parameters.validate()
+    return b"S" + bytes(
+        Program.to([b"GOVE", list(parameters.as_tuple())]).get_tree_hash()
+    )
+
+
+def build_governance_evidence_spend(
+    *,
+    my_id: bytes32,
+    my_inner_puzzle_hash: bytes32,
+    my_amount: int,
+    parameters: ProtocolParameters,
+) -> GovernanceEvidenceSpend:
+    parameters.validate()
+    if my_amount <= 0 or my_amount % 2 == 0:
+        raise ValueError("statutes singleton amount must be a positive odd integer")
+    return GovernanceEvidenceSpend(
+        inner_solution=Program.to(
+            [
+                my_id,
+                my_inner_puzzle_hash,
+                my_amount,
+                4,
+                [list(parameters.as_tuple())],
+            ]
+        ),
+        expected_evidence_message=governance_evidence_message(parameters),
+    )
 
 
 def build_evidence_spend(
@@ -361,6 +398,7 @@ def build_update_spend(
 
 __all__ = [
     "EvidenceSpend",
+    "GovernanceEvidenceSpend",
     "SolsEvidenceSpend",
     "UpdateSpend",
     "protocol_statutes_inner_mod",
@@ -368,7 +406,9 @@ __all__ = [
     "make_inner_puzzle",
     "make_inner_puzzle_hash",
     "evidence_message",
+    "governance_evidence_message",
     "build_evidence_spend",
+    "build_governance_evidence_spend",
     "sols_evidence_message",
     "build_sols_evidence_spend",
     "build_update_spend",
