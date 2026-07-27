@@ -57,11 +57,9 @@ from solslot_puzzles.zkpassport_bridge_driver import (
 RC22_GENESIS_PLAN_SCHEMA = "solslot-genesis-plan-v3"
 RC22_BRIDGE_PARENT_TOTAL = sum(range(1, GENESIS_BRIDGE_BATCH_SIZE + 1))
 RC22_PROPERTY_REGISTRY_LAUNCHER_AMOUNT = 1
-RC22_BRIDGE_BATCH_BUFFER = 1
 RC22_BRIDGE_BATCH_FUNDING_AMOUNT = (
     RC22_BRIDGE_PARENT_TOTAL
     + RC22_PROPERTY_REGISTRY_LAUNCHER_AMOUNT
-    + RC22_BRIDGE_BATCH_BUFFER
 )
 RC22_VAULT_VERSION = 2
 
@@ -304,6 +302,12 @@ def _plan_payload(
         },
         "bridgeBatch": {
             "fundingAmount": RC22_BRIDGE_BATCH_FUNDING_AMOUNT,
+            "parentOutputAmount": RC22_BRIDGE_PARENT_TOTAL,
+            "propertyRegistryLauncherAmount": (
+                RC22_PROPERTY_REGISTRY_LAUNCHER_AMOUNT
+            ),
+            "changeAmount": 0,
+            "networkFeeSource": "separate-fountain-fee-till",
             "count": len(plan.bridge_batch.bridge_coins),
             "lowWaterMark": plan.bridge_batch.low_water_mark,
             "parentCoinIds": [
@@ -609,7 +613,9 @@ def build_rc22_genesis_ceremony_bundle(
     if int(funding_coins.bridge_batch.amount) != (
         RC22_BRIDGE_BATCH_FUNDING_AMOUNT
     ):
-        raise ValueError("RC22 bridge batch funding coin must be exactly 530")
+        raise ValueError(
+            "RC22 bridge batch funding coin must be exactly 529"
+        )
 
     spends: list[CoinSpend] = []
     signatures: list[Any] = []
@@ -666,29 +672,20 @@ def build_rc22_genesis_ceremony_bundle(
         spends.extend(singleton_spends)
         signatures.append(signature)
 
-    # Keep ceremony economics deterministic. The 530-mojo input creates 529
-    # protocol outputs plus one mojo of faucet change; submission fees come
-    # from a separate fee-till coin and never alter the approved bundle.
+    # The batch spends all 529 mojos into protocol outputs. A one-mojo change
+    # would duplicate the existing one-mojo parent coin, so submission fees
+    # come from a separate fee-till input.
     batch_conditions = [
         Program.to([51, faucet.address_puzzle_hash, int(parent.amount)])
         for parent in plan.bridge_batch.parent_coins
     ]
-    batch_conditions.extend(
-        (
-            Program.to(
-                [
-                    51,
-                    bytes32(SINGLETON_LAUNCHER_HASH),
-                    RC22_PROPERTY_REGISTRY_LAUNCHER_AMOUNT,
-                ]
-            ),
-            Program.to(
-                [
-                    51,
-                    faucet.address_puzzle_hash,
-                    RC22_BRIDGE_BATCH_BUFFER,
-                ]
-            ),
+    batch_conditions.append(
+        Program.to(
+            [
+                51,
+                bytes32(SINGLETON_LAUNCHER_HASH),
+                RC22_PROPERTY_REGISTRY_LAUNCHER_AMOUNT,
+            ]
         )
     )
     batch_spend, batch_signature = _signed_faucet_spend(
@@ -763,7 +760,9 @@ def build_rc22_genesis_ceremony_bundle(
 
 __all__ = [
     "RC22_BRIDGE_BATCH_FUNDING_AMOUNT",
+    "RC22_BRIDGE_PARENT_TOTAL",
     "RC22_GENESIS_PLAN_SCHEMA",
+    "RC22_PROPERTY_REGISTRY_LAUNCHER_AMOUNT",
     "RC22GenesisCeremonyBundle",
     "RC22GenesisCeremonyPlan",
     "RC22GenesisFundingCoinIds",

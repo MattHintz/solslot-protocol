@@ -7,11 +7,11 @@ from chia.consensus.condition_tools import conditions_dict_for_solution
 from chia.types.blockchain_format.coin import Coin
 from chia.types.blockchain_format.program import INFINITE_COST
 from chia.types.condition_opcodes import ConditionOpcode
+from chia.wallet.util.compute_additions import compute_additions
 from chia_rs.sized_bytes import bytes32
 from chia_rs.sized_ints import uint64
 
 from solslot_puzzles.genesis_ceremony_rc22 import (
-    RC22_BRIDGE_BATCH_BUFFER,
     RC22_BRIDGE_BATCH_FUNDING_AMOUNT,
     RC22_BRIDGE_PARENT_TOTAL,
     RC22_GENESIS_PLAN_SCHEMA,
@@ -88,7 +88,13 @@ def test_rc22_plan_replaces_nav_registry_with_statutes() -> None:
     assert "navRegistry" not in payload["launcherIds"]
     assert "statutes" in payload["fundingCoinIds"]
     assert "nav_registry" not in payload["fundingCoinIds"]
-    assert payload["bridgeBatch"]["fundingAmount"] == 530
+    assert payload["bridgeBatch"]["fundingAmount"] == 529
+    assert payload["bridgeBatch"]["parentOutputAmount"] == 528
+    assert payload["bridgeBatch"]["propertyRegistryLauncherAmount"] == 1
+    assert payload["bridgeBatch"]["changeAmount"] == 0
+    assert payload["bridgeBatch"]["networkFeeSource"] == (
+        "separate-fountain-fee-till"
+    )
     assert payload["puzzleHashes"]["poolInnerMod"] == (
         "0xc9adc5be8c0260a9ea37eeb6407c4f510b77bfee32d474eaad6701a54572f38e"
     )
@@ -115,7 +121,7 @@ def test_rc22_bundle_keeps_nine_inputs_and_49_atomic_spends() -> None:
     )
 
 
-def test_bridge_batch_uses_529_outputs_and_no_embedded_fee() -> None:
+def test_bridge_batch_has_unique_outputs_and_no_embedded_fee() -> None:
     faucet = _FakeFaucet()
     coins = funding_coins(faucet)
     built = build_rc22_genesis_ceremony_bundle(
@@ -137,36 +143,34 @@ def test_bridge_batch_uses_529_outputs_and_no_embedded_fee() -> None:
         int.from_bytes(condition.vars[1], "big")
         for condition in conditions[ConditionOpcode.CREATE_COIN]
     )
+    additions = compute_additions(batch_spend)
+    addition_ids = [coin.name() for coin in additions]
 
     assert RC22_BRIDGE_PARENT_TOTAL == 528
     assert RC22_PROPERTY_REGISTRY_LAUNCHER_AMOUNT == 1
-    assert RC22_BRIDGE_BATCH_BUFFER == 1
-    assert RC22_BRIDGE_BATCH_FUNDING_AMOUNT == 530
+    assert RC22_BRIDGE_BATCH_FUNDING_AMOUNT == 529
     assert created_amount == RC22_BRIDGE_BATCH_FUNDING_AMOUNT
+    assert len(additions) == len(built.plan.bridge_batch.parent_coins) + 1
+    assert len(addition_ids) == len(set(addition_ids))
     assert ConditionOpcode.RESERVE_FEE not in conditions
 
 
-def test_bridge_funding_requires_exact_530_mojos() -> None:
+@pytest.mark.parametrize("wrong_amount", (528, 530, 531))
+def test_bridge_funding_requires_exact_529_mojos(
+    wrong_amount: int,
+) -> None:
     faucet = _FakeFaucet()
     coins = funding_coins(faucet)
-    plan = ceremony_plan(faucet, coins)
     wrong = replace(
         coins,
         bridge_batch=Coin(
             coins.bridge_batch.parent_coin_info,
             coins.bridge_batch.puzzle_hash,
-            uint64(529),
+            uint64(wrong_amount),
         ),
     )
-    with pytest.raises(ValueError, match="signed RC22 plan"):
-        build_rc22_genesis_ceremony_bundle(
-            plan=plan,
-            faucet=faucet,
-            funding_coins=wrong,
-        )
-
     wrong_plan = ceremony_plan(faucet, wrong)
-    with pytest.raises(ValueError, match="exactly 530"):
+    with pytest.raises(ValueError, match="exactly 529"):
         build_rc22_genesis_ceremony_bundle(
             plan=wrong_plan,
             faucet=faucet,
