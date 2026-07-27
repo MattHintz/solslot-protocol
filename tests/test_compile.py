@@ -141,3 +141,21 @@ class TestCompile:
         )
         assert mod is not None
         assert mod.get_tree_hash() is not None
+
+    def test_governance_singleton_inner_v2(self):
+        mod: Program = load_clvm(
+            "governance_singleton_inner_v2.clsp",
+            package_or_requirement="solslot_puzzles",
+            recompile=True,
+        )
+        assert mod is not None
+        assert mod.get_tree_hash() is not None
+
+    def test_protocol_statutes_inner_v1(self):
+        mod: Program = load_clvm(
+            "protocol_statutes_inner_v1.clsp",
+            package_or_requirement="solslot_puzzles",
+            recompile=True,
+        )
+        assert mod is not None
+        assert mod.get_tree_hash() is not None

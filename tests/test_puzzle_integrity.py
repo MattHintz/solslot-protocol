@@ -94,6 +94,30 @@ def test_rc20_manifest_records_every_new_puzzle_hash():
     )
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     additions = manifest["newPuzzleHashes"]
+    preserved_count = len(manifest["preservedPuzzleHashes"])
+    assert tuple(additions) == PUZZLE_FILENAMES[
+        preserved_count : preserved_count + len(additions)
+    ]
+    for filename, expected_hash in additions.items():
+        assert bytes(load_puzzle(filename).get_tree_hash()).hex() == expected_hash
+
+
+def test_rc22_manifest_preserves_rc20_and_records_additive_modules():
+    manifest_path = (
+        Path(__file__).resolve().parents[1]
+        / "release-manifests"
+        / "rc22-puzzle-hashes.json"
+    )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    rc20_manifest = json.loads(
+        (
+            Path(__file__).resolve().parents[1]
+            / "release-manifests"
+            / "rc20-puzzle-hashes.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert manifest["preservedCanonicalChecksum"] == rc20_manifest["canonicalChecksum"]
+    additions = manifest["newPuzzleHashes"]
     assert tuple(additions) == PUZZLE_FILENAMES[-len(additions) :]
     for filename, expected_hash in additions.items():
         assert bytes(load_puzzle(filename).get_tree_hash()).hex() == expected_hash

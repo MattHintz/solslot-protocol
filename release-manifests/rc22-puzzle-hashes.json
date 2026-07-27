@@ -1,0 +1,11 @@
+{
+  "schema": "solslot.puzzle-hashes.v1",
+  "release": "RC22",
+  "preservedRelease": "RC20",
+  "preservedCanonicalChecksum": "5cfb8d524809c1cb605c9d44ddec273a73babc2763cb6fd9f4cf43b847e8e018",
+  "newPuzzleHashes": {
+    "governance_singleton_inner_v2.clsp": "08577e23488ff23d717d4e004c1a0dcbe436eaa30dbcb4d3472730330c61803f",
+    "protocol_statutes_inner_v1.clsp": "826e302e23c80b186537bc0106534e878d67b19604158efd100a89bd11a2650e"
+  },
+  "canonicalChecksum": "6bea2497b818ad923d1e4bd26bcdf9607fe26dfe68291e168ca08ee755f0d241"
+}
