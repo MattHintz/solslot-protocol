@@ -56,8 +56,8 @@ def test_plan_signature_binds_roster_and_exact_plan() -> None:
 def test_artifact_signature_helper_is_dependency_light_and_binds_hashes() -> None:
     typed = genesis_artifact_signing_typed_data(
         {
-            "schemaVersion": 2,
-            "protocolVersion": "solslot-v2",
+            "schemaVersion": 3,
+            "protocolVersion": "solslot-v2-rc22",
             "network": "testnet11",
             "evmChainId": 11155111,
             "artifactHash": "0x" + "01" * 32,
@@ -68,6 +68,7 @@ def test_artifact_signature_helper_is_dependency_light_and_binds_hashes() -> Non
         }
     )
     assert typed["primaryType"] == GENESIS_ARTIFACT_SIGNATURE_TYPE
+    assert typed["domain"]["version"] == "3"
     assert typed["message"] == {
         "artifactHash": "0x" + "01" * 32,
         "ceremonyId": "0x" + "02" * 32,

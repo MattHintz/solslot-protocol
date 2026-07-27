@@ -48,7 +48,11 @@ from solslot_puzzles.protocol_deployment_rc22 import (
     RC22ProtocolDeploymentPlan,
     build_rc22_protocol_deployment_plan,
 )
-from solslot_puzzles.protocol_statutes_v1 import ProtocolParameters
+from solslot_puzzles.protocol_statutes_v1 import (
+    MAX_EXCHANGE_FEE_BPS,
+    UPGRADE_DELAY_SECONDS,
+    ProtocolParameters,
+)
 from solslot_puzzles.zkpassport_bridge_driver import (
     require_genesis_validator_set,
 )
@@ -194,6 +198,13 @@ def _plan_payload(
         "sourceManifestVersion": SOURCE_MANIFEST_VERSION,
         "sourceShas": dict(plan.source_shas),
         "evmAddresses": dict(plan.evm_addresses),
+        "faucetPuzzleHash": _hex(
+            protocol.faucet_inner_puzzle_hash
+        ),
+        "governanceBlsPubkey": _hex(protocol.governance_bls_pubkey),
+        "kosMintExecutePubkey": _hex(
+            protocol.kos_mint_execute_pubkey
+        ),
         "fundingCoinIds": {
             key: _hex(value)
             for key, value in asdict(plan.funding).items()
@@ -268,6 +279,27 @@ def _plan_payload(
             "sgtRewardsFeeBps": protocol.parameters.sgt_rewards_fee_bps,
             "rewardEpochSeconds": protocol.parameters.reward_epoch_seconds,
             "sgtTotalSupply": protocol.permanent_rules.sgt_total_supply,
+        },
+        "permanentRules": {
+            "sgtTailHash": _hex(protocol.permanent_rules.sgt_tail_hash),
+            "sgtTotalSupply": protocol.permanent_rules.sgt_total_supply,
+            "solsTailHash": _hex(protocol.permanent_rules.sols_tail_hash),
+            "zkPassportPolicyHash": _hex(
+                protocol.permanent_rules.zkpassport_policy_hash
+            ),
+            "protocolTreasuryPuzzleHash": _hex(
+                protocol.permanent_rules.protocol_treasury_puzzle_hash
+            ),
+            "networkId": _hex(protocol.permanent_rules.network_id),
+            "maxExchangeFeeBps": MAX_EXCHANGE_FEE_BPS,
+            "upgradeDelaySeconds": UPGRADE_DELAY_SECONDS,
+            "voteConservation": True,
+            "replayProtection": True,
+            "treasuryNonWithdrawal": True,
+            "protocolOnlySmartDeedSolsExchange": True,
+            "zkPassportRequired": True,
+            "solsSupplyNeverMelted": True,
+            "solsPrimaryPurchasesDisabled": True,
         },
         "state": {
             "statutesVersion": protocol.statutes_state.registry_version,

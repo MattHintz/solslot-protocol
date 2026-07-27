@@ -1,4 +1,4 @@
-"""EIP-712 envelopes for the Solslot V2 genesis ceremony."""
+"""EIP-712 envelopes for the Solslot genesis ceremony."""
 
 from __future__ import annotations
 
@@ -42,12 +42,16 @@ def _address(value: str, field: str) -> str:
     return normalized
 
 
-def _domain(chain_id: int) -> dict[str, Any]:
+def _domain(
+    chain_id: int,
+    *,
+    version: str = EIP712_DOMAIN_VERSION,
+) -> dict[str, Any]:
     if chain_id != GENESIS_EVM_CHAIN_ID:
         raise ValueError("genesis administrator signatures are restricted to Sepolia")
     return {
         "name": EIP712_DOMAIN_NAME,
-        "version": EIP712_DOMAIN_VERSION,
+        "version": version,
         "chainId": chain_id,
     }
 
@@ -140,9 +144,9 @@ def genesis_artifact_signing_typed_data(
     artifact validation runs in the isolated ceremony worker so FastAPI request
     threads never import CLVM modules with thread-affine Rust objects.
     """
-    if payload.get("schemaVersion") != 2:
+    if payload.get("schemaVersion") != 3:
         raise ValueError("unsupported artifact schemaVersion")
-    if payload.get("protocolVersion") != "solslot-v2":
+    if payload.get("protocolVersion") != "solslot-v2-rc22":
         raise ValueError("unsupported artifact protocolVersion")
     if payload.get("network") != GENESIS_NETWORK:
         raise ValueError("genesis artifact is restricted to testnet11")
@@ -152,7 +156,7 @@ def genesis_artifact_signing_typed_data(
     if not isinstance(ceremony, Mapping):
         raise ValueError("artifact ceremony metadata is missing")
     return {
-        "domain": _domain(int(payload["evmChainId"])),
+        "domain": _domain(int(payload["evmChainId"]), version="3"),
         "primaryType": GENESIS_ARTIFACT_SIGNATURE_TYPE,
         "types": {
             "EIP712Domain": _DOMAIN_FIELDS,
