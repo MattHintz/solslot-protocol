@@ -1,0 +1,429 @@
+{
+  "schema": "solslot.sols-economics.v3",
+  "constants": {
+    "usd_micro_per_dollar": "1000000",
+    "sols_mojos_per_sols": "1000",
+    "bootstrap_value_micro_usd_per_sols": "3330000",
+    "share_ppm_denominator": "1000000",
+    "fee_bps_denominator": "10000",
+    "default_exchange_fee_bps": "100",
+    "default_protocol_fee_bps": "30",
+    "default_sgt_rewards_fee_bps": "70",
+    "max_exchange_fee_bps": "100"
+  },
+  "permanent_invariants": [
+    "sgt-asset-identity-and-total-supply",
+    "sols-asset-identity",
+    "zkpassport-smartdeed-acquisition-and-redemption",
+    "treasury-non-withdrawal",
+    "vote-conservation",
+    "replay-protection",
+    "one-percent-maximum-exchange-fee",
+    "no-sols-melt",
+    "protocol-only-smartdeed-sols-swaps",
+    "no-primary-smartdeed-purchase-with-sols"
+  ],
+  "adjustable_statutes": [
+    "voting-window",
+    "support-threshold",
+    "proposal-stake",
+    "nav-validity",
+    "oracle-source-and-limits",
+    "asset-haircuts",
+    "collection-allocation-ceilings",
+    "exchange-fee-and-split-within-cap",
+    "reward-epochs",
+    "bridge-route-activation",
+    "scoped-operational-pauses"
+  ],
+  "base_state": {
+    "bootstrap_complete": true,
+    "inventory_nav_micro_usd": "999000000",
+    "treasury_assets_micro_usd": "333000000",
+    "proven_liabilities_micro_usd": "0",
+    "deed_count": "6",
+    "total_sols_mojos": "500000",
+    "reserve_sols_mojos": "100000",
+    "backing_micro_usd": "1332000000",
+    "circulating_sols_mojos": "400000",
+    "nav_micro_usd_per_sols": {
+      "numerator": "3330000",
+      "denominator": "1"
+    }
+  },
+  "bootstrap_deed_to_sols": {
+    "inputs": {
+      "state": {
+        "bootstrap_complete": false,
+        "inventory_nav_micro_usd": "0",
+        "treasury_assets_micro_usd": "0",
+        "proven_liabilities_micro_usd": "0",
+        "deed_count": "0",
+        "total_sols_mojos": "0",
+        "reserve_sols_mojos": "0",
+        "backing_micro_usd": "0",
+        "circulating_sols_mojos": "0",
+        "nav_micro_usd_per_sols": null
+      },
+      "deed_value_micro_usd": "333000000"
+    },
+    "expected": {
+      "deed_value_micro_usd": "333000000",
+      "seller_sols_mojos": "100000",
+      "reserve_sols_mojos_paid": "0",
+      "fresh_sols_mojos_minted": "100000",
+      "used_bootstrap_price": true,
+      "next_state": {
+        "bootstrap_complete": true,
+        "inventory_nav_micro_usd": "333000000",
+        "treasury_assets_micro_usd": "0",
+        "proven_liabilities_micro_usd": "0",
+        "deed_count": "1",
+        "total_sols_mojos": "100000",
+        "reserve_sols_mojos": "0",
+        "backing_micro_usd": "333000000",
+        "circulating_sols_mojos": "100000",
+        "nav_micro_usd_per_sols": {
+          "numerator": "3330000",
+          "denominator": "1"
+        }
+      }
+    }
+  },
+  "bootstrap_rounding": {
+    "inputs": {
+      "state": {
+        "bootstrap_complete": false,
+        "inventory_nav_micro_usd": "0",
+        "treasury_assets_micro_usd": "0",
+        "proven_liabilities_micro_usd": "0",
+        "deed_count": "0",
+        "total_sols_mojos": "0",
+        "reserve_sols_mojos": "0",
+        "backing_micro_usd": "0",
+        "circulating_sols_mojos": "0",
+        "nav_micro_usd_per_sols": null
+      },
+      "deed_value_micro_usd": "100000000"
+    },
+    "expected": {
+      "deed_value_micro_usd": "100000000",
+      "seller_sols_mojos": "30030",
+      "reserve_sols_mojos_paid": "0",
+      "fresh_sols_mojos_minted": "30030",
+      "used_bootstrap_price": true,
+      "next_state": {
+        "bootstrap_complete": true,
+        "inventory_nav_micro_usd": "100000000",
+        "treasury_assets_micro_usd": "0",
+        "proven_liabilities_micro_usd": "0",
+        "deed_count": "1",
+        "total_sols_mojos": "30030",
+        "reserve_sols_mojos": "0",
+        "backing_micro_usd": "100000000",
+        "circulating_sols_mojos": "30030",
+        "nav_micro_usd_per_sols": {
+          "numerator": "10000000000",
+          "denominator": "3003"
+        }
+      }
+    }
+  },
+  "dynamic_deed_to_sols_reserve_first": {
+    "inputs": {
+      "state": {
+        "bootstrap_complete": true,
+        "inventory_nav_micro_usd": "999000000",
+        "treasury_assets_micro_usd": "333000000",
+        "proven_liabilities_micro_usd": "0",
+        "deed_count": "6",
+        "total_sols_mojos": "500000",
+        "reserve_sols_mojos": "100000",
+        "backing_micro_usd": "1332000000",
+        "circulating_sols_mojos": "400000",
+        "nav_micro_usd_per_sols": {
+          "numerator": "3330000",
+          "denominator": "1"
+        }
+      },
+      "deed_value_micro_usd": "166500000"
+    },
+    "expected": {
+      "deed_value_micro_usd": "166500000",
+      "seller_sols_mojos": "50000",
+      "reserve_sols_mojos_paid": "50000",
+      "fresh_sols_mojos_minted": "0",
+      "used_bootstrap_price": false,
+      "next_state": {
+        "bootstrap_complete": true,
+        "inventory_nav_micro_usd": "1165500000",
+        "treasury_assets_micro_usd": "333000000",
+        "proven_liabilities_micro_usd": "0",
+        "deed_count": "7",
+        "total_sols_mojos": "500000",
+        "reserve_sols_mojos": "50000",
+        "backing_micro_usd": "1498500000",
+        "circulating_sols_mojos": "450000",
+        "nav_micro_usd_per_sols": {
+          "numerator": "3330000",
+          "denominator": "1"
+        }
+      }
+    }
+  },
+  "dynamic_deed_to_sols_exact_mint": {
+    "inputs": {
+      "state": {
+        "bootstrap_complete": true,
+        "inventory_nav_micro_usd": "999000000",
+        "treasury_assets_micro_usd": "333000000",
+        "proven_liabilities_micro_usd": "0",
+        "deed_count": "6",
+        "total_sols_mojos": "420000",
+        "reserve_sols_mojos": "20000",
+        "backing_micro_usd": "1332000000",
+        "circulating_sols_mojos": "400000",
+        "nav_micro_usd_per_sols": {
+          "numerator": "3330000",
+          "denominator": "1"
+        }
+      },
+      "deed_value_micro_usd": "166500000"
+    },
+    "expected": {
+      "deed_value_micro_usd": "166500000",
+      "seller_sols_mojos": "50000",
+      "reserve_sols_mojos_paid": "20000",
+      "fresh_sols_mojos_minted": "30000",
+      "used_bootstrap_price": false,
+      "next_state": {
+        "bootstrap_complete": true,
+        "inventory_nav_micro_usd": "1165500000",
+        "treasury_assets_micro_usd": "333000000",
+        "proven_liabilities_micro_usd": "0",
+        "deed_count": "7",
+        "total_sols_mojos": "450000",
+        "reserve_sols_mojos": "0",
+        "backing_micro_usd": "1498500000",
+        "circulating_sols_mojos": "450000",
+        "nav_micro_usd_per_sols": {
+          "numerator": "3330000",
+          "denominator": "1"
+        }
+      }
+    }
+  },
+  "sols_to_deed": {
+    "inputs": {
+      "state": {
+        "bootstrap_complete": true,
+        "inventory_nav_micro_usd": "999000000",
+        "treasury_assets_micro_usd": "333000000",
+        "proven_liabilities_micro_usd": "0",
+        "deed_count": "6",
+        "total_sols_mojos": "500000",
+        "reserve_sols_mojos": "100000",
+        "backing_micro_usd": "1332000000",
+        "circulating_sols_mojos": "400000",
+        "nav_micro_usd_per_sols": {
+          "numerator": "3330000",
+          "denominator": "1"
+        }
+      },
+      "deed_value_micro_usd": "166500000"
+    },
+    "expected": {
+      "deed_value_micro_usd": "166500000",
+      "principal_sols_mojos": "50000",
+      "fee_split": {
+        "total_fee_sols_mojos": "500",
+        "protocol_fee_sols_mojos": "150",
+        "sgt_rewards_fee_sols_mojos": "350"
+      },
+      "buyer_total_sols_mojos": "50500",
+      "next_state": {
+        "bootstrap_complete": true,
+        "inventory_nav_micro_usd": "832500000",
+        "treasury_assets_micro_usd": "333000000",
+        "proven_liabilities_micro_usd": "0",
+        "deed_count": "5",
+        "total_sols_mojos": "500000",
+        "reserve_sols_mojos": "150000",
+        "backing_micro_usd": "1165500000",
+        "circulating_sols_mojos": "350000",
+        "nav_micro_usd_per_sols": {
+          "numerator": "3330000",
+          "denominator": "1"
+        }
+      }
+    }
+  },
+  "treasury_contribution": {
+    "inputs": {
+      "state": {
+        "bootstrap_complete": true,
+        "inventory_nav_micro_usd": "999000000",
+        "treasury_assets_micro_usd": "333000000",
+        "proven_liabilities_micro_usd": "0",
+        "deed_count": "6",
+        "total_sols_mojos": "500000",
+        "reserve_sols_mojos": "100000",
+        "backing_micro_usd": "1332000000",
+        "circulating_sols_mojos": "400000",
+        "nav_micro_usd_per_sols": {
+          "numerator": "3330000",
+          "denominator": "1"
+        }
+      },
+      "amount_micro_usd": "33300000"
+    },
+    "expected_state": {
+      "bootstrap_complete": true,
+      "inventory_nav_micro_usd": "999000000",
+      "treasury_assets_micro_usd": "366300000",
+      "proven_liabilities_micro_usd": "0",
+      "deed_count": "6",
+      "total_sols_mojos": "500000",
+      "reserve_sols_mojos": "100000",
+      "backing_micro_usd": "1365300000",
+      "circulating_sols_mojos": "400000",
+      "nav_micro_usd_per_sols": {
+        "numerator": "3413250",
+        "denominator": "1"
+      }
+    }
+  },
+  "zero_backing_pause": {
+    "inputs": {
+      "state": {
+        "bootstrap_complete": true,
+        "inventory_nav_micro_usd": "999000000",
+        "treasury_assets_micro_usd": "333000000",
+        "proven_liabilities_micro_usd": "0",
+        "deed_count": "6",
+        "total_sols_mojos": "500000",
+        "reserve_sols_mojos": "100000",
+        "backing_micro_usd": "1332000000",
+        "circulating_sols_mojos": "400000",
+        "nav_micro_usd_per_sols": {
+          "numerator": "3330000",
+          "denominator": "1"
+        }
+      },
+      "proven_liabilities_micro_usd": "1332000000"
+    },
+    "expected_state": {
+      "bootstrap_complete": true,
+      "inventory_nav_micro_usd": "999000000",
+      "treasury_assets_micro_usd": "333000000",
+      "proven_liabilities_micro_usd": "1332000000",
+      "deed_count": "6",
+      "total_sols_mojos": "500000",
+      "reserve_sols_mojos": "100000",
+      "backing_micro_usd": "0",
+      "circulating_sols_mojos": "400000",
+      "nav_micro_usd_per_sols": null
+    },
+    "deed_to_sols_blocked": true,
+    "sols_to_deed_blocked": true
+  },
+  "collection_revaluation": {
+    "inputs": {
+      "state": {
+        "bootstrap_complete": true,
+        "inventory_nav_micro_usd": "999000000",
+        "treasury_assets_micro_usd": "333000000",
+        "proven_liabilities_micro_usd": "0",
+        "deed_count": "6",
+        "total_sols_mojos": "500000",
+        "reserve_sols_mojos": "100000",
+        "backing_micro_usd": "1332000000",
+        "circulating_sols_mojos": "400000",
+        "nav_micro_usd_per_sols": {
+          "numerator": "3330000",
+          "denominator": "1"
+        }
+      },
+      "previous_collection_inventory_micro_usd": "333000000",
+      "next_collection_inventory_micro_usd": "399600000"
+    },
+    "expected_state": {
+      "bootstrap_complete": true,
+      "inventory_nav_micro_usd": "1065600000",
+      "treasury_assets_micro_usd": "333000000",
+      "proven_liabilities_micro_usd": "0",
+      "deed_count": "6",
+      "total_sols_mojos": "500000",
+      "reserve_sols_mojos": "100000",
+      "backing_micro_usd": "1398600000",
+      "circulating_sols_mojos": "400000",
+      "nav_micro_usd_per_sols": {
+        "numerator": "3496500",
+        "denominator": "1"
+      }
+    }
+  },
+  "settlement_allocation": {
+    "inputs": {
+      "total_micro_usd": "100000001",
+      "shares": [
+        {
+          "deed_id": "deed-a",
+          "share_ppm": "333333"
+        },
+        {
+          "deed_id": "deed-b",
+          "share_ppm": "333333"
+        },
+        {
+          "deed_id": "deed-c",
+          "share_ppm": "333334"
+        }
+      ]
+    },
+    "expected": [
+      {
+        "deed_id": "deed-a",
+        "share_ppm": "333333",
+        "amount_micro_usd": "33333300"
+      },
+      {
+        "deed_id": "deed-b",
+        "share_ppm": "333333",
+        "amount_micro_usd": "33333300"
+      },
+      {
+        "deed_id": "deed-c",
+        "share_ppm": "333334",
+        "amount_micro_usd": "33333401"
+      }
+    ]
+  },
+  "settlement_tie_break": {
+    "inputs": {
+      "total_micro_usd": "1",
+      "shares": [
+        {
+          "deed_id": "deed-b",
+          "share_ppm": "500000"
+        },
+        {
+          "deed_id": "deed-a",
+          "share_ppm": "500000"
+        }
+      ]
+    },
+    "expected": [
+      {
+        "deed_id": "deed-b",
+        "share_ppm": "500000",
+        "amount_micro_usd": "0"
+      },
+      {
+        "deed_id": "deed-a",
+        "share_ppm": "500000",
+        "amount_micro_usd": "1"
+      }
+    ]
+  }
+}
