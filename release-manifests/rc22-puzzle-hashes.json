@@ -5,7 +5,9 @@
   "preservedCanonicalChecksum": "5cfb8d524809c1cb605c9d44ddec273a73babc2763cb6fd9f4cf43b847e8e018",
   "newPuzzleHashes": {
     "governance_singleton_inner_v2.clsp": "08577e23488ff23d717d4e004c1a0dcbe436eaa30dbcb4d3472730330c61803f",
-    "protocol_statutes_inner_v1.clsp": "826e302e23c80b186537bc0106534e878d67b19604158efd100a89bd11a2650e"
+    "protocol_statutes_inner_v1.clsp": "aa4ef5b2090e4e3fd73a008619dbf5c2833f17d3c7f6d6ac9103c81d5b138ed6",
+    "vault_singleton_inner_v2.clsp": "444f1fe2941d58459a3a134145c391e074538b5bf2da57b531485782314a274d",
+    "pool_singleton_inner_v4.clsp": "4736e4e79d80cd96164667ddb47d6ce1929abfcda42e6991e947d9e21f40be26"
   },
-  "canonicalChecksum": "6bea2497b818ad923d1e4bd26bcdf9607fe26dfe68291e168ca08ee755f0d241"
+  "canonicalChecksum": "8d1804d462c93b4291db14dc375be5d2dd6f57a6a162d1e78cd9ec57166dd9f6"
 }

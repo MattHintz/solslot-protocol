@@ -10,6 +10,7 @@ import pytest
 
 from solslot_puzzles.protocol_statutes_driver import (
     build_evidence_spend,
+    build_sols_evidence_spend,
     build_update_spend,
     make_inner_puzzle,
     protocol_statutes_inner_mod,
@@ -20,6 +21,7 @@ from solslot_puzzles.protocol_statutes_v1 import (
     ParameterIndex,
     PermanentRules,
     ProtocolParameters,
+    ScopedPause,
     build_parameter_mutation,
     build_record_mutation,
     initial_state,
@@ -165,6 +167,116 @@ def test_collection_evidence_driver_matches_clvm(
     assert announcement.rest().first().as_atom() == (
         artifacts.expected_evidence_message
     )
+
+
+def test_sols_batch_evidence_binds_consumer_collection_parameters_and_pause(
+    permanent: PermanentRules,
+) -> None:
+    parameters = ProtocolParameters()
+    initial = initial_state(
+        parameters=parameters,
+        permanent_rules=permanent,
+    )
+    collection = CollectionStatute(
+        collection_id=b32(0xE1),
+        nav_micro_usd=390_000_000_000,
+        allocation_ceiling_micro_usd=400_000_000_000,
+        nav_version=1,
+        valid_after=1_700_000_000,
+        valid_until=1_700_086_400,
+        status=1,
+    )
+    _, collections, with_collection = build_record_mutation(
+        state=initial,
+        kind=MutationKind.COLLECTION,
+        current=(),
+        replacement=collection,
+    )
+    pause = ScopedPause(
+        scope_id=collection.collection_id,
+        paused=0,
+        expires_at=0,
+        reason_hash=b32(0xE2),
+    )
+    _, pauses, state = build_record_mutation(
+        state=with_collection,
+        kind=MutationKind.PAUSE,
+        current=(),
+        replacement=pause,
+    )
+    inner = make_inner_puzzle(
+        singleton_struct=STATUTES_SINGLETON_STRUCT,
+        governance_singleton_struct=GOVERNANCE_SINGLETON_STRUCT,
+        permanent_rules=permanent,
+        state=state,
+    )
+    artifacts = build_sols_evidence_spend(
+        my_id=b32(0xC0),
+        my_inner_puzzle_hash=bytes32(inner.get_tree_hash()),
+        my_amount=1,
+        consumer_coin_id=b32(0xC1),
+        collection_id=collection.collection_id,
+        parameters=parameters,
+        collections=collections,
+        pauses=pauses,
+        state=state,
+    )
+
+    conditions = list(inner.run(artifacts.inner_solution).as_iter())
+    announcement = _condition(conditions, 62)
+    assert announcement.rest().first().as_atom() == (
+        artifacts.expected_evidence_message
+    )
+    assert artifacts.collection == collection
+    assert artifacts.pause == pause
+
+
+def test_sols_batch_evidence_proves_pause_absence(
+    permanent: PermanentRules,
+) -> None:
+    parameters = ProtocolParameters()
+    initial = initial_state(
+        parameters=parameters,
+        permanent_rules=permanent,
+    )
+    collection = CollectionStatute(
+        collection_id=b32(0xE1),
+        nav_micro_usd=100,
+        allocation_ceiling_micro_usd=200,
+        nav_version=1,
+        valid_after=10,
+        valid_until=20,
+        status=1,
+    )
+    _, collections, state = build_record_mutation(
+        state=initial,
+        kind=MutationKind.COLLECTION,
+        current=(),
+        replacement=collection,
+    )
+    inner = make_inner_puzzle(
+        singleton_struct=STATUTES_SINGLETON_STRUCT,
+        governance_singleton_struct=GOVERNANCE_SINGLETON_STRUCT,
+        permanent_rules=permanent,
+        state=state,
+    )
+    artifacts = build_sols_evidence_spend(
+        my_id=b32(0xC0),
+        my_inner_puzzle_hash=bytes32(inner.get_tree_hash()),
+        my_amount=1,
+        consumer_coin_id=b32(0xC1),
+        collection_id=collection.collection_id,
+        parameters=parameters,
+        collections=collections,
+        pauses=(),
+        state=state,
+    )
+    conditions = list(inner.run(artifacts.inner_solution).as_iter())
+    announcement = _condition(conditions, 62)
+    assert announcement.rest().first().as_atom() == (
+        artifacts.expected_evidence_message
+    )
+    assert artifacts.pause is None
 
 
 def test_clvm_rejects_parameter_fee_above_permanent_cap(

@@ -21,6 +21,8 @@
 ;;; Spend cases:
 ;;;   1 EVIDENCE - recreate unchanged and announce one proven typed entry.
 ;;;   2 UPDATE   - exact one-entry mutation paired to SGT governance.
+;;;   3 SOLS_EVIDENCE - recreate unchanged and prove the parameter, collection,
+;;;                     and scoped-pause inputs consumed by one pool coin.
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (mod (
@@ -53,6 +55,7 @@
 
   (defconstant SPEND_EVIDENCE 1)
   (defconstant SPEND_UPDATE 2)
+  (defconstant SPEND_SOLS_EVIDENCE 3)
 
   (defconstant KIND_PARAMETER 1)
   (defconstant KIND_COLLECTION 2)
@@ -68,6 +71,7 @@
 
   (defconstant STATUTE_UPDATE_TAG 0x53544154) ; STAT
   (defconstant STATUTE_EVIDENCE_TAG 0x53544556) ; STEV
+  (defconstant SOLS_EVIDENCE_TAG 0x534f4c56) ; SOLV
   (defconstant MAX_BPS 10000)
   (defconstant MAX_EXCHANGE_FEE_BPS 100)
   (defconstant UPGRADE_DELAY_SECONDS 86400)
@@ -388,6 +392,49 @@
       (replace-index key new_value current_entries 0)
       (upsert-record key new_value current_entries)))
 
+  ;; args = (consumer_coin_id collection_id parameters collections pauses)
+  ;;
+  ;; A Sols pool quote needs three governed facts at once. Revealing the full
+  ;; alpha-sized witnesses keeps the single statutes singleton authoritative
+  ;; and avoids a second cache/registry or a chain of ephemeral evidence coins.
+  (defun spend-sols-evidence
+      (self_mod singleton_struct gov_struct sgt_tail sgt_supply sols_tail
+       zk_policy treasury network parameters_root collections_root oracle_root
+       routes_root pauses_root version my_id my_inner my_amount
+       consumer_id collection_id parameters collections pauses)
+    (assert
+      (is-size-b32 consumer_id)
+      (is-size-b32 collection_id)
+      (validate-witness KIND_PARAMETER parameters parameters_root sgt_supply)
+      (validate-witness KIND_COLLECTION collections collections_root sgt_supply)
+      (validate-witness KIND_PAUSE pauses pauses_root sgt_supply)
+      (f (find-record collection_id collections))
+      (c
+        (recreate-condition
+          self_mod singleton_struct gov_struct sgt_tail sgt_supply sols_tail
+          zk_policy treasury network parameters_root collections_root
+          oracle_root routes_root pauses_root version my_amount)
+        (c
+          (list CREATE_PUZZLE_ANNOUNCEMENT
+            (concat PROTOCOL_PREFIX
+              (sha256tree
+                (list
+                  SOLS_EVIDENCE_TAG
+                  consumer_id
+                  collection_id
+                  parameters
+                  (f (r (find-record collection_id collections)))
+                  (find-record collection_id pauses)
+                  parameters_root
+                  collections_root
+                  oracle_root
+                  routes_root
+                  pauses_root
+                  version
+                  (permanent-rules-hash
+                    sgt_tail sgt_supply sols_tail zk_policy treasury network)))))
+          (identity-conditions singleton_struct my_id my_inner my_amount)))))
+
   ;; args =
   ;; (kind key new_value current_entries new_registry_version gov_inner_puzhash)
   (defun spend-update
@@ -547,5 +594,17 @@
           (f (r (r (r args))))
           (f (r (r (r (r args)))))
           (f (r (r (r (r (r args)))))))
-        (x))))
+        (if (= spend_case SPEND_SOLS_EVIDENCE)
+          (spend-sols-evidence
+            SELF_MOD_HASH SINGLETON_STRUCT GOV_SINGLETON_STRUCT
+            SGT_TAIL_HASH SGT_TOTAL_SUPPLY SOLS_TAIL_HASH
+            ZKPASSPORT_POLICY_HASH PROTOCOL_TREASURY_PUZHASH NETWORK_ID
+            PARAMETERS_ROOT COLLECTIONS_ROOT ORACLE_ROOT ROUTES_ROOT
+            PAUSES_ROOT REGISTRY_VERSION my_id my_inner_puzhash my_amount
+            (f args)
+            (f (r args))
+            (f (r (r args)))
+            (f (r (r (r args))))
+            (f (r (r (r (r args))))))
+          (x)))))
 )
