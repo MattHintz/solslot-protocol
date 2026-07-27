@@ -93,6 +93,10 @@ PUZZLE_FILENAMES = (
     # zkPassport-bound operation and Pool V4 enforces both exchange directions.
     "vault_singleton_inner_v2.clsp",
     "pool_singleton_inner_v4.clsp",
+    # Governed funded redemption. Each wUSDC.b leaf is a permanent standard
+    # offer for one exact SmartDeed and has no withdrawal or timeout path.
+    "p2_deed_redemption_v1.clsp",
+    "redemption_treasury_v1.clsp",
 )
 
 # ── Frozen checksum — update after every intentional puzzle change ──
@@ -138,7 +142,7 @@ FROZEN_CHECKSUM: Optional[str] = (
     #   - RC19 native XCH/CAT primary purchases use a dedicated on-demand
     #     offer delegate that binds one exact deed to one canonical vault and
     #     exposes no standalone external-payment escrow branch.
-    "8d1804d462c93b4291db14dc375be5d2dd6f57a6a162d1e78cd9ec57166dd9f6"
+    "e6b89bb5f0371b6dbd957be216885ba85364413615849dc0879fed10748ba35f"
 )
 
 # ── Cache ──

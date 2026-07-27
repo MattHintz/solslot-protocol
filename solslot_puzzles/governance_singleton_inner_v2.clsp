@@ -142,6 +142,7 @@
     (defconstant BILL_MINT 0x4d)          ; 'M'
     (defconstant BILL_FREEZE 0x46)        ; 'F'
     (defconstant BILL_SETTLE 0x53)        ; 'S'
+    (defconstant BILL_REDEMPTION 0x44)    ; 'D' — fund permanent wUSDC.b deed offers
     (defconstant BILL_VAULT_VERSION 0x56) ; 'V' — ratify a vault_version_registry code change
     (defconstant BILL_PARAMETER 0x50)     ; 'P'
     (defconstant BILL_COLLECTION 0x4e)    ; 'N'
@@ -149,6 +150,7 @@
     (defconstant BILL_ROUTE 0x52)         ; 'R'
     (defconstant BILL_PAUSE 0x55)         ; 'U'
     (defconstant STATUTE_UPDATE_TAG 0x53544154) ; "STAT"
+    (defconstant REDEMPTION_FUND_TAG 0x52444631) ; "RDF1"
 
     ;; vault_version_registry_inner.clsp routine-path approval tag ("RT").  The
     ;; registry's SPEND_CODE_ROUTINE asserts a PUZZLE_ANNOUNCEMENT keyed by the
@@ -252,6 +254,19 @@
             (f (r (r (r (r bill_op)))))))
     )
 
+    ;; Funded redemption message body:
+    ;;   sha256tree(RDF1 collection settlement asset total count allocations)
+    (defun-inline redemption-message-hash (bill_op)
+        (sha256tree
+            (list REDEMPTION_FUND_TAG
+                (nth-value 1 bill_op)
+                (nth-value 2 bill_op)
+                (nth-value 3 bill_op)
+                (nth-value 4 bill_op)
+                (nth-value 5 bill_op)
+                (nth-value 6 bill_op)))
+    )
+
     (defun-inline kos-mint-execute-message (singleton_struct my_id proposal_hash)
         (concat PROTOCOL_PREFIX KOS_MINT_EXECUTE_TAG
             (sha256tree (list (sha256tree singleton_struct) my_id proposal_hash)))
@@ -345,16 +360,27 @@
                         (is-uint64 (nth-value 3 bill_op))
                         (> (nth-value 3 bill_op) 0)
                         (is-size-b32 (nth-value 4 bill_op)))
-                    (if (= (f bill_op) BILL_VAULT_VERSION)
+                    (if (= (f bill_op) BILL_REDEMPTION)
                         (all
-                            (= (count-list bill_op) 4)
+                            (= (count-list bill_op) 7)
                             (is-size-b32 (nth-value 1 bill_op))
                             (is-size-b32 (nth-value 2 bill_op))
-                            (is-uint64 (nth-value 3 bill_op))
-                            (> (nth-value 3 bill_op) 0))
-                        (if (statute-bill-tag (f bill_op))
-                            (valid-statute-bill bill_op)
-                            0)))))
+                            (is-size-b32 (nth-value 3 bill_op))
+                            (is-uint64 (nth-value 4 bill_op))
+                            (> (nth-value 4 bill_op) 0)
+                            (is-uint64 (nth-value 5 bill_op))
+                            (> (nth-value 5 bill_op) 0)
+                            (is-size-b32 (nth-value 6 bill_op)))
+                        (if (= (f bill_op) BILL_VAULT_VERSION)
+                            (all
+                                (= (count-list bill_op) 4)
+                                (is-size-b32 (nth-value 1 bill_op))
+                                (is-size-b32 (nth-value 2 bill_op))
+                                (is-uint64 (nth-value 3 bill_op))
+                                (> (nth-value 3 bill_op) 0))
+                            (if (statute-bill-tag (f bill_op))
+                                (valid-statute-bill bill_op)
+                                0))))))
     )
 
     ;; ─────────────────────────────────────────────────────────────────────
@@ -505,29 +531,36 @@
                         (list SEND_MESSAGE 0x10
                             (concat PROTOCOL_PREFIX
                                 (settle-message-hash bill_op))))
-                    (if (= (f bill_op) BILL_VAULT_VERSION)
-                        ;; VAULT_VERSION: ratify a vault_version_registry CODE change.
-                        ;; Emit the routine-path approval the registry's
-                        ;; SPEND_CODE_ROUTINE asserts, keyed by THIS gov coin's full
-                        ;; puzzle hash:
-                        ;;   PROTOCOL_PREFIX || REGISTRY_TAG_ROUTINE || content_hash
-                        ;; where content_hash = sha256tree(new_code new_params new_version).
-                        ;; No SEND_MESSAGE — the registry is the asserter and governance
-                        ;; the announcer (same shape as the admin fast-track path).
+                    (if (= (f bill_op) BILL_REDEMPTION)
+                        ;; The non-withdrawable wUSDC.b treasury pairs this
+                        ;; message and recomputes every permanent offer leaf.
                         (list
-                            (list CREATE_PUZZLE_ANNOUNCEMENT
-                                (concat PROTOCOL_PREFIX REGISTRY_TAG_ROUTINE
-                                    (sha256tree (list (f (r bill_op)) (f (r (r bill_op))) (f (r (r (r bill_op)))))))))
-                        (if (statute-bill-tag (f bill_op))
-                            ;; Typed statutes update. The canonical statutes
-                            ;; singleton pairs this SEND_MESSAGE and recomputes
-                            ;; the exact one-entry root transition itself.
+                            (list SEND_MESSAGE 0x10
+                                (concat PROTOCOL_PREFIX
+                                    (redemption-message-hash bill_op))))
+                        (if (= (f bill_op) BILL_VAULT_VERSION)
+                            ;; VAULT_VERSION: ratify a vault_version_registry CODE change.
+                            ;; Emit the routine-path approval the registry's
+                            ;; SPEND_CODE_ROUTINE asserts, keyed by THIS gov coin's full
+                            ;; puzzle hash:
+                            ;;   PROTOCOL_PREFIX || REGISTRY_TAG_ROUTINE || content_hash
+                            ;; where content_hash = sha256tree(new_code new_params new_version).
+                            ;; No SEND_MESSAGE — the registry is the asserter and governance
+                            ;; the announcer (same shape as the admin fast-track path).
                             (list
-                                (list SEND_MESSAGE 0x10
-                                    (concat PROTOCOL_PREFIX
-                                        (sha256tree
-                                            (c STATUTE_UPDATE_TAG bill_op)))))
-                            (x))))))
+                                (list CREATE_PUZZLE_ANNOUNCEMENT
+                                    (concat PROTOCOL_PREFIX REGISTRY_TAG_ROUTINE
+                                        (sha256tree (list (f (r bill_op)) (f (r (r bill_op))) (f (r (r (r bill_op)))))))))
+                            (if (statute-bill-tag (f bill_op))
+                                ;; Typed statutes update. The canonical statutes
+                                ;; singleton pairs this SEND_MESSAGE and recomputes
+                                ;; the exact one-entry root transition itself.
+                                (list
+                                    (list SEND_MESSAGE 0x10
+                                        (concat PROTOCOL_PREFIX
+                                            (sha256tree
+                                                (c STATUTE_UPDATE_TAG bill_op)))))
+                                (x)))))))
     )
 
     ;; SPEND CASE 3 — EXECUTE

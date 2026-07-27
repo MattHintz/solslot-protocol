@@ -174,6 +174,53 @@ def test_sols_purchase_returns_principal_to_reserve_without_melt() -> None:
     assert receipt.next_state.economics.deed_count == 0
 
 
+def test_settlement_stops_new_deposits_but_keeps_sols_acquisition_open() -> None:
+    deposit = _deposit()
+    settled = replace(COLLECTION, status=3)
+    settled_statutes = replace(
+        STATUTES,
+        collections_root=keyed_root([settled]),
+    )
+    with pytest.raises(ValueError, match="deed deposits"):
+        _deposit(collection=settled, deed=b32(29))
+
+    receipt = prepare_sols_to_deed(
+        pool_coin_id=b32(31),
+        state=deposit.next_state,
+        inventory=deposit.next_inventory,
+        deed_launcher_id=deposit.record.deed_launcher_id,
+        collection=settled,
+        parameters=PARAMETERS,
+        statutes_state=settled_statutes,
+        pause=None,
+        vault_launcher_id=b32(32),
+        vault_coin_id=b32(33),
+        destination_p2_vault_hash=b32(34),
+        quote_expires_at=1_800_080_000,
+    )
+    assert receipt.record.deed_launcher_id == deposit.record.deed_launcher_id
+
+    paused = replace(COLLECTION, status=2)
+    with pytest.raises(ValueError, match="active or settled"):
+        prepare_sols_to_deed(
+            pool_coin_id=b32(35),
+            state=deposit.next_state,
+            inventory=deposit.next_inventory,
+            deed_launcher_id=deposit.record.deed_launcher_id,
+            collection=paused,
+            parameters=PARAMETERS,
+            statutes_state=replace(
+                STATUTES,
+                collections_root=keyed_root([paused]),
+            ),
+            pause=None,
+            vault_launcher_id=b32(36),
+            vault_coin_id=b32(37),
+            destination_p2_vault_hash=b32(38),
+            quote_expires_at=1_800_080_000,
+        )
+
+
 def test_inventory_rejects_duplicates_reordering_and_summary_mismatch() -> None:
     deposit = _deposit()
     record = deposit.record

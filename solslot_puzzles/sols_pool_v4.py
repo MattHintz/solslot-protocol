@@ -180,6 +180,7 @@ class SwapReceipt:
 
 def _validate_statutes(
     *,
+    direction: int,
     collection: CollectionStatute,
     pause: ScopedPause | None,
     parameters: ProtocolParameters,
@@ -190,8 +191,17 @@ def _validate_statutes(
     parameters.validate()
     statutes_state.validate()
     _uint64("quote_expires_at", quote_expires_at, positive=True)
-    if collection.status != 1:
-        raise ValueError("collection is not active")
+    if direction == DEED_TO_SOLS and collection.status != 1:
+        raise ValueError("deed deposits require an active collection")
+    if (
+        direction == SOLS_TO_DEED
+        and collection.status not in (1, 3)
+    ):
+        raise ValueError(
+            "deed acquisition requires an active or settled collection"
+        )
+    if direction not in (DEED_TO_SOLS, SOLS_TO_DEED):
+        raise ValueError("unsupported swap direction")
     if pause is not None:
         pause.validate()
         if pause.scope_id != collection.collection_id:
@@ -280,6 +290,7 @@ def prepare_deed_to_sols(
     normalized = canonical_inventory(inventory)
     state.validate(normalized)
     _validate_statutes(
+        direction=DEED_TO_SOLS,
         collection=collection,
         pause=pause,
         parameters=parameters,
@@ -368,6 +379,7 @@ def prepare_sols_to_deed(
     normalized = canonical_inventory(inventory)
     state.validate(normalized)
     _validate_statutes(
+        direction=SOLS_TO_DEED,
         collection=collection,
         pause=pause,
         parameters=parameters,

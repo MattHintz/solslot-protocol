@@ -1,0 +1,145 @@
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; Non-withdrawable governed redemption treasury.
+;;;
+;;; The inner puzzle holds an exact wUSDC.b CAT settlement deposit. It can
+;;; only be spent atomically with execution of the matching admin-plus-SGT
+;;; governance bill, splitting the full coin into deterministic permanent
+;;; per-deed redemption offer leaves. There is no change or withdrawal path.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(mod
+  (
+    MOD_HASH
+    GOVERNANCE_SINGLETON_STRUCT
+    CAT_MOD_HASH
+    PAYMENT_ASSET_ID
+    OFFER_MOD_HASH
+    REDEMPTION_LEAF_MOD_HASH
+    SINGLETON_MOD_HASH
+    SINGLETON_LAUNCHER_HASH
+    ;; solution
+    my_id
+    my_amount
+    governance_inner_puzzle_hash
+    collection_id
+    settlement_id
+    total_payment_amount
+    allocations
+    allocations_root
+  )
+
+  (include condition_codes.clib)
+  (include utils.clib)
+  (include utility_macros.clib)
+
+  (defconstant REDEMPTION_FUND_TAG 0x52444631) ; "RDF1"
+  (defconstant SHARE_PPM_DENOMINATOR 1000000)
+  (defconstant ZERO_B32
+    0x0000000000000000000000000000000000000000000000000000000000000000)
+
+  (defun nth (n items)
+    (if n (nth (- n 1) (r items)) (f items)))
+
+  (defun allocation-count (items)
+    (if items (+ 1 (allocation-count (r items))) 0))
+
+  (defun allocation-share-total (items)
+    (if items
+      (+ (nth 2 (f items)) (allocation-share-total (r items)))
+      0))
+
+  (defun allocation-payment-total (items)
+    (if items
+      (+ (nth 3 (f items)) (allocation-payment-total (r items)))
+      0))
+
+  (defun valid-allocations (items previous-deed)
+    (if items
+      (assert
+        (is-size-b32 (nth 0 (f items)))
+        (> (nth 0 (f items)) previous-deed)
+        (is-size-b32 (nth 1 (f items)))
+        (is-uint64 (nth 2 (f items)))
+        (> (nth 2 (f items)) 0)
+        (gte SHARE_PPM_DENOMINATOR (nth 2 (f items)))
+        (is-uint64 (nth 3 (f items)))
+        (> (nth 3 (f items)) 0)
+        (valid-allocations (r items) (nth 0 (f items))))
+      1))
+
+  (defun leaf-inner-hash
+      (leaf-mod-hash cat-mod-hash payment-asset-id offer-mod-hash
+       singleton-mod-hash singleton-launcher-hash collection-id settlement-id
+       allocation)
+    (curry_hashes leaf-mod-hash
+      (sha256 1 leaf-mod-hash)
+      (sha256 1 cat-mod-hash)
+      (sha256 1 payment-asset-id)
+      (sha256 1 offer-mod-hash)
+      (sha256 1 singleton-mod-hash)
+      (sha256 1 singleton-launcher-hash)
+      (sha256 1 collection-id)
+      (sha256 1 settlement-id)
+      (sha256 1 (nth 0 allocation))
+      (sha256 1 (nth 1 allocation))
+      (sha256 1 (nth 2 allocation))
+      (sha256 1 (nth 3 allocation))))
+
+  (defun build-offer-leaves
+      (leaf-mod-hash cat-mod-hash payment-asset-id offer-mod-hash
+       singleton-mod-hash singleton-launcher-hash collection-id settlement-id
+       allocations tail)
+    (if allocations
+      (c
+        (list CREATE_COIN
+          (leaf-inner-hash
+            leaf-mod-hash cat-mod-hash payment-asset-id offer-mod-hash
+            singleton-mod-hash singleton-launcher-hash collection-id
+            settlement-id (f allocations))
+          (nth 3 (f allocations))
+          (list settlement-id (nth 0 (f allocations))))
+        (build-offer-leaves
+          leaf-mod-hash cat-mod-hash payment-asset-id offer-mod-hash
+          singleton-mod-hash singleton-launcher-hash collection-id
+          settlement-id (r allocations) tail))
+      tail))
+
+  (assert
+    (is-size-b32 MOD_HASH)
+    (is-size-b32 CAT_MOD_HASH)
+    (is-size-b32 PAYMENT_ASSET_ID)
+    (is-size-b32 OFFER_MOD_HASH)
+    (is-size-b32 REDEMPTION_LEAF_MOD_HASH)
+    (is-size-b32 SINGLETON_MOD_HASH)
+    (is-size-b32 SINGLETON_LAUNCHER_HASH)
+    (is-size-b32 my_id)
+    (is-uint64 my_amount)
+    (is-size-b32 governance_inner_puzzle_hash)
+    (is-size-b32 collection_id)
+    (is-size-b32 settlement_id)
+    (is-uint64 total_payment_amount)
+    (> total_payment_amount 0)
+    (= my_amount total_payment_amount)
+    (valid-allocations allocations ZERO_B32)
+    (= (allocation-share-total allocations) SHARE_PPM_DENOMINATOR)
+    (= (allocation-payment-total allocations) total_payment_amount)
+    (= (sha256tree allocations) allocations_root)
+    (build-offer-leaves
+      REDEMPTION_LEAF_MOD_HASH CAT_MOD_HASH PAYMENT_ASSET_ID OFFER_MOD_HASH
+      SINGLETON_MOD_HASH SINGLETON_LAUNCHER_HASH collection_id settlement_id
+      allocations
+      (list
+        (list RECEIVE_MESSAGE 0x10
+          (concat PROTOCOL_PREFIX
+            (sha256tree
+              (list REDEMPTION_FUND_TAG collection_id settlement_id
+                PAYMENT_ASSET_ID total_payment_amount
+                (allocation-count allocations) allocations_root)))
+          (calculate_full_puzzle_hash
+            GOVERNANCE_SINGLETON_STRUCT governance_inner_puzzle_hash))
+        (list ASSERT_MY_COIN_ID my_id)
+        (list ASSERT_MY_AMOUNT total_payment_amount)
+        (list REMARK PROTOCOL_PREFIX REDEMPTION_FUND_TAG
+          collection_id settlement_id PAYMENT_ASSET_ID total_payment_amount
+          allocations_root))))
+)

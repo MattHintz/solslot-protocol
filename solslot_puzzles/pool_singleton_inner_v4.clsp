@@ -481,7 +481,6 @@
       (require (= (+ (nth 6 parameters) (nth 7 parameters)) (nth 5 parameters))
                "FEE_SPLIT")
       (require (gte MAX_EXCHANGE_FEE_BPS (nth 5 parameters)) "FEE_CAP")
-      (require (= (nth 6 collection) 1) "COLLECTION_STATUS")
       (require (> (nth 1 collection) 0) "COLLECTION_NAV")
       (require (> (nth 2 collection) 0) "COLLECTION_CEILING")
       (require (gte (nth 2 collection) (nth 1 collection)) "COLLECTION_LIMIT")
@@ -520,6 +519,7 @@
         inventory parameters collection pause-result quote-expires
         parameters-root collections-root oracle-root routes-root pauses-root
         registry-version)
+      (require (= (nth 6 collection) 1) "COLLECTION_STATUS")
       (require (is-size-b32 deed-parent-id) "DEED_PARENT")
       (require (is-size-b32 deed-launcher-id) "DEED_LAUNCHER")
       (require (is-size-b32 custody-coin-id) "CUSTODY_SIZE")
@@ -649,6 +649,9 @@
         inventory parameters collection pause-result quote-expires
         parameters-root collections-root oracle-root routes-root pauses-root
         registry-version)
+      (require
+        (any (= (nth 6 collection) 1) (= (nth 6 collection) 3))
+        "COLLECTION_STATUS")
       (require
         (= (sha256tree record)
            (sha256tree (find-record deed-launcher-id inventory)))

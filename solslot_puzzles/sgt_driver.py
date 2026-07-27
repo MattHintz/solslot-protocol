@@ -106,12 +106,14 @@ TRK_EXPIRE = 4
 BILL_MINT = b"M"           # 0x4d
 BILL_FREEZE = b"F"         # 0x46
 BILL_SETTLE = b"S"         # 0x53
+BILL_REDEMPTION = b"D"     # 0x44 — fund permanent wUSDC.b deed offers
 BILL_VAULT_VERSION = b"V"  # 0x56 — ratify a vault_version_registry code change
 BILL_PARAMETER = b"P"
 BILL_COLLECTION = b"N"
 BILL_ORACLE = b"O"
 BILL_ROUTE = b"R"
 BILL_PAUSE = b"U"
+REDEMPTION_FUND_TAG = b"RDF1"
 
 # Solslot announcement namespace prefix (utility_macros.clib PROTOCOL_PREFIX).
 PROTOCOL_PREFIX = bytes.fromhex("53")  # "S"
@@ -469,6 +471,64 @@ def bill_settle(
             BILL_SETTLE,
             (splitxch_root, (total_amount, (num_deeds, (deed_releases_hash, 0)))),
         )
+    )
+
+
+def bill_funded_redemption(
+    *,
+    collection_id: bytes32,
+    settlement_id: bytes32,
+    payment_asset_id: bytes32,
+    total_payment_amount: int,
+    deed_count: int,
+    allocations_root: bytes32,
+) -> Program:
+    """Approve exact funding for permanent per-deed redemption offers."""
+    for label, value in (
+        ("collection_id", collection_id),
+        ("settlement_id", settlement_id),
+        ("payment_asset_id", payment_asset_id),
+        ("allocations_root", allocations_root),
+    ):
+        _require_b32(value, label)
+    if not 0 < total_payment_amount < 2**64:
+        raise ValueError("total_payment_amount must be a positive uint64")
+    if not 0 < deed_count < 2**64:
+        raise ValueError("deed_count must be a positive uint64")
+    return Program.to(
+        [
+            BILL_REDEMPTION,
+            collection_id,
+            settlement_id,
+            payment_asset_id,
+            total_payment_amount,
+            deed_count,
+            allocations_root,
+        ]
+    )
+
+
+def funded_redemption_message_hash(
+    *,
+    collection_id: bytes32,
+    settlement_id: bytes32,
+    payment_asset_id: bytes32,
+    total_payment_amount: int,
+    deed_count: int,
+    allocations_root: bytes32,
+) -> bytes32:
+    """Message paired by the governed non-withdrawable redemption treasury."""
+    bill = bill_funded_redemption(
+        collection_id=collection_id,
+        settlement_id=settlement_id,
+        payment_asset_id=payment_asset_id,
+        total_payment_amount=total_payment_amount,
+        deed_count=deed_count,
+        allocations_root=allocations_root,
+    )
+    values = list(bill.as_iter())
+    return bytes32(
+        Program.to([REDEMPTION_FUND_TAG, *values[1:]]).get_tree_hash()
     )
 
 
