@@ -15,6 +15,7 @@ from solslot_puzzles.protocol_statutes_v1 import (
     BillTag,
     BridgeRoute,
     CollectionStatute,
+    LiquidityVenue,
     MutationKind,
     OracleRound,
     ProtocolParameters,
@@ -130,6 +131,18 @@ def mutation(kind: MutationKind) -> StatuteMutation:
             asset_id=b32(0x2B),
             remote_asset_id=b32(0x2C),
             decimals=3,
+            active=1,
+        )
+    elif kind == MutationKind.LIQUIDITY:
+        value = LiquidityVenue(
+            venue_id=key,
+            chain_id=b32(0x29),
+            protocol_id=b32(0x2A),
+            factory_id=b32(0x2B),
+            pool_id=b32(0x2C),
+            base_asset_id=b32(0x2D),
+            quote_asset_id=b32(0x2E),
+            pool_code_hash=b32(0x2F),
             active=1,
         )
     else:
@@ -274,6 +287,7 @@ def test_proposal_snapshots_governed_quorum_window_and_stake() -> None:
         MutationKind.COLLECTION,
         MutationKind.ORACLE,
         MutationKind.ROUTE,
+        MutationKind.LIQUIDITY,
         MutationKind.PAUSE,
     ],
 )
@@ -289,7 +303,14 @@ def test_each_statute_bill_dispatches_exact_governance_message(
 
 
 def test_statute_tags_are_distinct_and_stable() -> None:
-    assert [int(tag) for tag in BillTag] == [0x50, 0x4E, 0x4F, 0x52, 0x55]
+    assert [int(tag) for tag in BillTag] == [
+        0x50,
+        0x4E,
+        0x4F,
+        0x52,
+        0x55,
+        0x4C,
+    ]
 
 
 def test_malformed_statute_bill_cannot_enter_open_state() -> None:

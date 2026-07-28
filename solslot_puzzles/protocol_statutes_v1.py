@@ -1,9 +1,9 @@
 """Typed state and governance bills for the Solslot statutes registry.
 
 The statutes registry is the single governed source for mutable protocol
-parameters, collection NAV, oracle rounds, bridge routes, and scoped pauses.
-Permanent protocol rules remain curried into the on-chain puzzle and are not
-represented as mutable entries.
+parameters, collection NAV, oracle rounds, bridge routes, trusted liquidity
+venues, and scoped pauses. Permanent protocol rules remain curried into the
+on-chain puzzle and are not represented as mutable entries.
 """
 from __future__ import annotations
 
@@ -39,6 +39,7 @@ class MutationKind(IntEnum):
     ORACLE = 3
     ROUTE = 4
     PAUSE = 5
+    LIQUIDITY = 6
 
 
 class BillTag(IntEnum):
@@ -47,6 +48,7 @@ class BillTag(IntEnum):
     ORACLE = 0x4F  # O
     ROUTE = 0x52  # R
     PAUSE = 0x55  # U
+    LIQUIDITY = 0x4C  # L
 
 
 BILL_TAG_FOR_KIND = {
@@ -55,6 +57,7 @@ BILL_TAG_FOR_KIND = {
     MutationKind.ORACLE: BillTag.ORACLE,
     MutationKind.ROUTE: BillTag.ROUTE,
     MutationKind.PAUSE: BillTag.PAUSE,
+    MutationKind.LIQUIDITY: BillTag.LIQUIDITY,
 }
 
 
@@ -352,6 +355,58 @@ class BridgeRoute:
 
 
 @dataclass(frozen=True)
+class LiquidityVenue:
+    """Exact governed identity of a protocol-trusted liquidity pool.
+
+    Community pools remain permissionless. This record controls only whether
+    Solslot labels or routes through a pool as trusted. EVM addresses are
+    left-padded to 32 bytes; Chia identifiers use their native 32-byte form.
+    """
+
+    venue_id: bytes32
+    chain_id: bytes32
+    protocol_id: bytes32
+    factory_id: bytes32
+    pool_id: bytes32
+    base_asset_id: bytes32
+    quote_asset_id: bytes32
+    pool_code_hash: bytes32
+    active: int
+
+    def validate(self) -> "LiquidityVenue":
+        for label, value in (
+            ("venue_id", self.venue_id),
+            ("chain_id", self.chain_id),
+            ("protocol_id", self.protocol_id),
+            ("factory_id", self.factory_id),
+            ("pool_id", self.pool_id),
+            ("base_asset_id", self.base_asset_id),
+            ("quote_asset_id", self.quote_asset_id),
+            ("pool_code_hash", self.pool_code_hash),
+        ):
+            _require_bytes32(label, value)
+        if self.base_asset_id == self.quote_asset_id:
+            raise ValueError("liquidity venue assets must be distinct")
+        if self.active not in (0, 1):
+            raise ValueError("liquidity venue active must be 0 or 1")
+        return self
+
+    def as_program_value(self) -> list[object]:
+        self.validate()
+        return [
+            self.venue_id,
+            self.chain_id,
+            self.protocol_id,
+            self.factory_id,
+            self.pool_id,
+            self.base_asset_id,
+            self.quote_asset_id,
+            self.pool_code_hash,
+            self.active,
+        ]
+
+
+@dataclass(frozen=True)
 class ScopedPause:
     scope_id: bytes32
     paused: int
@@ -378,7 +433,13 @@ class ScopedPause:
         ]
 
 
-KeyedRecord = CollectionStatute | OracleRound | BridgeRoute | ScopedPause
+KeyedRecord = (
+    CollectionStatute
+    | OracleRound
+    | BridgeRoute
+    | LiquidityVenue
+    | ScopedPause
+)
 TRecord = TypeVar("TRecord", bound=KeyedRecord)
 
 
@@ -389,6 +450,8 @@ def _record_key(record: KeyedRecord) -> bytes32:
         return record.asset_id
     if isinstance(record, BridgeRoute):
         return record.route_id
+    if isinstance(record, LiquidityVenue):
+        return record.venue_id
     return record.scope_id
 
 
@@ -432,6 +495,7 @@ class StatutesState:
     collections_root: bytes32
     oracle_root: bytes32
     routes_root: bytes32
+    liquidity_root: bytes32
     pauses_root: bytes32
     registry_version: int
     permanent_rules_hash: bytes32
@@ -442,6 +506,7 @@ class StatutesState:
             ("collections_root", self.collections_root),
             ("oracle_root", self.oracle_root),
             ("routes_root", self.routes_root),
+            ("liquidity_root", self.liquidity_root),
             ("pauses_root", self.pauses_root),
             ("permanent_rules_hash", self.permanent_rules_hash),
         ):
@@ -463,6 +528,7 @@ class StatutesState:
                     self.collections_root,
                     self.oracle_root,
                     self.routes_root,
+                    self.liquidity_root,
                     self.pauses_root,
                     self.registry_version,
                     self.permanent_rules_hash,
@@ -550,6 +616,7 @@ def initial_state(
         collections_root=empty_root,
         oracle_root=empty_root,
         routes_root=empty_root,
+        liquidity_root=empty_root,
         pauses_root=empty_root,
         registry_version=1,
         permanent_rules_hash=permanent_rules.commitment_hash,
@@ -566,6 +633,7 @@ def _state_with_root(
         MutationKind.COLLECTION: "collections_root",
         MutationKind.ORACLE: "oracle_root",
         MutationKind.ROUTE: "routes_root",
+        MutationKind.LIQUIDITY: "liquidity_root",
         MutationKind.PAUSE: "pauses_root",
     }[kind]
     return replace(
@@ -624,6 +692,7 @@ def build_record_mutation(
         MutationKind.COLLECTION: CollectionStatute,
         MutationKind.ORACLE: OracleRound,
         MutationKind.ROUTE: BridgeRoute,
+        MutationKind.LIQUIDITY: LiquidityVenue,
         MutationKind.PAUSE: ScopedPause,
     }.get(kind)
     if expected_type is None:
@@ -637,6 +706,7 @@ def build_record_mutation(
         MutationKind.COLLECTION: state.collections_root,
         MutationKind.ORACLE: state.oracle_root,
         MutationKind.ROUTE: state.routes_root,
+        MutationKind.LIQUIDITY: state.liquidity_root,
         MutationKind.PAUSE: state.pauses_root,
     }[kind]
     if old_root != expected_old_root:
@@ -674,6 +744,7 @@ __all__ = [
     "CollectionStatute",
     "OracleRound",
     "BridgeRoute",
+    "LiquidityVenue",
     "ScopedPause",
     "StatutesState",
     "StatuteMutation",

@@ -9,6 +9,7 @@ from solslot_puzzles.protocol_statutes_v1 import (
     BillTag,
     BridgeRoute,
     CollectionStatute,
+    LiquidityVenue,
     MutationKind,
     OracleRound,
     ParameterIndex,
@@ -62,6 +63,7 @@ def test_initial_state_uses_one_registry_and_empty_typed_roots(
     assert state.collections_root == empty_root
     assert state.oracle_root == empty_root
     assert state.routes_root == empty_root
+    assert state.liquidity_root == empty_root
     assert state.pauses_root == empty_root
     assert state.registry_version == 1
     assert state.permanent_rules_hash == permanent.commitment_hash
@@ -241,6 +243,43 @@ def test_route_activation_is_typed_and_exact(
     )
     assert mutation.bill_tag == BillTag.ROUTE
     assert mutation.value == route
+
+
+def test_trusted_liquidity_venue_binds_exact_pool_and_code(
+    permanent: PermanentRules,
+) -> None:
+    state = initial_state(
+        parameters=ProtocolParameters(),
+        permanent_rules=permanent,
+    )
+    venue = LiquidityVenue(
+        venue_id=b32(0xD0),
+        chain_id=b32(0xD1),
+        protocol_id=b32(0xD2),
+        factory_id=b32(0xD3),
+        pool_id=b32(0xD4),
+        base_asset_id=permanent.sols_tail_hash,
+        quote_asset_id=b32(0xD5),
+        pool_code_hash=b32(0xD6),
+        active=1,
+    )
+    mutation, updated, next_state = build_record_mutation(
+        state=state,
+        kind=MutationKind.LIQUIDITY,
+        current=(),
+        replacement=venue,
+    )
+    assert mutation.bill_tag == BillTag.LIQUIDITY
+    assert mutation.key == venue.venue_id
+    assert mutation.value == venue
+    assert updated == (venue,)
+    assert next_state.liquidity_root == keyed_root(updated)
+    assert next_state.routes_root == state.routes_root
+
+    with pytest.raises(ValueError, match="distinct"):
+        LiquidityVenue(
+            **{**venue.__dict__, "quote_asset_id": permanent.sols_tail_hash}
+        ).validate()
 
 
 def test_active_pause_must_expire_automatically(

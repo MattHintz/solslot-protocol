@@ -63,6 +63,8 @@
 ;;;      old_state_hash new_state_hash)                   ; ORACLE
 ;;;   (R route_id new_record old_root new_root old_version new_version
 ;;;      old_state_hash new_state_hash)                   ; BRIDGE ROUTE
+;;;   (L venue_id new_record old_root new_root old_version new_version
+;;;      old_state_hash new_state_hash)                   ; LIQUIDITY VENUE
 ;;;   (U scope_id new_record old_root new_root old_version new_version
 ;;;      old_state_hash new_state_hash)                   ; SCOPED PAUSE
 ;;;
@@ -152,6 +154,7 @@
     (defconstant BILL_ORACLE 0x4f)        ; 'O'
     (defconstant BILL_ROUTE 0x52)         ; 'R'
     (defconstant BILL_PAUSE 0x55)         ; 'U'
+    (defconstant BILL_LIQUIDITY 0x4c)     ; 'L'
     (defconstant STATUTE_UPDATE_TAG 0x53544154) ; "STAT"
     (defconstant REDEMPTION_FUND_TAG 0x52444631) ; "RDF1"
 
@@ -325,6 +328,7 @@
             (= tag BILL_COLLECTION)
             (= tag BILL_ORACLE)
             (= tag BILL_ROUTE)
+            (= tag BILL_LIQUIDITY)
             (= tag BILL_PAUSE))
     )
 

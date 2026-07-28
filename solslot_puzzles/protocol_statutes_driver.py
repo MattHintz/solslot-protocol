@@ -11,6 +11,7 @@ from solslot_puzzles import load_puzzle
 from solslot_puzzles.protocol_statutes_v1 import (
     BridgeRoute,
     CollectionStatute,
+    LiquidityVenue,
     MutationKind,
     OracleRound,
     PermanentRules,
@@ -61,6 +62,7 @@ def make_inner_puzzle(
         state.collections_root,
         state.oracle_root,
         state.routes_root,
+        state.liquidity_root,
         state.pauses_root,
         state.registry_version,
     )
@@ -88,6 +90,7 @@ def _entry_program_values(
     | Sequence[CollectionStatute]
     | Sequence[OracleRound]
     | Sequence[BridgeRoute]
+    | Sequence[LiquidityVenue]
     | Sequence[ScopedPause],
 ) -> list[object]:
     if isinstance(entries, ProtocolParameters):
@@ -100,6 +103,7 @@ def _value_program_value(
     | CollectionStatute
     | OracleRound
     | BridgeRoute
+    | LiquidityVenue
     | ScopedPause,
 ) -> object:
     return value if isinstance(value, int) else value.as_program_value()
@@ -197,11 +201,13 @@ def build_evidence_spend(
     | Sequence[CollectionStatute]
     | Sequence[OracleRound]
     | Sequence[BridgeRoute]
+    | Sequence[LiquidityVenue]
     | Sequence[ScopedPause],
     value: int
     | CollectionStatute
     | OracleRound
     | BridgeRoute
+    | LiquidityVenue
     | ScopedPause,
 ) -> EvidenceSpend:
     if my_amount <= 0 or my_amount % 2 == 0:
@@ -211,6 +217,7 @@ def build_evidence_spend(
         MutationKind.COLLECTION: state.collections_root,
         MutationKind.ORACLE: state.oracle_root,
         MutationKind.ROUTE: state.routes_root,
+        MutationKind.LIQUIDITY: state.liquidity_root,
         MutationKind.PAUSE: state.pauses_root,
     }[kind]
     value_program = _value_program_value(value)
@@ -260,6 +267,7 @@ def sols_evidence_message(
                 state.collections_root,
                 state.oracle_root,
                 state.routes_root,
+                state.liquidity_root,
                 state.pauses_root,
                 state.registry_version,
                 state.permanent_rules_hash,
@@ -353,6 +361,7 @@ def build_update_spend(
     | Sequence[CollectionStatute]
     | Sequence[OracleRound]
     | Sequence[BridgeRoute]
+    | Sequence[LiquidityVenue]
     | Sequence[ScopedPause],
     governance_inner_puzzle_hash: bytes32,
 ) -> UpdateSpend:

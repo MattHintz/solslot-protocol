@@ -618,7 +618,7 @@ def verify_rc22_genesis_ceremony_plan(
         raise ValueError("statutes launcher does not match its funding coin")
     if (
         plan.protocol.pool_inner_mod_hash.hex()
-        != "c9adc5be8c0260a9ea37eeb6407c4f510b77bfee32d474eaad6701a54572f38e"
+        != "f6704dc71b171811a142c1a3ed92867880db3bad1e8e49f0f7c5cdf6d246739f"
     ):
         raise ValueError("ceremony plan does not launch frozen Pool V4")
     if plan.plan_hash != _compute_plan_hash(plan):

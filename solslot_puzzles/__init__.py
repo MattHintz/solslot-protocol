@@ -142,7 +142,7 @@ FROZEN_CHECKSUM: Optional[str] = (
     #   - RC19 native XCH/CAT primary purchases use a dedicated on-demand
     #     offer delegate that binds one exact deed to one canonical vault and
     #     exposes no standalone external-payment escrow branch.
-    "f14409aa2a2021e480e5a9f511471f6db123bdd4d7b5d5960f43c004fb2c6800"
+    "e743bc751b55372408bca35b5f1a8067b14e0a1c4134a5758ae69f83264749d1"
 )
 
 # ── Cache ──

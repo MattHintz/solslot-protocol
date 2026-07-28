@@ -91,6 +91,7 @@ STATUTES_STATE = StatutesState(
     collections_root=keyed_root([COLLECTION]),
     oracle_root=EMPTY_ROOT,
     routes_root=EMPTY_ROOT,
+    liquidity_root=EMPTY_ROOT,
     pauses_root=EMPTY_ROOT,
     registry_version=3,
     permanent_rules_hash=RULES.commitment_hash,
@@ -224,17 +225,17 @@ def test_deed_to_sols_solution_executes_exact_bootstrap_quote() -> None:
     assert not any(condition[0] == b"\x34" for condition in conditions)
 
     altered = solution.as_python()
-    altered[4][32] = b"\x01"
+    altered[4][33] = b"\x01"
     with pytest.raises(Exception):
         inner.run(Program.to(altered))
 
     altered_custody = solution.as_python()
-    altered_custody[4][12] = bytes(b32(0x45))
+    altered_custody[4][13] = bytes(b32(0x45))
     with pytest.raises(Exception):
         inner.run(Program.to(altered_custody))
 
     unenrolled = solution.as_python()
-    unenrolled[4][25] = bytes(ZKPASSPORT_EMPTY_ATTEST_ROOT)
+    unenrolled[4][26] = bytes(ZKPASSPORT_EMPTY_ATTEST_ROOT)
     with pytest.raises(Exception):
         inner.run(Program.to(unenrolled))
 
@@ -285,7 +286,7 @@ def test_sols_to_deed_solution_pays_reserve_and_fees_without_melt() -> None:
     assert receipt.next_state.inventory_root == inventory_root(())
 
     altered_fee = solution.as_python()
-    altered_fee[4][25] = b"\x01"
+    altered_fee[4][26] = b"\x01"
     with pytest.raises(Exception):
         inner.run(Program.to(altered_fee))
 

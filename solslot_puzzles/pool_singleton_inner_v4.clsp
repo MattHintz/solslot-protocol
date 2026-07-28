@@ -243,13 +243,16 @@
         1 1 1 1 1 1 0)))
 
   (defun-inline statutes-content-hash
-      (parameters-root collections-root oracle-root routes-root pauses-root registry-version config)
+      (parameters-root collections-root oracle-root routes-root liquidity-root
+       pauses-root registry-version config)
     (sha256tree
-      (list parameters-root collections-root oracle-root routes-root pauses-root
-            registry-version (permanent-rules-hash config))))
+      (list parameters-root collections-root oracle-root routes-root
+            liquidity-root pauses-root registry-version
+            (permanent-rules-hash config))))
 
   (defun-inline statutes-inner-ph
-      (config parameters-root collections-root oracle-root routes-root pauses-root registry-version)
+      (config parameters-root collections-root oracle-root routes-root
+       liquidity-root pauses-root registry-version)
     (curry_hashes (statutes-mod config)
       (sha256 1 (statutes-mod config))
       (sha256tree (statutes-struct config))
@@ -264,36 +267,43 @@
       (sha256 1 collections-root)
       (sha256 1 oracle-root)
       (sha256 1 routes-root)
+      (sha256 1 liquidity-root)
       (sha256 1 pauses-root)
       (sha256 1 registry-version)))
 
   (defun-inline statutes-full-ph
-      (config parameters-root collections-root oracle-root routes-root pauses-root registry-version)
+      (config parameters-root collections-root oracle-root routes-root
+       liquidity-root pauses-root registry-version)
     (calculate_full_puzzle_hash
       (statutes-struct config)
       (statutes-inner-ph config parameters-root collections-root oracle-root
-                         routes-root pauses-root registry-version)))
+                         routes-root liquidity-root pauses-root
+                         registry-version)))
 
   (defun-inline statutes-evidence-message
       (consumer-id parameters collection pause-result parameters-root
-       collections-root oracle-root routes-root pauses-root registry-version config)
+       collections-root oracle-root routes-root liquidity-root pauses-root
+       registry-version config)
     (concat PROTOCOL_PREFIX
       (sha256tree
         (list STATUTES_EVIDENCE_TAG consumer-id (nth 0 collection)
               parameters collection pause-result parameters-root collections-root
-              oracle-root routes-root pauses-root registry-version
+              oracle-root routes-root liquidity-root pauses-root registry-version
               (permanent-rules-hash config)))))
 
   (defun-inline statutes-evidence-condition
       (consumer-id parameters collection pause-result parameters-root
-       collections-root oracle-root routes-root pauses-root registry-version config)
+       collections-root oracle-root routes-root liquidity-root pauses-root
+       registry-version config)
     (list ASSERT_PUZZLE_ANNOUNCEMENT
       (sha256
         (statutes-full-ph config parameters-root collections-root oracle-root
-                           routes-root pauses-root registry-version)
+                           routes-root liquidity-root pauses-root
+                           registry-version)
         (statutes-evidence-message
           consumer-id parameters collection pause-result parameters-root
-          collections-root oracle-root routes-root pauses-root registry-version config))))
+          collections-root oracle-root routes-root liquidity-root pauses-root
+          registry-version config))))
 
   (defun-inline pause-allows-swap (pause-result collection-id)
     (if (f pause-result)
@@ -462,7 +472,8 @@
       (inventory-root bootstrap-complete current-inventory-nav treasury-assets
        proven-liabilities deed-count total-sols reserve-sols state-version
        inventory parameters collection pause-result quote-expires parameters-root
-       collections-root oracle-root routes-root pauses-root registry-version)
+       collections-root oracle-root routes-root liquidity-root pauses-root
+       registry-version)
     (assert
       (require (= (sha256tree inventory) inventory-root) "INVENTORY_ROOT")
       (require (valid_inventory inventory ZERO_B32) "INVENTORY_SHAPE")
@@ -495,6 +506,7 @@
       (is-size-b32 collections-root)
       (is-size-b32 oracle-root)
       (is-size-b32 routes-root)
+      (is-size-b32 liquidity-root)
       (is-size-b32 pauses-root)
       (is-uint64 registry-version)
       (> registry-version 0)
@@ -506,7 +518,8 @@
        proven-liabilities deed-count total-sols reserve-sols state-version
        pool-coin-id pool-inner-puzzlehash pool-amount
        inventory parameters collection pause-result parameters-root collections-root
-       oracle-root routes-root pauses-root registry-version deed-parent-id
+       oracle-root routes-root liquidity-root pauses-root registry-version
+       deed-parent-id
        deed-launcher-id custody-coin-id commitment par-value asset-class property-id
        share-ppm seller-puzhash mint-token-id vault-launcher-id vault-coin-id
        owner-pubkey auth-type members-root identity-root bridge-policy quote-expires
@@ -517,8 +530,8 @@
         inventory-root bootstrap-complete current-inventory-nav treasury-assets
         proven-liabilities deed-count total-sols reserve-sols state-version
         inventory parameters collection pause-result quote-expires
-        parameters-root collections-root oracle-root routes-root pauses-root
-        registry-version)
+        parameters-root collections-root oracle-root routes-root liquidity-root
+        pauses-root registry-version)
       (require (= (nth 6 collection) 1) "COLLECTION_STATUS")
       (require (is-size-b32 deed-parent-id) "DEED_PARENT")
       (require (is-size-b32 deed-launcher-id) "DEED_LAUNCHER")
@@ -576,7 +589,8 @@
       (require
         (= statutes-content
           (statutes-content-hash parameters-root collections-root oracle-root
-            routes-root pauses-root registry-version statutes-config))
+            routes-root liquidity-root pauses-root registry-version
+            statutes-config))
         "STATUTES_CONTENT")
       (require
         (= op-hash
@@ -606,8 +620,8 @@
               (- reserve-sols reserve-paid) (+ state-version 1))
             pool-amount)
           (statutes-evidence-condition pool-coin-id parameters collection pause-result
-            parameters-root collections-root oracle-root routes-root pauses-root
-            registry-version statutes-config)
+            parameters-root collections-root oracle-root routes-root
+            liquidity-root pauses-root registry-version statutes-config)
           (vault-operation-condition singleton-struct statutes-config market-config
             op-hash vault-launcher-id vault-coin-id owner-pubkey auth-type members-root
             identity-root bridge-policy)
@@ -637,7 +651,8 @@
        proven-liabilities deed-count total-sols reserve-sols state-version
        pool-coin-id pool-inner-puzzlehash pool-amount
        inventory parameters collection pause-result parameters-root collections-root
-       oracle-root routes-root pauses-root registry-version deed-launcher-id
+       oracle-root routes-root liquidity-root pauses-root registry-version
+       deed-launcher-id
        vault-launcher-id vault-coin-id owner-pubkey auth-type members-root
        identity-root bridge-policy quote-expires record custody-coin-id commitment
        deed-value destination principal protocol-amount rewards-amount next-root
@@ -647,8 +662,8 @@
         inventory-root bootstrap-complete current-inventory-nav treasury-assets
         proven-liabilities deed-count total-sols reserve-sols state-version
         inventory parameters collection pause-result quote-expires
-        parameters-root collections-root oracle-root routes-root pauses-root
-        registry-version)
+        parameters-root collections-root oracle-root routes-root liquidity-root
+        pauses-root registry-version)
       (require
         (any (= (nth 6 collection) 1) (= (nth 6 collection) 3))
         "COLLECTION_STATUS")
@@ -693,7 +708,8 @@
       (require
         (= statutes-content
           (statutes-content-hash parameters-root collections-root oracle-root
-            routes-root pauses-root registry-version statutes-config))
+            routes-root liquidity-root pauses-root registry-version
+            statutes-config))
         "STATUTES_CONTENT")
       (require
         (= op-hash
@@ -727,8 +743,8 @@
               (+ reserve-sols principal) (+ state-version 1))
             pool-amount)
           (statutes-evidence-condition pool-coin-id parameters collection pause-result
-            parameters-root collections-root oracle-root routes-root pauses-root
-            registry-version statutes-config)
+            parameters-root collections-root oracle-root routes-root
+            liquidity-root pauses-root registry-version statutes-config)
           (vault-operation-condition singleton-struct statutes-config market-config
             op-hash vault-launcher-id vault-coin-id owner-pubkey auth-type members-root
             identity-root bridge-policy)
@@ -768,7 +784,7 @@
         (nth 24 params) (nth 25 params) (nth 26 params) (nth 27 params)
         (nth 28 params) (nth 29 params) (nth 30 params) (nth 31 params)
         (nth 32 params) (nth 33 params) (nth 34 params) (nth 35 params)
-        (nth 36 params) (nth 37 params))
+        (nth 36 params) (nth 37 params) (nth 38 params))
       (if (= spend_case SOLS_TO_DEED)
         (spend-sols-to-deed
           MOD_HASH SINGLETON_STRUCT STATUTES_CONFIG MARKET_CONFIG
@@ -782,6 +798,7 @@
           (nth 16 params) (nth 17 params) (nth 18 params) (nth 19 params)
           (nth 20 params) (nth 21 params) (nth 22 params) (nth 23 params)
           (nth 24 params) (nth 25 params) (nth 26 params) (nth 27 params)
-          (nth 28 params) (nth 29 params) (nth 30 params) (nth 31 params))
+          (nth 28 params) (nth 29 params) (nth 30 params) (nth 31 params)
+          (nth 32 params))
         (x "UNSUPPORTED RC22 POOL ACTION"))))
 )

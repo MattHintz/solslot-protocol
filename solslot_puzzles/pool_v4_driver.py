@@ -196,6 +196,7 @@ def _statutes_values(
         statutes_state.collections_root,
         statutes_state.oracle_root,
         statutes_state.routes_root,
+        statutes_state.liquidity_root,
         statutes_state.pauses_root,
         statutes_state.registry_version,
     ]

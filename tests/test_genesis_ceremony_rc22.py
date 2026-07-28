@@ -96,7 +96,7 @@ def test_rc22_plan_replaces_nav_registry_with_statutes() -> None:
         "separate-fountain-fee-till"
     )
     assert payload["puzzleHashes"]["poolInnerMod"] == (
-        "0xc9adc5be8c0260a9ea37eeb6407c4f510b77bfee32d474eaad6701a54572f38e"
+        "0xf6704dc71b171811a142c1a3ed92867880db3bad1e8e49f0f7c5cdf6d246739f"
     )
 
 

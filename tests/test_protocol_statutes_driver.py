@@ -18,6 +18,7 @@ from solslot_puzzles.protocol_statutes_driver import (
 )
 from solslot_puzzles.protocol_statutes_v1 import (
     CollectionStatute,
+    LiquidityVenue,
     MutationKind,
     ParameterIndex,
     PermanentRules,
@@ -168,6 +169,79 @@ def test_collection_evidence_driver_matches_clvm(
     assert announcement.rest().first().as_atom() == (
         artifacts.expected_evidence_message
     )
+
+
+def test_liquidity_venue_update_driver_matches_clvm_and_rejects_same_asset(
+    permanent: PermanentRules,
+) -> None:
+    state = initial_state(
+        parameters=ProtocolParameters(),
+        permanent_rules=permanent,
+    )
+    venue = LiquidityVenue(
+        venue_id=b32(0x90),
+        chain_id=b32(0x91),
+        protocol_id=b32(0x92),
+        factory_id=b32(0x93),
+        pool_id=b32(0x94),
+        base_asset_id=permanent.sols_tail_hash,
+        quote_asset_id=b32(0x95),
+        pool_code_hash=b32(0x96),
+        active=1,
+    )
+    mutation, _, next_state = build_record_mutation(
+        state=state,
+        kind=MutationKind.LIQUIDITY,
+        current=(),
+        replacement=venue,
+    )
+    current_inner = make_inner_puzzle(
+        singleton_struct=STATUTES_SINGLETON_STRUCT,
+        governance_singleton_struct=GOVERNANCE_SINGLETON_STRUCT,
+        permanent_rules=permanent,
+        state=state,
+    )
+    artifacts = build_update_spend(
+        my_id=b32(0xC0),
+        my_inner_puzzle_hash=bytes32(current_inner.get_tree_hash()),
+        my_amount=1,
+        singleton_struct=STATUTES_SINGLETON_STRUCT,
+        governance_singleton_struct=GOVERNANCE_SINGLETON_STRUCT,
+        permanent_rules=permanent,
+        current_state=state,
+        next_state=next_state,
+        mutation=mutation,
+        current_entries=(),
+        governance_inner_puzzle_hash=b32(0xD0),
+    )
+    conditions = list(current_inner.run(artifacts.inner_solution).as_iter())
+    assert bytes32(_condition(conditions, 51).rest().first().as_atom()) == (
+        artifacts.next_inner_puzzle_hash
+    )
+    assert _condition(conditions, 67).rest().rest().first().as_atom() == (
+        mutation.governance_message_body
+    )
+
+    invalid_value = venue.as_program_value()
+    invalid_value[6] = venue.base_asset_id
+    malicious_solution = Program.to(
+        [
+            b32(0xC0),
+            bytes32(current_inner.get_tree_hash()),
+            1,
+            2,
+            [
+                int(MutationKind.LIQUIDITY),
+                venue.venue_id,
+                invalid_value,
+                [],
+                next_state.registry_version,
+                b32(0xD0),
+            ],
+        ]
+    )
+    with pytest.raises(Exception):
+        current_inner.run(malicious_solution)
 
 
 def test_governance_evidence_driver_matches_clvm(

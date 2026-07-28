@@ -113,6 +113,7 @@ STATUTES_STATE = StatutesState(
     collections_root=keyed_root([COLLECTION]),
     oracle_root=EMPTY_ROOT,
     routes_root=EMPTY_ROOT,
+    liquidity_root=EMPTY_ROOT,
     pauses_root=EMPTY_ROOT,
     registry_version=3,
     permanent_rules_hash=RULES.commitment_hash,
