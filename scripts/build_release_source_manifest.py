@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the deterministic nine-repository RC20 source manifest."""
+"""Build the deterministic nine-repository RC22 source manifest."""
 
 from __future__ import annotations
 
@@ -14,8 +14,8 @@ from typing import Mapping, Sequence
 from urllib.parse import urlsplit, urlunsplit
 
 
-RELEASE_ID = "solslot-v2-alpha-rc20-20260722"
-RELEASE_BRANCH = "release/testnet-alpha-rc20-20260722"
+RELEASE_ID = "solslot-v2-alpha-rc22-20260727"
+RELEASE_BRANCH = "release/testnet-alpha-rc22-20260727"
 SOURCE_MANIFEST_VERSION = 3
 SOURCE_REPOSITORIES = {
     "protocol": "https://github.com/MattHintz/solslot-protocol",
@@ -88,14 +88,19 @@ def _git(path: Path, *args: str) -> str:
     return result.stdout.strip()
 
 
-def inspect_source(name: str, path: Path) -> SourceState:
+def inspect_source(
+    name: str,
+    path: Path,
+    *,
+    release_branch: str = RELEASE_BRANCH,
+) -> SourceState:
     commit = _git(path, "rev-parse", "HEAD").lower()
     if len(commit) != 40:
         raise ValueError(f"{name} does not resolve to a full Git commit")
     int(commit, 16)
     branch = _git(path, "branch", "--show-current")
-    if branch != RELEASE_BRANCH:
-        raise ValueError(f"{name} must be checked out on {RELEASE_BRANCH}")
+    if branch != release_branch:
+        raise ValueError(f"{name} must be checked out on {release_branch}")
     if _git(path, "status", "--porcelain"):
         raise ValueError(f"{name} worktree is dirty")
     remotes = {
@@ -109,14 +114,29 @@ def inspect_source(name: str, path: Path) -> SourceState:
     return SourceState(name, expected, commit, branch)
 
 
-def build_manifest(states: Sequence[SourceState]) -> dict[str, object]:
+def build_manifest(
+    states: Sequence[SourceState],
+    *,
+    release_id: str = RELEASE_ID,
+    release_branch: str = RELEASE_BRANCH,
+) -> dict[str, object]:
     by_name = {item.name: item for item in states}
     if set(by_name) != set(SOURCE_REPOSITORIES) or len(states) != len(by_name):
         raise ValueError("release source states must contain each repository exactly once")
+    if not release_id.startswith("solslot-v2-alpha-rc22-"):
+        raise ValueError("release_id must identify an RC22 alpha release")
+    expected_branch = (
+        "release/testnet-alpha-"
+        + release_id.removeprefix("solslot-v2-alpha-")
+    )
+    if release_branch != expected_branch:
+        raise ValueError("release branch must correspond to release_id")
+    if {item.branch for item in states} != {release_branch}:
+        raise ValueError("all source states must use the release branch")
     payload: dict[str, object] = {
         "schemaVersion": SOURCE_MANIFEST_VERSION,
         "kind": "solslot-release-source-manifest",
-        "releaseId": RELEASE_ID,
+        "releaseId": release_id,
         "network": "testnet11",
         "testOnly": True,
         "sourceShas": {
@@ -145,7 +165,14 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
-    states = [inspect_source(name, getattr(args, name)) for name in SOURCE_REPOSITORIES]
+    states = [
+        inspect_source(
+            name,
+            getattr(args, name),
+            release_branch=RELEASE_BRANCH,
+        )
+        for name in SOURCE_REPOSITORIES
+    ]
     manifest = build_manifest(states)
     output = args.output.resolve()
     output.parent.mkdir(parents=True, exist_ok=True)

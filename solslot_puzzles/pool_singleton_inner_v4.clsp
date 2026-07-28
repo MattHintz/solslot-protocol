@@ -1,0 +1,815 @@
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; RC22 Sols pool. Protocol-only SmartDeed/Sols exchange.
+;;;
+;;; STATUTES_CONFIG:
+;;;   (mod_hash singleton_struct governance_struct sgt_tail sgt_supply
+;;;    sols_tail zk_policy protocol_treasury network_id)
+;;; MARKET_CONFIG:
+;;;   (cat_mod_hash offer_mod_hash p2_vault_mod_hash vault_v2_mod_hash
+;;;    p2_pool_v2_mod_hash deed_launcher_puzhash reserve_puzhash
+;;;    sgt_rewards_puzhash)
+;;;
+;;; State:
+;;;   inventory_root bootstrap_complete inventory_nav treasury_assets
+;;;   proven_liabilities deed_count total_sols reserve_sols state_version
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(mod
+  (
+    MOD_HASH
+    SINGLETON_STRUCT
+    STATUTES_CONFIG
+    MARKET_CONFIG
+    INVENTORY_ROOT
+    BOOTSTRAP_COMPLETE
+    INVENTORY_NAV
+    TREASURY_ASSETS
+    PROVEN_LIABILITIES
+    DEED_COUNT
+    TOTAL_SOLS
+    RESERVE_SOLS
+    STATE_VERSION
+    ;; solution
+    my_id
+    my_inner_puzzlehash
+    my_amount
+    spend_case
+    params
+  )
+
+  (include condition_codes.clib)
+  (include utils.clib)
+  (include utility_macros.clib)
+
+  (defconstant DEED_TO_SOLS 1)
+  (defconstant SOLS_TO_DEED 2)
+  (defconstant INVENTORY_AVAILABLE 1)
+  (defconstant SHARE_PPM_DENOMINATOR 1000000)
+  (defconstant FEE_BPS_DENOMINATOR 10000)
+  (defconstant BOOTSTRAP_VALUE_MICRO_USD_PER_SOLS 3330000)
+  (defconstant SOLS_MOJOS_PER_SOLS 1000)
+  (defconstant MAX_EXCHANGE_FEE_BPS 100)
+  (defconstant MIN_RESERVE_SOLS_MOJOS 1)
+  (defconstant UPGRADE_DELAY_SECONDS 86400)
+  (defconstant TOKEN_MINT 1)
+  (defconstant DEED_SPEND_POOL_DEPOSIT 0x64)
+  (defconstant DEED_SPEND_POOL_REDEEM 0x72)
+  (defconstant VAULT_SOLS_SWAP_TAG 0x56534f4c) ;; VSOL
+  (defconstant SWAP_OPERATION_TAG 0x50534f4c) ;; PSOL
+  (defconstant STATUTES_EVIDENCE_TAG 0x534f4c56) ;; SOLV
+  (defconstant ZKPASSPORT_EMPTY_ATTEST_ROOT 0x4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a)
+  (defconstant COIN_AMOUNT_ONE 1)
+  (defconstant ZERO_B32 0x0000000000000000000000000000000000000000000000000000000000000000)
+
+  (defun nth (n items)
+    (if n (nth (- n 1) (r items)) (f items)))
+
+  (defun-inline ceil-div (numerator denominator)
+    (/ (+ numerator (- denominator 1)) denominator))
+
+  (defun-inline min-value (a b)
+    (if (> a b) b a))
+
+  (defun-inline require (condition failure-code)
+    (if condition 1 (x failure-code)))
+
+  (defun inventory-count (items)
+    (if items (+ 1 (inventory-count (r items))) 0))
+
+  (defun inventory-nav (items)
+    (if items
+      (+ (nth 5 (f items)) (inventory-nav (r items)))
+      0))
+
+  (defun contains-custody (custody items)
+    (if items
+      (if (= custody (nth 1 (f items))) 1
+        (contains-custody custody (r items)))
+      0))
+
+  (defun contains-commitment (commitment items)
+    (if items
+      (if (= commitment (nth 2 (f items))) 1
+        (contains-commitment commitment (r items)))
+      0))
+
+  (defun valid_inventory (items previous_launcher)
+    (if items
+      (assert
+        (is-size-b32 (nth 0 (f items)))
+        (> (nth 0 (f items)) previous_launcher)
+        (is-size-b32 (nth 1 (f items)))
+        (is-size-b32 (nth 2 (f items)))
+        (is-size-b32 (nth 3 (f items)))
+        (is-uint64 (nth 4 (f items)))
+        (> (nth 4 (f items)) 0)
+        (gte SHARE_PPM_DENOMINATOR (nth 4 (f items)))
+        (is-uint64 (nth 5 (f items)))
+        (> (nth 5 (f items)) 0)
+        (is-uint64 (nth 6 (f items)))
+        (> (nth 6 (f items)) 0)
+        (is-uint64 (nth 7 (f items)))
+        (> (nth 7 (f items)) 0)
+        (= (nth 8 (f items)) INVENTORY_AVAILABLE)
+        (not (contains-custody (nth 1 (f items)) (r items)))
+        (not (contains-commitment (nth 2 (f items)) (r items)))
+        (valid_inventory (r items) (nth 0 (f items))))
+      1))
+
+  (defun find-record (deed-launcher items)
+    (if items
+      (if (= deed-launcher (nth 0 (f items)))
+        (f items)
+        (find-record deed-launcher (r items)))
+      (x "DEED NOT IN POOL INVENTORY")))
+
+  (defun insert-record (record items)
+    (if items
+      (if (= (nth 0 record) (nth 0 (f items)))
+        (x "DUPLICATE DEED")
+        (if (> (nth 0 (f items)) (nth 0 record))
+          (c record items)
+          (c (f items) (insert-record record (r items)))))
+      (list record)))
+
+  (defun remove-record (deed-launcher items)
+    (if items
+      (if (= deed-launcher (nth 0 (f items)))
+        (r items)
+        (c (f items) (remove-record deed-launcher (r items))))
+      (x "DEED NOT IN POOL INVENTORY")))
+
+  (defun collection-held-value (collection-id items)
+    (if items
+      (+ (if (= collection-id (nth 3 (f items))) (nth 5 (f items)) 0)
+         (collection-held-value collection-id (r items)))
+      0))
+
+  (defun-inline backing-value (inventory-nav treasury-assets liabilities)
+    (- (+ inventory-nav treasury-assets) liabilities))
+
+  (defun-inline circulating-sols (total-sols reserve-sols)
+    (- total-sols reserve-sols))
+
+  (defun-inline governed-deed-value (collection share-ppm)
+    (ceil-div (* (nth 1 collection) share-ppm) SHARE_PPM_DENOMINATOR))
+
+  (defun-inline seller-sols
+      (bootstrap-complete deed-value inventory-nav treasury-assets liabilities total-sols reserve-sols)
+    (if bootstrap-complete
+      (/ (* deed-value (circulating-sols total-sols reserve-sols))
+         (backing-value inventory-nav treasury-assets liabilities))
+      (/ (* deed-value SOLS_MOJOS_PER_SOLS)
+         BOOTSTRAP_VALUE_MICRO_USD_PER_SOLS)))
+
+  (defun-inline buyer-principal
+      (deed-value inventory-nav treasury-assets liabilities total-sols reserve-sols)
+    (ceil-div
+      (* deed-value (circulating-sols total-sols reserve-sols))
+      (backing-value inventory-nav treasury-assets liabilities)))
+
+  (defun-inline total-fee (principal parameters)
+    (ceil-div (* principal (nth 5 parameters)) FEE_BPS_DENOMINATOR))
+
+  (defun-inline protocol-fee (principal parameters)
+    (min-value
+      (total-fee principal parameters)
+      (ceil-div (* principal (nth 6 parameters)) FEE_BPS_DENOMINATOR)))
+
+  (defun-inline rewards-fee (principal parameters)
+    (- (total-fee principal parameters) (protocol-fee principal parameters)))
+
+  (defun-inline state-commitment
+      (inventory-root bootstrap inventory-nav treasury-assets liabilities count total reserve version)
+    (sha256tree
+      (list inventory-root bootstrap inventory-nav treasury-assets liabilities
+            count total reserve version)))
+
+  (defun-inline compute-inner-ph
+      (MOD_HASH SINGLETON_STRUCT STATUTES_CONFIG MARKET_CONFIG
+       inventory-root bootstrap inventory-nav treasury-assets liabilities
+       count total reserve version)
+    (curry_hashes MOD_HASH
+      (sha256 1 MOD_HASH)
+      (sha256tree SINGLETON_STRUCT)
+      (sha256tree STATUTES_CONFIG)
+      (sha256tree MARKET_CONFIG)
+      (sha256 1 inventory-root)
+      (sha256 1 bootstrap)
+      (sha256 1 inventory-nav)
+      (sha256 1 treasury-assets)
+      (sha256 1 liabilities)
+      (sha256 1 count)
+      (sha256 1 total)
+      (sha256 1 reserve)
+      (sha256 1 version)))
+
+  (defun identity-conditions (SINGLETON_STRUCT my-id my-inner my-amount)
+    (list
+      (list ASSERT_MY_COIN_ID my-id)
+      (list ASSERT_MY_AMOUNT my-amount)
+      (list ASSERT_MY_PUZZLEHASH
+        (calculate_full_puzzle_hash SINGLETON_STRUCT my-inner))))
+
+  ;; Statutes config accessors.
+  (defun-inline statutes-mod (config) (nth 0 config))
+  (defun-inline statutes-struct (config) (nth 1 config))
+  (defun-inline statutes-gov-struct (config) (nth 2 config))
+  (defun-inline sgt-tail (config) (nth 3 config))
+  (defun-inline sgt-supply (config) (nth 4 config))
+  (defun-inline sols-tail (config) (nth 5 config))
+  (defun-inline zk-policy (config) (nth 6 config))
+  (defun-inline protocol-treasury (config) (nth 7 config))
+  (defun-inline network-id (config) (nth 8 config))
+
+  ;; Market config accessors.
+  (defun-inline cat-mod (config) (nth 0 config))
+  (defun-inline offer-mod (config) (nth 1 config))
+  (defun-inline p2-vault-mod (config) (nth 2 config))
+  (defun-inline vault-mod (config) (nth 3 config))
+  (defun-inline p2-pool-mod (config) (nth 4 config))
+  (defun-inline deed-launcher-puzhash (config) (nth 5 config))
+  (defun-inline reserve-puzhash (config) (nth 6 config))
+  (defun-inline rewards-puzhash (config) (nth 7 config))
+
+  (defun-inline permanent-rules-hash (config)
+    (sha256tree
+      (list
+        (sgt-tail config)
+        (sgt-supply config)
+        (sols-tail config)
+        (zk-policy config)
+        (protocol-treasury config)
+        (network-id config)
+        MAX_EXCHANGE_FEE_BPS
+        UPGRADE_DELAY_SECONDS
+        1 1 1 1 1 1 0)))
+
+  (defun-inline statutes-content-hash
+      (parameters-root collections-root oracle-root routes-root liquidity-root
+       pauses-root registry-version config)
+    (sha256tree
+      (list parameters-root collections-root oracle-root routes-root
+            liquidity-root pauses-root registry-version
+            (permanent-rules-hash config))))
+
+  (defun-inline statutes-inner-ph
+      (config parameters-root collections-root oracle-root routes-root
+       liquidity-root pauses-root registry-version)
+    (curry_hashes (statutes-mod config)
+      (sha256 1 (statutes-mod config))
+      (sha256tree (statutes-struct config))
+      (sha256tree (statutes-gov-struct config))
+      (sha256 1 (sgt-tail config))
+      (sha256 1 (sgt-supply config))
+      (sha256 1 (sols-tail config))
+      (sha256 1 (zk-policy config))
+      (sha256 1 (protocol-treasury config))
+      (sha256 1 (network-id config))
+      (sha256 1 parameters-root)
+      (sha256 1 collections-root)
+      (sha256 1 oracle-root)
+      (sha256 1 routes-root)
+      (sha256 1 liquidity-root)
+      (sha256 1 pauses-root)
+      (sha256 1 registry-version)))
+
+  (defun-inline statutes-full-ph
+      (config parameters-root collections-root oracle-root routes-root
+       liquidity-root pauses-root registry-version)
+    (calculate_full_puzzle_hash
+      (statutes-struct config)
+      (statutes-inner-ph config parameters-root collections-root oracle-root
+                         routes-root liquidity-root pauses-root
+                         registry-version)))
+
+  (defun-inline statutes-evidence-message
+      (consumer-id parameters collection pause-result parameters-root
+       collections-root oracle-root routes-root liquidity-root pauses-root
+       registry-version config)
+    (concat PROTOCOL_PREFIX
+      (sha256tree
+        (list STATUTES_EVIDENCE_TAG consumer-id (nth 0 collection)
+              parameters collection pause-result parameters-root collections-root
+              oracle-root routes-root liquidity-root pauses-root registry-version
+              (permanent-rules-hash config)))))
+
+  (defun-inline statutes-evidence-condition
+      (consumer-id parameters collection pause-result parameters-root
+       collections-root oracle-root routes-root liquidity-root pauses-root
+       registry-version config)
+    (list ASSERT_PUZZLE_ANNOUNCEMENT
+      (sha256
+        (statutes-full-ph config parameters-root collections-root oracle-root
+                           routes-root liquidity-root pauses-root
+                           registry-version)
+        (statutes-evidence-message
+          consumer-id parameters collection pause-result parameters-root
+          collections-root oracle-root routes-root liquidity-root pauses-root
+          registry-version config))))
+
+  (defun-inline pause-allows-swap (pause-result collection-id)
+    (if (f pause-result)
+      (assert
+        (= (nth 0 (nth 1 pause-result)) collection-id)
+        (= (nth 1 (nth 1 pause-result)) 0)
+        1)
+      1))
+
+  (defun singleton-struct-for (SINGLETON_STRUCT launcher-id)
+    (c (f SINGLETON_STRUCT) (c launcher-id (r (r SINGLETON_STRUCT)))))
+
+  (defun deed-singleton-struct (SINGLETON_STRUCT MARKET_CONFIG launcher-id)
+    (c
+      (f SINGLETON_STRUCT)
+      (c launcher-id (deed-launcher-puzhash MARKET_CONFIG))))
+
+  (defun p2-vault-hash (SINGLETON_STRUCT MARKET_CONFIG vault-launcher-id)
+    (curry_hashes (p2-vault-mod MARKET_CONFIG)
+      (sha256 1 (f SINGLETON_STRUCT))
+      (sha256 1 vault-launcher-id)
+      (sha256 1 (r (r SINGLETON_STRUCT)))))
+
+  (defun vault-inner-hash
+      (SINGLETON_STRUCT STATUTES_CONFIG MARKET_CONFIG vault-launcher-id
+       owner-pubkey auth-type members-root identity-root bridge-policy)
+    (curry_hashes (vault-mod MARKET_CONFIG)
+      (sha256tree (singleton-struct-for SINGLETON_STRUCT vault-launcher-id))
+      (sha256 1 owner-pubkey)
+      (sha256 1 auth-type)
+      (sha256 1 members-root)
+      (sha256 1 identity-root)
+      (sha256 1 bridge-policy)
+      (sha256 1 (f SINGLETON_STRUCT))
+      (sha256 1 (f (r SINGLETON_STRUCT)))
+      (sha256 1 (r (r SINGLETON_STRUCT)))))
+
+  (defun vault-full-hash
+      (SINGLETON_STRUCT STATUTES_CONFIG MARKET_CONFIG vault-launcher-id
+       owner-pubkey auth-type members-root identity-root bridge-policy)
+    (calculate_full_puzzle_hash
+      (singleton-struct-for SINGLETON_STRUCT vault-launcher-id)
+      (vault-inner-hash SINGLETON_STRUCT STATUTES_CONFIG MARKET_CONFIG
+        vault-launcher-id owner-pubkey auth-type members-root identity-root bridge-policy)))
+
+  (defun-inline vault-operation-message (operation-hash vault-coin-id)
+    (concat PROTOCOL_PREFIX
+      (sha256tree (list VAULT_SOLS_SWAP_TAG operation-hash vault-coin-id))))
+
+  (defun-inline vault-operation-condition
+      (SINGLETON_STRUCT STATUTES_CONFIG MARKET_CONFIG operation-hash
+       vault-launcher-id vault-coin-id owner-pubkey auth-type members-root
+       identity-root bridge-policy)
+    (list ASSERT_PUZZLE_ANNOUNCEMENT
+      (sha256
+        (vault-full-hash SINGLETON_STRUCT STATUTES_CONFIG MARKET_CONFIG
+          vault-launcher-id owner-pubkey auth-type members-root identity-root bridge-policy)
+        (vault-operation-message operation-hash vault-coin-id))))
+
+  (defun-inline cat-offer-hash (STATUTES_CONFIG MARKET_CONFIG)
+    (curry_hashes (cat-mod MARKET_CONFIG)
+      (sha256 1 (cat-mod MARKET_CONFIG))
+      (sha256 1 (sols-tail STATUTES_CONFIG))
+      (offer-mod MARKET_CONFIG)))
+
+  (defun-inline seller-payment-condition
+      (STATUTES_CONFIG MARKET_CONFIG pool-coin-id seller-puzhash amount)
+    (list ASSERT_PUZZLE_ANNOUNCEMENT
+      (sha256
+        (cat-offer-hash STATUTES_CONFIG MARKET_CONFIG)
+        (sha256tree
+          (c pool-coin-id
+            (list (list seller-puzhash amount (list seller-puzhash))))))))
+
+  (defun swap-payments
+      (reserve-hash principal protocol-hash protocol-amount rewards-hash rewards-amount)
+    (c
+      (list reserve-hash principal (list reserve-hash))
+      (if protocol-amount
+        (c (list protocol-hash protocol-amount (list protocol-hash))
+           (if rewards-amount
+             (list (list rewards-hash rewards-amount (list rewards-hash)))
+             ()))
+        (if rewards-amount
+          (list (list rewards-hash rewards-amount (list rewards-hash)))
+          ()))))
+
+  (defun-inline buyer-payment-condition
+      (STATUTES_CONFIG MARKET_CONFIG pool-coin-id principal protocol-amount rewards-amount)
+    (list ASSERT_PUZZLE_ANNOUNCEMENT
+      (sha256
+        (cat-offer-hash STATUTES_CONFIG MARKET_CONFIG)
+        (sha256tree
+          (c pool-coin-id
+            (swap-payments
+              (reserve-puzhash MARKET_CONFIG)
+              principal
+              (protocol-treasury STATUTES_CONFIG)
+              protocol-amount
+              (rewards-puzhash MARKET_CONFIG)
+              rewards-amount))))))
+
+  (defun-inline token-mint-message (token-coin-id amount)
+    (concat PROTOCOL_PREFIX
+      (sha256tree (list TOKEN_MINT token-coin-id amount))))
+
+  (defun mint-conditions (token-coin-id amount)
+    (if amount
+      (list
+        (list CREATE_PUZZLE_ANNOUNCEMENT
+          (token-mint-message token-coin-id amount))
+        (list CREATE_COIN_ANNOUNCEMENT
+          (token-mint-message token-coin-id amount)))
+      ()))
+
+  (defun-inline deed-commitment
+      (deed-launcher-id par-value asset-class property-id collection-id share-ppm)
+    (sha256tree
+      (list deed-launcher-id par-value asset-class property-id collection-id share-ppm)))
+
+  (defun p2-pool-inner-hash
+      (SINGLETON_STRUCT MARKET_CONFIG deed-commitment)
+    (curry_hashes (p2-pool-mod MARKET_CONFIG)
+      (sha256 1 (p2-pool-mod MARKET_CONFIG))
+      (sha256 1 (f SINGLETON_STRUCT))
+      (sha256 1 (f (r SINGLETON_STRUCT)))
+      (sha256 1 (r (r SINGLETON_STRUCT)))
+      (sha256 1 deed-commitment)))
+
+  (defun p2-pool-full-hash
+      (SINGLETON_STRUCT MARKET_CONFIG deed-launcher-id deed-commitment)
+    (calculate_full_puzzle_hash
+      (deed-singleton-struct SINGLETON_STRUCT MARKET_CONFIG deed-launcher-id)
+      (p2-pool-inner-hash SINGLETON_STRUCT MARKET_CONFIG deed-commitment)))
+
+  (defun expected-custody-coin-id
+      (SINGLETON_STRUCT MARKET_CONFIG deed-parent-id deed-launcher-id deed-commitment)
+    (sha256
+      deed-parent-id
+      (p2-pool-full-hash SINGLETON_STRUCT MARKET_CONFIG deed-launcher-id deed-commitment)
+      COIN_AMOUNT_ONE))
+
+  (defun-inline deed-deposit-message
+      (deed-parent-id commitment par-value asset-class property-id collection-id share-ppm)
+    (concat PROTOCOL_PREFIX
+      (sha256tree
+        (list DEED_SPEND_POOL_DEPOSIT deed-parent-id commitment par-value
+              asset-class property-id collection-id share-ppm))))
+
+  (defun-inline deed-release-message (commitment destination)
+    (concat PROTOCOL_PREFIX
+      (sha256tree (list DEED_SPEND_POOL_REDEEM commitment destination))))
+
+  (defun-inline pool-release-message
+      (pool-coin-id deed-coin-id commitment destination)
+    (concat PROTOCOL_PREFIX
+      (sha256tree
+        (list pool-coin-id deed-coin-id commitment destination))))
+
+  (defun-inline operation-hash
+      (direction pool-coin-id current-state next-state record vault-launcher-id
+       vault-coin-id counterparty principal-or-payout protocol-amount rewards-amount
+       quote-expires statutes-content registry-version)
+    (sha256tree
+      (list SWAP_OPERATION_TAG direction pool-coin-id current-state next-state
+            record vault-launcher-id vault-coin-id counterparty
+            principal-or-payout protocol-amount rewards-amount quote-expires
+            statutes-content registry-version)))
+
+  (defun validate-common
+      (inventory-root bootstrap-complete current-inventory-nav treasury-assets
+       proven-liabilities deed-count total-sols reserve-sols state-version
+       inventory parameters collection pause-result quote-expires parameters-root
+       collections-root oracle-root routes-root liquidity-root pauses-root
+       registry-version)
+    (assert
+      (require (= (sha256tree inventory) inventory-root) "INVENTORY_ROOT")
+      (require (valid_inventory inventory ZERO_B32) "INVENTORY_SHAPE")
+      (require (= (inventory-count inventory) deed-count) "DEED_COUNT")
+      (require (= (inventory-nav inventory) current-inventory-nav) "INVENTORY_NAV")
+      (is-uint64 bootstrap-complete)
+      (any (= bootstrap-complete 0) (= bootstrap-complete 1))
+      (is-uint64 treasury-assets)
+      (is-uint64 proven-liabilities)
+      (is-uint64 total-sols)
+      (is-uint64 reserve-sols)
+      (gte total-sols reserve-sols)
+      (gte reserve-sols MIN_RESERVE_SOLS_MOJOS)
+      (is-uint64 state-version)
+      (> state-version 0)
+      (require (= (sha256tree parameters) parameters-root) "PARAMETERS_ROOT")
+      (require (= (+ (nth 6 parameters) (nth 7 parameters)) (nth 5 parameters))
+               "FEE_SPLIT")
+      (require (gte MAX_EXCHANGE_FEE_BPS (nth 5 parameters)) "FEE_CAP")
+      (require (> (nth 1 collection) 0) "COLLECTION_NAV")
+      (require (> (nth 2 collection) 0) "COLLECTION_CEILING")
+      (require (gte (nth 2 collection) (nth 1 collection)) "COLLECTION_LIMIT")
+      (require (> (nth 3 collection) 0) "NAV_VERSION")
+      (require (> (nth 5 collection) (nth 4 collection)) "NAV_WINDOW")
+      (require
+        (gte (nth 3 parameters) (- (nth 5 collection) (nth 4 collection)))
+        "NAV_VALIDITY")
+      (require (gte (nth 5 collection) quote-expires) "QUOTE_EXPIRY")
+      (require (pause-allows-swap pause-result (nth 0 collection)) "PAUSE")
+      (is-size-b32 parameters-root)
+      (is-size-b32 collections-root)
+      (is-size-b32 oracle-root)
+      (is-size-b32 routes-root)
+      (is-size-b32 liquidity-root)
+      (is-size-b32 pauses-root)
+      (is-uint64 registry-version)
+      (> registry-version 0)
+      1))
+
+  (defun spend-deed-to-sols
+      (mod-hash singleton-struct statutes-config market-config
+       inventory-root bootstrap-complete current-inventory-nav treasury-assets
+       proven-liabilities deed-count total-sols reserve-sols state-version
+       pool-coin-id pool-inner-puzzlehash pool-amount
+       inventory parameters collection pause-result parameters-root collections-root
+       oracle-root routes-root liquidity-root pauses-root registry-version
+       deed-parent-id
+       deed-launcher-id custody-coin-id commitment par-value asset-class property-id
+       share-ppm seller-puzhash mint-token-id vault-launcher-id vault-coin-id
+       owner-pubkey auth-type members-root identity-root bridge-policy quote-expires
+       deed-value record seller-amount reserve-paid fresh-mint next-root
+       current-state next-state statutes-content op-hash)
+    (assert
+      (validate-common
+        inventory-root bootstrap-complete current-inventory-nav treasury-assets
+        proven-liabilities deed-count total-sols reserve-sols state-version
+        inventory parameters collection pause-result quote-expires
+        parameters-root collections-root oracle-root routes-root liquidity-root
+        pauses-root registry-version)
+      (require (= (nth 6 collection) 1) "COLLECTION_STATUS")
+      (require (is-size-b32 deed-parent-id) "DEED_PARENT")
+      (require (is-size-b32 deed-launcher-id) "DEED_LAUNCHER")
+      (require (is-size-b32 custody-coin-id) "CUSTODY_SIZE")
+      (require
+        (= custody-coin-id
+          (expected-custody-coin-id singleton-struct market-config deed-parent-id
+                                    deed-launcher-id commitment))
+        "CUSTODY")
+      (require
+        (= commitment
+          (deed-commitment deed-launcher-id par-value asset-class property-id
+                           (nth 0 collection) share-ppm))
+        "COMMITMENT")
+      (require (= deed-value (governed-deed-value collection share-ppm))
+               "DEED_VALUE")
+      (require
+        (= (sha256tree record)
+          (sha256tree
+            (list deed-launcher-id custody-coin-id commitment (nth 0 collection)
+                  share-ppm deed-value (nth 3 collection) (nth 5 collection)
+                  INVENTORY_AVAILABLE)))
+        "RECORD")
+      (require (not (contains-custody custody-coin-id inventory))
+               "DUPLICATE_CUSTODY")
+      (require (not (contains-commitment commitment inventory))
+               "DUPLICATE_COMMITMENT")
+      (require
+        (gte (nth 2 collection)
+          (+ (collection-held-value (nth 0 collection) inventory) deed-value))
+        "COLLECTION_CAP")
+      (require
+        (= seller-amount
+          (seller-sols bootstrap-complete deed-value current-inventory-nav treasury-assets
+                       proven-liabilities total-sols reserve-sols))
+        "SELLER_AMOUNT")
+      (require
+        (= reserve-paid
+          (min-value (- reserve-sols MIN_RESERVE_SOLS_MOJOS) seller-amount))
+               "RESERVE_PAID")
+      (require (= fresh-mint (- seller-amount reserve-paid)) "FRESH_MINT")
+      (require (= next-root (sha256tree (insert-record record inventory)))
+               "NEXT_ROOT")
+      (require
+        (= current-state
+          (state-commitment inventory-root bootstrap-complete current-inventory-nav
+            treasury-assets proven-liabilities deed-count total-sols reserve-sols
+            state-version))
+        "CURRENT_STATE")
+      (require
+        (= next-state
+          (state-commitment next-root 1 (+ current-inventory-nav deed-value)
+            treasury-assets proven-liabilities (+ deed-count 1)
+            (+ total-sols fresh-mint) (- reserve-sols reserve-paid)
+            (+ state-version 1)))
+        "NEXT_STATE")
+      (require
+        (= statutes-content
+          (statutes-content-hash parameters-root collections-root oracle-root
+            routes-root liquidity-root pauses-root registry-version
+            statutes-config))
+        "STATUTES_CONTENT")
+      (require
+        (= op-hash
+          (operation-hash DEED_TO_SOLS pool-coin-id current-state next-state record
+            vault-launcher-id vault-coin-id seller-puzhash seller-amount 0 0
+            quote-expires statutes-content registry-version))
+        "OP_HASH")
+      (require (> seller-amount 0) "ZERO_SELLER_AMOUNT")
+      (require
+        (if fresh-mint (is-size-b32 mint-token-id) (not mint-token-id))
+        "MINT_TOKEN")
+      (require (is-size-b32 seller-puzhash) "SELLER_PUZZLE")
+      (require (is-size-b32 vault-launcher-id) "VAULT_LAUNCHER")
+      (require (is-size-b32 vault-coin-id) "VAULT_COIN")
+      (require (is-size-b32 members-root) "MEMBERS_ROOT")
+      (require (is-size-b32 identity-root) "IDENTITY_ROOT")
+      (require (not (= identity-root ZKPASSPORT_EMPTY_ATTEST_ROOT))
+               "ZKPASSPORT")
+      (require (= bridge-policy (zk-policy statutes-config)) "BRIDGE_POLICY")
+      (require (is-uint64 (+ total-sols fresh-mint)) "TOTAL_SOLS")
+      (merge-lists
+        (list
+          (list CREATE_COIN
+            (compute-inner-ph mod-hash singleton-struct statutes-config market-config
+              next-root 1 (+ current-inventory-nav deed-value) treasury-assets
+              proven-liabilities (+ deed-count 1) (+ total-sols fresh-mint)
+              (- reserve-sols reserve-paid) (+ state-version 1))
+            pool-amount)
+          (statutes-evidence-condition pool-coin-id parameters collection pause-result
+            parameters-root collections-root oracle-root routes-root
+            liquidity-root pauses-root registry-version statutes-config)
+          (vault-operation-condition singleton-struct statutes-config market-config
+            op-hash vault-launcher-id vault-coin-id owner-pubkey auth-type members-root
+            identity-root bridge-policy)
+          (list ASSERT_COIN_ANNOUNCEMENT
+            (sha256 deed-parent-id
+              (deed-deposit-message deed-parent-id commitment par-value asset-class
+                                    property-id (nth 0 collection) share-ppm)))
+          (seller-payment-condition statutes-config market-config pool-coin-id seller-puzhash
+                                    seller-amount)
+          (list SEND_MESSAGE 0x10
+            (concat PROTOCOL_PREFIX
+              (sha256tree (list DEED_TO_SOLS deed-parent-id par-value))))
+          (list ASSERT_SECONDS_ABSOLUTE (nth 4 collection))
+          (list ASSERT_BEFORE_SECONDS_ABSOLUTE quote-expires)
+          (list CREATE_PUZZLE_ANNOUNCEMENT
+            (concat PROTOCOL_PREFIX (sha256tree (list SWAP_OPERATION_TAG op-hash))))
+          (list REMARK PROTOCOL_PREFIX SWAP_OPERATION_TAG DEED_TO_SOLS op-hash
+                seller-amount reserve-paid fresh-mint))
+        (merge-lists
+          (mint-conditions mint-token-id fresh-mint)
+          (identity-conditions singleton-struct pool-coin-id pool-inner-puzzlehash
+                               pool-amount)))))
+
+  (defun spend-sols-to-deed
+      (mod-hash singleton-struct statutes-config market-config
+       inventory-root bootstrap-complete current-inventory-nav treasury-assets
+       proven-liabilities deed-count total-sols reserve-sols state-version
+       pool-coin-id pool-inner-puzzlehash pool-amount
+       inventory parameters collection pause-result parameters-root collections-root
+       oracle-root routes-root liquidity-root pauses-root registry-version
+       deed-launcher-id
+       vault-launcher-id vault-coin-id owner-pubkey auth-type members-root
+       identity-root bridge-policy quote-expires record custody-coin-id commitment
+       deed-value destination principal protocol-amount rewards-amount next-root
+       current-state next-state statutes-content op-hash)
+    (assert
+      (validate-common
+        inventory-root bootstrap-complete current-inventory-nav treasury-assets
+        proven-liabilities deed-count total-sols reserve-sols state-version
+        inventory parameters collection pause-result quote-expires
+        parameters-root collections-root oracle-root routes-root liquidity-root
+        pauses-root registry-version)
+      (require
+        (any (= (nth 6 collection) 1) (= (nth 6 collection) 3))
+        "COLLECTION_STATUS")
+      (require
+        (= (sha256tree record)
+           (sha256tree (find-record deed-launcher-id inventory)))
+        "RECORD")
+      (require (= custody-coin-id (nth 1 record)) "CUSTODY")
+      (require (= commitment (nth 2 record)) "COMMITMENT")
+      (require (= deed-value (nth 5 record)) "DEED_VALUE")
+      (require
+        (= destination (p2-vault-hash singleton-struct market-config vault-launcher-id))
+        "DESTINATION")
+      (require (= (nth 3 record) (nth 0 collection)) "COLLECTION")
+      (require (= deed-value (governed-deed-value collection (nth 4 record)))
+               "GOVERNED_VALUE")
+      (require (= (nth 6 record) (nth 3 collection)) "NAV_VERSION")
+      (require (= (nth 7 record) (nth 5 collection)) "NAV_EXPIRY")
+      (require
+        (= principal
+          (buyer-principal deed-value current-inventory-nav treasury-assets
+                           proven-liabilities total-sols reserve-sols))
+        "PRINCIPAL")
+      (require (= protocol-amount (protocol-fee principal parameters))
+               "PROTOCOL_FEE")
+      (require (= rewards-amount (rewards-fee principal parameters))
+               "REWARDS_FEE")
+      (require (= next-root (sha256tree (remove-record deed-launcher-id inventory)))
+               "NEXT_ROOT")
+      (require
+        (= current-state
+          (state-commitment inventory-root bootstrap-complete current-inventory-nav
+            treasury-assets proven-liabilities deed-count total-sols reserve-sols
+            state-version))
+        "CURRENT_STATE")
+      (require
+        (= next-state
+          (state-commitment next-root 1 (- current-inventory-nav deed-value)
+            treasury-assets proven-liabilities (- deed-count 1)
+            total-sols (+ reserve-sols principal) (+ state-version 1)))
+        "NEXT_STATE")
+      (require
+        (= statutes-content
+          (statutes-content-hash parameters-root collections-root oracle-root
+            routes-root liquidity-root pauses-root registry-version
+            statutes-config))
+        "STATUTES_CONTENT")
+      (require
+        (= op-hash
+          (operation-hash SOLS_TO_DEED pool-coin-id current-state next-state record
+            vault-launcher-id vault-coin-id destination principal protocol-amount
+            rewards-amount quote-expires statutes-content registry-version))
+        "OP_HASH")
+      (require (> deed-count 0) "DEED_COUNT_EMPTY")
+      (require (> (backing-value current-inventory-nav treasury-assets proven-liabilities) 0)
+               "BACKING_EMPTY")
+      (require (> (circulating-sols total-sols reserve-sols) 0)
+               "CIRCULATING_EMPTY")
+      (require (> principal 0) "PRINCIPAL_EMPTY")
+      (require (gte (circulating-sols total-sols reserve-sols) principal)
+               "PRINCIPAL_SUPPLY")
+      (require (gte current-inventory-nav deed-value) "INVENTORY_VALUE")
+      (require (gte total-sols (+ reserve-sols principal)) "RESERVE_CAP")
+      (require (is-size-b32 vault-launcher-id) "VAULT_LAUNCHER")
+      (require (is-size-b32 vault-coin-id) "VAULT_COIN")
+      (require (is-size-b32 members-root) "MEMBERS_ROOT")
+      (require (is-size-b32 identity-root) "IDENTITY_ROOT")
+      (require (not (= identity-root ZKPASSPORT_EMPTY_ATTEST_ROOT))
+               "ZKPASSPORT")
+      (require (= bridge-policy (zk-policy statutes-config)) "BRIDGE_POLICY")
+      (merge-lists
+        (list
+          (list CREATE_COIN
+            (compute-inner-ph mod-hash singleton-struct statutes-config market-config
+              next-root 1 (- current-inventory-nav deed-value) treasury-assets
+              proven-liabilities (- deed-count 1) total-sols
+              (+ reserve-sols principal) (+ state-version 1))
+            pool-amount)
+          (statutes-evidence-condition pool-coin-id parameters collection pause-result
+            parameters-root collections-root oracle-root routes-root
+            liquidity-root pauses-root registry-version statutes-config)
+          (vault-operation-condition singleton-struct statutes-config market-config
+            op-hash vault-launcher-id vault-coin-id owner-pubkey auth-type members-root
+            identity-root bridge-policy)
+          (buyer-payment-condition statutes-config market-config pool-coin-id principal
+                                   protocol-amount rewards-amount)
+          (list ASSERT_COIN_ANNOUNCEMENT
+            (sha256 custody-coin-id (deed-release-message commitment destination)))
+          (list CREATE_PUZZLE_ANNOUNCEMENT
+            (pool-release-message pool-coin-id custody-coin-id commitment destination))
+          (list ASSERT_SECONDS_ABSOLUTE (nth 4 collection))
+          (list ASSERT_BEFORE_SECONDS_ABSOLUTE quote-expires)
+          (list CREATE_PUZZLE_ANNOUNCEMENT
+            (concat PROTOCOL_PREFIX (sha256tree (list SWAP_OPERATION_TAG op-hash))))
+          (list REMARK PROTOCOL_PREFIX SWAP_OPERATION_TAG SOLS_TO_DEED op-hash
+                principal protocol-amount rewards-amount))
+        (identity-conditions singleton-struct pool-coin-id pool-inner-puzzlehash
+                             pool-amount))))
+
+  (assert
+    (require (is-size-b32 my_id) "POOL_COIN")
+    (require (is-size-b32 my_inner_puzzlehash) "POOL_INNER")
+    (require (is-uint64 my_amount) "POOL_AMOUNT")
+    (require (> my_amount 0) "POOL_AMOUNT_ZERO")
+    (require (= (logand my_amount 1) 1) "POOL_AMOUNT_EVEN")
+    (if (= spend_case DEED_TO_SOLS)
+      (spend-deed-to-sols
+        MOD_HASH SINGLETON_STRUCT STATUTES_CONFIG MARKET_CONFIG
+        INVENTORY_ROOT BOOTSTRAP_COMPLETE INVENTORY_NAV TREASURY_ASSETS
+        PROVEN_LIABILITIES DEED_COUNT TOTAL_SOLS RESERVE_SOLS STATE_VERSION
+        my_id my_inner_puzzlehash my_amount
+        (nth 0 params) (nth 1 params) (nth 2 params) (nth 3 params)
+        (nth 4 params) (nth 5 params) (nth 6 params) (nth 7 params)
+        (nth 8 params) (nth 9 params) (nth 10 params) (nth 11 params)
+        (nth 12 params) (nth 13 params) (nth 14 params) (nth 15 params)
+        (nth 16 params) (nth 17 params) (nth 18 params) (nth 19 params)
+        (nth 20 params) (nth 21 params) (nth 22 params) (nth 23 params)
+        (nth 24 params) (nth 25 params) (nth 26 params) (nth 27 params)
+        (nth 28 params) (nth 29 params) (nth 30 params) (nth 31 params)
+        (nth 32 params) (nth 33 params) (nth 34 params) (nth 35 params)
+        (nth 36 params) (nth 37 params) (nth 38 params))
+      (if (= spend_case SOLS_TO_DEED)
+        (spend-sols-to-deed
+          MOD_HASH SINGLETON_STRUCT STATUTES_CONFIG MARKET_CONFIG
+          INVENTORY_ROOT BOOTSTRAP_COMPLETE INVENTORY_NAV TREASURY_ASSETS
+          PROVEN_LIABILITIES DEED_COUNT TOTAL_SOLS RESERVE_SOLS STATE_VERSION
+          my_id my_inner_puzzlehash my_amount
+          (nth 0 params) (nth 1 params) (nth 2 params) (nth 3 params)
+          (nth 4 params) (nth 5 params) (nth 6 params) (nth 7 params)
+          (nth 8 params) (nth 9 params) (nth 10 params) (nth 11 params)
+          (nth 12 params) (nth 13 params) (nth 14 params) (nth 15 params)
+          (nth 16 params) (nth 17 params) (nth 18 params) (nth 19 params)
+          (nth 20 params) (nth 21 params) (nth 22 params) (nth 23 params)
+          (nth 24 params) (nth 25 params) (nth 26 params) (nth 27 params)
+          (nth 28 params) (nth 29 params) (nth 30 params) (nth 31 params)
+          (nth 32 params))
+        (x "UNSUPPORTED RC22 POOL ACTION"))))
+)

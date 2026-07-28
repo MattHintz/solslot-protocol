@@ -1,0 +1,855 @@
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;
+;; Per-user vault singleton for Solslot Protocol.
+;; Adapted for pool interactions.
+;;
+;; Spend cases:
+;; 'o' - deposit to pool: vault releases deed, pool accepts
+;; 'i' - receive from pool: pool releases deed, vault accepts
+;; 'a' - accept pool offer: secondary purchase via atomic swap
+;; 's' - authorize one fully committed SmartDeed/Sols pool swap
+;; 'd' - accept one governed, fully funded SmartDeed redemption offer
+;; 'k' - update keys: rotate OWNER_PUBKEY and/or MEMBERS_MERKLE_ROOT without
+;;        redeploying the launcher; requires current key membership proof
+;; 'm' - migrate a deed to a new vault: re-bind a deed NFT (held at p2_vault)
+;;        from this vault's launcher to a destination vault's p2_vault.  The
+;;        on-chain half of the vault upgrade flow (research/SOLSLOT_VAULT_UPGRADE_DESIGN.md);
+;;        BLS-only, owner-signed over the destination.
+;;
+;; Auth types (curried as AUTH_TYPE):
+;; 1 - BLS signature (AGG_SIG_ME) — Chia native wallets (Goby, Sage)
+;; 2 - secp256r1 signature — passkeys / WebAuthn
+;; 3 - secp256k1 signature — EVM wallets (MetaMask, Coinbase Wallet) via EIP-712
+;;
+;; For AUTH_TYPE 1 and 2: OWNER_PUBKEY is the BLS G1Element (48 bytes)
+;; For AUTH_TYPE 3:        OWNER_PUBKEY is the compressed secp256k1 pubkey (33 bytes)
+;;
+;; MEMBERS_MERKLE_ROOT (curried): Merkle root of authorised public keys.
+;; spend_update_keys verifies the current OWNER_PUBKEY is a member before
+;; allowing rotation.  Single-key vaults use a one-leaf Merkle tree.
+;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(mod
+  (SINGLETON_STRUCT
+   OWNER_PUBKEY
+   AUTH_TYPE
+   MEMBERS_MERKLE_ROOT
+   IDENTITY_ATTEST_ROOT
+   ZKPASSPORT_BRIDGE_POLICY_HASH
+   POOL_SINGLETON_MOD_HASH
+   POOL_SINGLETON_LAUNCHER_ID
+   POOL_SINGLETON_LAUNCHER_PUZZLE_HASH
+   my_id
+   my_inner_puzzlehash
+   my_amount
+   spend_case
+   p
+  )
+
+  (include "condition_codes.clib")
+  (include "utils.clib")
+  (include "utility_macros.clib")
+  (include "merkle_utils.clib")
+
+  (defconst SPEND_DEPOSIT_TO_POOL 'o')
+  (defconst SPEND_RECEIVE_FROM_POOL 'i')
+  (defconst SPEND_ACCEPT_OFFER 'a')
+  (defconst SPEND_AUTHORIZE_SOLS_SWAP 's')
+  (defconst SPEND_ACCEPT_REDEMPTION 'd')
+  (defconst SPEND_UPDATE_KEYS 'k')
+  (defconst SPEND_UPDATE_IDENTITY 'z')
+  (defconst SPEND_MIGRATE 'm')
+
+  ;; Authentication type constants
+  (defconst AUTH_TYPE_BLS 1)
+  (defconst AUTH_TYPE_SECP256R1 2)
+  (defconst AUTH_TYPE_SECP256K1 3)
+
+  ;; EIP-712 constants for secp256k1 path.
+  ;;
+  ;; PREFIX_AND_DOMAIN_SEPARATOR is the 34-byte raw concatenation
+  ;;   0x1901 || DOMAIN_SEPARATOR
+  ;; used as a prefix to keccak256(typehash || struct_fields).
+  ;;
+  ;; DOMAIN_SEPARATOR = keccak256(
+  ;;   keccak256("EIP712Domain(string name,string version,uint256 chainId)")
+  ;;   || keccak256("Solslot Vault")
+  ;;   || keccak256("2")
+  ;;   || pad32(11155111)
+  ;; )
+  ;;
+  ;; The domain is pinned to the fresh Solslot alpha deployment on Ethereum
+  ;; Sepolia. To regenerate this constant after a domain change run:
+  ;;   python -c "from solslot_puzzles.vault_driver import eip712_prefix_and_domain_separator as f; print('0x'+f().hex())"
+  (defconstant PREFIX_AND_DOMAIN_SEPARATOR 0x190140f26a3f7cdc037a9df8d20b451c5f8029b9000d9cf0ecfd79a2f137f94027d7)
+  ;; SOLSLOT_VAULT_TYPEHASH = keccak256("SolslotVaultSpend(bytes32 spend_case,bytes32 deed_launcher_id,bytes32 vault_coin_id)")
+  (defconstant SOLSLOT_VAULT_TYPEHASH 0x1af9d01361853ac94263ad6f6b97c57fc9802ddaf2c0afd60acf85fcdf4c8580)
+  ;; 31 zero bytes used to right-pad a 1-byte spend_case atom into an EIP-712 bytes32 field.
+  ;; Driver produces spend_case as `spend_case.ljust(32, b"\x00")`; this constant matches.
+  (defconstant SPEND_CASE_PAD_31_ZEROS 0x00000000000000000000000000000000000000000000000000000000000000)
+  (defconstant ZKPASSPORT_ATTEST_DOMAIN 0x736f6c736c6f742d7a6b70617373706f72742d7661756c742d6174746573746174696f6e2d7632)
+  (defconstant ZKPASSPORT_POLICY_VERSION 2)
+  (defconstant ZKPASSPORT_EMPTY_ATTEST_ROOT 0x4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a)
+  (defconstant ZERO_B32 0x0000000000000000000000000000000000000000000000000000000000000000)
+
+  ;; Pool spend case constants for announcement matching
+  (defconst POOL_SPEND_DEPOSIT 1)
+  (defconst POOL_SPEND_REDEEM 2)
+  (defconst POOL_SPEND_GENERATE_OFFER 5)
+  (defconst POOL_SPEND_V2_SPECIFIC_DEED_SWAP 6)
+  (defconstant VAULT_SOLS_SWAP_TAG 0x56534f4c) ;; "VSOL"
+  (defconstant VAULT_REDEMPTION_ACCEPT_TAG 0x52444131) ;; "RDA1"
+  (defconstant OFFER_MOD_HASH 0xcfbfdeed5c4ca2de3d0bf520b9cb4bb7743a359bd2e6a188d19ce7dffc21d3e7)
+
+  (defun base_conditions (SINGLETON_STRUCT my_id my_amount my_inner_puzzlehash)
+    (list
+      (list ASSERT_MY_COIN_ID my_id)
+      (list ASSERT_MY_AMOUNT my_amount)
+      (list ASSERT_MY_PUZZLEHASH (calculate_full_puzzle_hash SINGLETON_STRUCT my_inner_puzzlehash))
+    )
+  )
+
+  ;; Time-bound a spend: require block timestamp to be within [now - MAX_TX_BLOCK_TIME, now + MAX_TX_BLOCK_TIME].
+  ;; Prevents stale spend bundles being held in the mempool indefinitely (hogging / replay of old bundles).
+  ;; current_spend_timestamp is supplied by the spender; the two assertions pin it to the actual block.
+  (defconst MAX_TX_BLOCK_TIME 120)
+  (defun time_bound_conditions (current_spend_timestamp)
+    (list
+      (list ASSERT_SECONDS_ABSOLUTE (- current_spend_timestamp MAX_TX_BLOCK_TIME))
+      (list ASSERT_BEFORE_SECONDS_ABSOLUTE (+ current_spend_timestamp MAX_TX_BLOCK_TIME))
+    )
+  )
+
+  ;; -------------------------------------------------------------------------
+  ;; Authentication.  Two entry points:
+  ;;
+  ;;   authenticate_spend_oi — used by 'o' (deposit) and 'i' (receive).  All three
+  ;;     auth types supported.  Binds (spend_case, deed_launcher_id, my_id) into
+  ;;     the signed message, matching the EIP-712 typehash declared above.
+  ;;     This closes CRITICAL-2 (secp digest mismatch) and includes my_id in the
+  ;;     signed payload for HIGH-5 (replay across singleton lineage) on the secp
+  ;;     paths.
+  ;;
+  ;;   authenticate_spend_bls_only — used by 'a' (accept_offer) and 'k' (update_keys).
+  ;;     Only AUTH_TYPE_BLS is supported.  Attempting secp auth on these spend cases
+  ;;     raises "SECP AUTH NOT YET SUPPORTED FOR THIS SPEND CASE" — safer than the
+  ;;     previous silently-broken digest.  Secp support for 'a' and 'k' requires
+  ;;     separate EIP-712 typehashes (they bind additional fields: token_amount,
+  ;;     new_owner_pubkey, new_merkle_root) and is deferred to the CRIT-2 extension.
+  ;; -------------------------------------------------------------------------
+  (defun authenticate_spend_oi (AUTH_TYPE OWNER_PUBKEY spend_case deed_launcher_id my_id signature_data)
+    (if (= AUTH_TYPE AUTH_TYPE_BLS)
+      (list AGG_SIG_ME OWNER_PUBKEY
+            (sha256tree (list spend_case deed_launcher_id my_id)))
+      (if (= AUTH_TYPE AUTH_TYPE_SECP256R1)
+        (verify_secp256r1 OWNER_PUBKEY spend_case deed_launcher_id my_id signature_data)
+        (if (= AUTH_TYPE AUTH_TYPE_SECP256K1)
+          (verify_secp256k1 OWNER_PUBKEY spend_case deed_launcher_id my_id signature_data)
+          (x "UNSUPPORTED AUTH TYPE")
+        )
+      )
+    )
+  )
+
+  (defun authenticate_spend_bls_only (AUTH_TYPE OWNER_PUBKEY msg)
+    (if (= AUTH_TYPE AUTH_TYPE_BLS)
+      (list AGG_SIG_ME OWNER_PUBKEY msg)
+      (x "SECP AUTH NOT YET SUPPORTED FOR THIS SPEND CASE")
+    )
+  )
+
+  ;; Authenticate a complete operation hash. The pool computes the hash from
+  ;; every economic and custody field; the vault binds it to its current coin.
+  (defun authenticate_operation
+      (AUTH_TYPE OWNER_PUBKEY spend_case operation_hash vault_coin_id signature_data)
+    (if (= AUTH_TYPE AUTH_TYPE_BLS)
+      (list AGG_SIG_ME OWNER_PUBKEY operation_hash)
+      (if (= AUTH_TYPE AUTH_TYPE_SECP256R1)
+        (verify_secp256r1
+          OWNER_PUBKEY
+          spend_case
+          operation_hash
+          vault_coin_id
+          signature_data)
+        (if (= AUTH_TYPE AUTH_TYPE_SECP256K1)
+          (verify_secp256k1
+            OWNER_PUBKEY
+            spend_case
+            operation_hash
+            vault_coin_id
+            signature_data)
+          (x "UNSUPPORTED AUTH TYPE")))))
+
+  ;; Verify an EIP-712 secp256k1 signature inside a CLVM softfork.
+  ;;
+  ;; EIP-712 digest the wallet signs, matching vault_driver.signing_message_for_vault_spend:
+  ;;   struct_hash = keccak256(TYPEHASH || padright32(spend_case) || deed_launcher_id || my_id)
+  ;;   digest      = keccak256(PREFIX_AND_DOMAIN_SEPARATOR || struct_hash)
+  ;;
+  ;; secp256k1_verify returns 0 on success (CHIP-0011 / soft-fork opcode).
+  (defun verify_secp256k1 (pubkey spend_case deed_launcher_id my_id signature_data)
+    (if
+      (softfork
+        (q . 1303090)
+        (q . 1)
+        (mod (pubkey signature pds typehash sc_padded deed_id mid)
+          (if (= (secp256k1_verify pubkey
+                    (keccak256 pds (keccak256 typehash sc_padded deed_id mid))
+                    signature) 0)
+            ()
+            (x)
+          )
+        )
+        (list
+          pubkey
+          signature_data
+          PREFIX_AND_DOMAIN_SEPARATOR
+          SOLSLOT_VAULT_TYPEHASH
+          (concat spend_case SPEND_CASE_PAD_31_ZEROS)
+          deed_launcher_id
+          my_id
+        )
+      )
+      (x "SECP256K1 VERIFICATION FAILED")
+      (list REMARK "secp256k1 ok")
+    )
+  )
+
+  ;; Verify a secp256r1 (passkey / WebAuthn) signature inside a CLVM softfork.
+  ;; OWNER_PUBKEY must be the 65-byte uncompressed key (0x04 + X + Y).
+  ;; signature_data is a 64-byte compact (r+s) signature.
+  ;; The signed message is sha256(padright32(spend_case) || deed_launcher_id || my_id)
+  ;; — the same (spend_case, deed_launcher_id, my_id) binding used by the secp256k1 path,
+  ;; but hashed with sha256 (WebAuthn / CHIP-0029) instead of keccak256.
+  ;; secp256r1_verify returns 0 on success (CHIP-0029 soft-fork opcode).
+  (defun verify_secp256r1 (pubkey spend_case deed_launcher_id my_id signature_data)
+    (if
+      (softfork
+        (q . 1303090)
+        (q . 1)
+        (mod (pubkey signature sc_padded deed_id mid)
+          (if (= (secp256r1_verify pubkey (sha256 sc_padded deed_id mid) signature) 0)
+            ()
+            (x)
+          )
+        )
+        (list
+          pubkey
+          signature_data
+          (concat spend_case SPEND_CASE_PAD_31_ZEROS)
+          deed_launcher_id
+          my_id
+        )
+      )
+      (x "SECP256R1 VERIFICATION FAILED")
+      (list REMARK "secp256r1 ok")
+    )
+  )
+
+  (defun pool_full_puzzle_hash (POOL_SINGLETON_MOD_HASH POOL_SINGLETON_LAUNCHER_ID POOL_SINGLETON_LAUNCHER_PUZZLE_HASH pool_inner_puzhash)
+    (calculate_full_puzzle_hash
+      (c POOL_SINGLETON_MOD_HASH (c POOL_SINGLETON_LAUNCHER_ID POOL_SINGLETON_LAUNCHER_PUZZLE_HASH))
+      pool_inner_puzhash
+    )
+  )
+
+  ;; SPEND CASE 'o' — DEPOSIT TO POOL
+  ;; p = (deed_launcher_id current_timestamp signature_data)
+  ;; current_timestamp: Unix seconds supplied by the spender; pinned to the block via time_bound_conditions.
+  ;; signature_data: ignored for BLS, required 64-byte compact sig for secp256k1
+  ;;
+  ;; LOW-13 fix (2026-04-26): removed dead `pool_inner_puzhash` parameter.
+  ;; Pre-fix the puzzle accepted and size-validated this param but never
+  ;; consumed it; pure code smell + driver attack surface.  The 'a' (accept_offer)
+  ;; case still takes pool_inner_puzhash because it actually computes the pool's
+  ;; full puzzle hash from it.
+  (defun spend_deposit_to_pool (SINGLETON_STRUCT OWNER_PUBKEY AUTH_TYPE POOL_SINGLETON_MOD_HASH
+                                POOL_SINGLETON_LAUNCHER_ID POOL_SINGLETON_LAUNCHER_PUZZLE_HASH
+                                my_id my_inner_puzzlehash my_amount
+                                deed_launcher_id current_timestamp signature_data)
+    (assert
+      (is-size-b32 deed_launcher_id)
+      (is-uint64 current_timestamp)
+      (c
+        (authenticate_spend_oi AUTH_TYPE OWNER_PUBKEY SPEND_DEPOSIT_TO_POOL deed_launcher_id my_id signature_data)
+        (c
+          (list CREATE_PUZZLE_ANNOUNCEMENT
+            (concat PROTOCOL_PREFIX (sha256tree (list SPEND_DEPOSIT_TO_POOL deed_launcher_id))))
+          (c
+            (list CREATE_COIN my_inner_puzzlehash my_amount (list my_inner_puzzlehash))
+            (c
+              (list REMARK PROTOCOL_PREFIX SPEND_DEPOSIT_TO_POOL deed_launcher_id)
+              (merge-lists
+                (time_bound_conditions current_timestamp)
+                (base_conditions SINGLETON_STRUCT my_id my_amount my_inner_puzzlehash)
+              )
+            )
+          )
+        )
+      )
+    )
+  )
+
+  ;; SPEND CASE 'i' — RECEIVE FROM POOL
+  ;; p = (deed_launcher_id pool_inner_puzhash p2_vault_coin_id current_timestamp signature_data)
+  ;;
+  ;; Pairing protocol with p2_vault:
+  ;;   vault emits  CREATE_PUZZLE_ANNOUNCEMENT(PREFIX + sha256tree(list my_id deed_launcher_id my_inner_puzzlehash))
+  ;;   p2_vault asserts that announcement (ASSERT_PUZZLE_ANNOUNCEMENT from vault full puzzle hash)
+  ;;   p2_vault emits  CREATE_COIN_ANNOUNCEMENT(PREFIX + sha256(my_id deed_launcher_id my_inner_puzzlehash))
+  ;;   vault asserts   ASSERT_COIN_ANNOUNCEMENT from the *specific* p2_vault coin (p2_vault_coin_id)
+  ;; The p2_vault_coin_id is supplied by the spender and bound via sha256 — prevents forgery
+  ;; because the announcement hash commits to both p2_vault_coin_id and the deed parameters.
+  ;; SECURITY: p2_vault_coin_id must not equal my_id — the vault cannot assert its own announcement.
+  ;; Both sides must be in the same block — atomic co-spend.
+  ;; LOW-13 fix (2026-04-26): removed dead `pool_inner_puzhash` parameter
+  ;; — see the same fix on spend_deposit_to_pool above for rationale.
+  (defun spend_receive_from_pool (SINGLETON_STRUCT OWNER_PUBKEY AUTH_TYPE POOL_SINGLETON_MOD_HASH
+                                  POOL_SINGLETON_LAUNCHER_ID POOL_SINGLETON_LAUNCHER_PUZZLE_HASH
+                                  my_id my_inner_puzzlehash my_amount
+                                  deed_launcher_id p2_vault_coin_id current_timestamp signature_data)
+    (assert
+      (is-size-b32 deed_launcher_id)
+      (is-size-b32 p2_vault_coin_id)
+      ;; SECURITY: p2_vault_coin_id must be a *different* coin from this vault coin
+      (not (= p2_vault_coin_id my_id))
+      (is-uint64 current_timestamp)
+      (c
+        (authenticate_spend_oi AUTH_TYPE OWNER_PUBKEY SPEND_RECEIVE_FROM_POOL deed_launcher_id my_id signature_data)
+        (c
+          ;; Announce so p2_vault can assert this vault is being spent
+          (list CREATE_PUZZLE_ANNOUNCEMENT
+            (concat PROTOCOL_PREFIX (sha256tree (list my_id deed_launcher_id my_inner_puzzlehash))))
+          (c
+            ;; Assert the specific p2_vault coin announced delivery of the deed
+            (list ASSERT_COIN_ANNOUNCEMENT
+              (sha256 p2_vault_coin_id (concat PROTOCOL_PREFIX (sha256 my_id deed_launcher_id my_inner_puzzlehash))))
+            (c
+              (list CREATE_COIN my_inner_puzzlehash my_amount (list my_inner_puzzlehash))
+              (c
+                (list REMARK PROTOCOL_PREFIX SPEND_RECEIVE_FROM_POOL deed_launcher_id)
+                (merge-lists
+                  (time_bound_conditions current_timestamp)
+                  (base_conditions SINGLETON_STRUCT my_id my_amount my_inner_puzzlehash)
+                )
+              )
+            )
+          )
+        )
+      )
+    )
+  )
+
+  ;; SPEND CASE 'a' — ACCEPT POOL OFFER (secondary purchase)
+  ;; p = (deed_launcher_id token_amount pool_inner_puzhash current_timestamp signature_data)
+  ;; current_timestamp: Unix seconds supplied by the spender; pinned to the block via time_bound_conditions.
+  (defun spend_accept_offer (SINGLETON_STRUCT OWNER_PUBKEY AUTH_TYPE IDENTITY_ATTEST_ROOT ZKPASSPORT_BRIDGE_POLICY_HASH
+                             POOL_SINGLETON_MOD_HASH
+                             POOL_SINGLETON_LAUNCHER_ID POOL_SINGLETON_LAUNCHER_PUZZLE_HASH
+                             my_id my_inner_puzzlehash my_amount
+                             deed_launcher_id token_amount pool_inner_puzhash attestation_leaf_hash attestation_proof current_timestamp signature_data)
+    (assert
+      (is-size-b32 deed_launcher_id)
+      (is-uint64 token_amount)
+      (> token_amount 0)
+      (is-size-b32 pool_inner_puzhash)
+      ;; pool_inner_puzhash must not be the all-zeros 32-byte hash — that value
+      ;; constructs a degenerate pool_full_puzzle_hash that can never match any
+      ;; real deployed pool coin, turning the ASSERT_PUZZLE_ANNOUNCEMENT into an
+      ;; unspendable trap.  The 32-byte zero atom is the sha256 of nothing: reject it.
+      (not (= pool_inner_puzhash 0x0000000000000000000000000000000000000000000000000000000000000000))
+      (not (= IDENTITY_ATTEST_ROOT ZKPASSPORT_EMPTY_ATTEST_ROOT))
+      (not (= ZKPASSPORT_BRIDGE_POLICY_HASH ZERO_B32))
+      (is-size-b32 attestation_leaf_hash)
+      (= IDENTITY_ATTEST_ROOT (simplify_merkle_proof_after_leaf attestation_leaf_hash attestation_proof))
+      (is-uint64 current_timestamp)
+      (c
+        ;; HIGH-5 partial: include my_id in the BLS AGG_SIG_ME message.
+        ;; Secp support for 'a' requires a distinct EIP-712 typehash that covers
+        ;; token_amount; deferred to CRIT-2 extension.  authenticate_spend_bls_only
+        ;; raises if a secp AUTH_TYPE is attempted.
+        (authenticate_spend_bls_only AUTH_TYPE OWNER_PUBKEY
+          (sha256tree (list SPEND_ACCEPT_OFFER deed_launcher_id token_amount my_id)))
+        (c
+          (list ASSERT_PUZZLE_ANNOUNCEMENT
+            (sha256
+              (pool_full_puzzle_hash POOL_SINGLETON_MOD_HASH POOL_SINGLETON_LAUNCHER_ID POOL_SINGLETON_LAUNCHER_PUZZLE_HASH pool_inner_puzhash)
+              (concat PROTOCOL_PREFIX (sha256tree (list POOL_SPEND_V2_SPECIFIC_DEED_SWAP deed_launcher_id token_amount)))))
+          (c
+            (list CREATE_PUZZLE_ANNOUNCEMENT
+              (concat PROTOCOL_PREFIX (sha256tree (list SPEND_ACCEPT_OFFER deed_launcher_id token_amount my_id))))
+            (c
+              (list CREATE_COIN my_inner_puzzlehash my_amount (list my_inner_puzzlehash))
+              (c
+                (list REMARK PROTOCOL_PREFIX SPEND_ACCEPT_OFFER deed_launcher_id token_amount)
+                (merge-lists
+                  (time_bound_conditions current_timestamp)
+                  (base_conditions SINGLETON_STRUCT my_id my_amount my_inner_puzzlehash)
+                )
+              )
+            )
+          )
+        )
+      )
+    )
+  )
+
+  ;; SPEND CASE 'k' — UPDATE KEYS (key rotation / multi-sig upgrade)
+  ;; p = (vault_inner_mod_hash new_owner_pubkey new_merkle_root member_proof current_timestamp signature_data)
+  ;;
+  ;; Security model:
+  ;;   1. Verifies OWNER_PUBKEY IS a member of the current MEMBERS_MERKLE_ROOT (membership proof).
+  ;;      An attacker who doesn't hold a key in the tree cannot rotate.
+  ;;   2. Authenticates using the CURRENT OWNER_PUBKEY + AUTH_TYPE before accepting new keys.
+  ;;   3. Validates vault_inner_mod_hash by asserting curry_hashes(vault_inner_mod_hash, ...) == my_inner_puzzlehash.
+  ;;      This avoids the circular-dependency of defconstant (a puzzle cannot know its own mod hash at compile
+  ;;      time) while still rejecting any tampered mod hash at runtime.
+  ;;   4. Recomputes the new inner puzzle hash via curry_hashes — the exact tree-hash result,
+  ;;      not a sha256 shortcut over the concatenated arguments.
+  ;;   5. Emits CREATE_COIN to the correctly-derived new inner puzzle hash.
+  ;;
+  ;; p layout: (vault_inner_mod_hash new_owner_pubkey new_merkle_root member_proof current_timestamp signature_data)
+  ;;   vault_inner_mod_hash: sha256tree of the un-curried vault_singleton_inner mod (self-validated)
+  ;;   new_owner_pubkey:     raw bytes of the incoming owner public key
+  ;;   new_merkle_root:      32-byte new Merkle root for the updated member set
+  ;;   member_proof:         (bitpath . hashes) Merkle proof that OWNER_PUBKEY is in MEMBERS_MERKLE_ROOT
+  ;;   current_timestamp:    Unix seconds for time-bounding
+  ;;   signature_data:       64-byte secp sig or nil for BLS
+  (defun inner_puzzle_hash_for_updated_keys
+        (SINGLETON_STRUCT VAULT_INNER_MOD_HASH
+         new_owner_pubkey new_auth_type new_merkle_root
+         IDENTITY_ATTEST_ROOT ZKPASSPORT_BRIDGE_POLICY_HASH
+         POOL_SINGLETON_MOD_HASH POOL_SINGLETON_LAUNCHER_ID POOL_SINGLETON_LAUNCHER_PUZZLE_HASH)
+    ;; Reproduce curry_hashes(VAULT_INNER_MOD_HASH, quoted(SINGLETON_STRUCT), quoted(new_owner_pubkey),
+    ;;   quoted(new_auth_type), quoted(new_merkle_root), quoted(POOL_SINGLETON_MOD_HASH),
+    ;;   quoted(POOL_SINGLETON_LAUNCHER_ID), quoted(POOL_SINGLETON_LAUNCHER_PUZZLE_HASH))
+    ;; curry_hashes expects the sha256-of-quoted form of each parameter.
+    (curry_hashes VAULT_INNER_MOD_HASH
+      (sha256tree SINGLETON_STRUCT)
+      (sha256 1 new_owner_pubkey)
+      (sha256 1 new_auth_type)
+      (sha256 1 new_merkle_root)
+      (sha256 1 IDENTITY_ATTEST_ROOT)
+      (sha256 1 ZKPASSPORT_BRIDGE_POLICY_HASH)
+      (sha256 1 POOL_SINGLETON_MOD_HASH)
+      (sha256 1 POOL_SINGLETON_LAUNCHER_ID)
+      (sha256 1 POOL_SINGLETON_LAUNCHER_PUZZLE_HASH)
+    )
+  )
+
+  ;; LOW-11 + LOW-12 fix (2026-04-26):
+  ;;   - Add new_auth_type parameter so users can MIGRATE between BLS, secp256r1,
+  ;;     and secp256k1 keys.  Pre-fix, the curried AUTH_TYPE was reused on key
+  ;;     rotation, freezing the auth type for the lifetime of the vault.
+  ;;   - Validate new_auth_type ∈ {AUTH_TYPE_BLS, AUTH_TYPE_SECP256R1, AUTH_TYPE_SECP256K1}.
+  ;;   - Validate new_owner_pubkey size matches new_auth_type:
+  ;;       BLS         (1) → 48 bytes (G1Element)
+  ;;       secp256r1   (2) → 65 bytes (uncompressed 0x04 || X || Y)
+  ;;       secp256k1   (3) → 33 bytes (compressed)
+  ;;     Pre-fix, an owner could self-DoS by rotating to a wrong-size key.
+  ;;   - Bind new_auth_type into the BLS-signed message so the signer commits
+  ;;     to which auth type they are rotating to (defence-in-depth — without
+  ;;     this, the signer would only authorize the new pubkey, not the curve).
+  ;;
+  ;; Note: BLS-only authentication on the CURRENT key is preserved.  Secp
+  ;; rotation (signing 'k' with secp256k1 / secp256r1) requires a distinct
+  ;; EIP-712 typehash that covers (new_owner_pubkey, new_auth_type,
+  ;; new_merkle_root) and is deferred to the CRIT-2 extension.
+  (defun zkpassport_bridge_message (SINGLETON_STRUCT new_identity_attest_root ZKPASSPORT_BRIDGE_POLICY_HASH)
+    (sha256tree
+      (list
+        ZKPASSPORT_ATTEST_DOMAIN
+        ZKPASSPORT_POLICY_VERSION
+        (f (r SINGLETON_STRUCT))
+        new_identity_attest_root
+        ZKPASSPORT_BRIDGE_POLICY_HASH
+      )
+    )
+  )
+
+  (defun spend_update_keys (SINGLETON_STRUCT OWNER_PUBKEY AUTH_TYPE MEMBERS_MERKLE_ROOT
+                            IDENTITY_ATTEST_ROOT ZKPASSPORT_BRIDGE_POLICY_HASH
+                            POOL_SINGLETON_MOD_HASH POOL_SINGLETON_LAUNCHER_ID POOL_SINGLETON_LAUNCHER_PUZZLE_HASH
+                            my_id my_inner_puzzlehash my_amount
+                            vault_inner_mod_hash new_owner_pubkey new_auth_type new_merkle_root member_proof current_timestamp signature_data)
+    (assert
+      ;; vault_inner_mod_hash must be a valid 32-byte atom
+      (is-size-b32 vault_inner_mod_hash)
+      ;; SECURITY: validate vault_inner_mod_hash is consistent with the current inner puzzle hash.
+      ;; The spender supplies the mod hash; we verify it reproduces my_inner_puzzlehash exactly.
+      ;; This prevents a tampered mod hash from misdirecting the CREATE_COIN output.
+      (= my_inner_puzzlehash
+        (inner_puzzle_hash_for_updated_keys
+          SINGLETON_STRUCT vault_inner_mod_hash
+          OWNER_PUBKEY AUTH_TYPE MEMBERS_MERKLE_ROOT
+          IDENTITY_ATTEST_ROOT ZKPASSPORT_BRIDGE_POLICY_HASH
+          POOL_SINGLETON_MOD_HASH POOL_SINGLETON_LAUNCHER_ID POOL_SINGLETON_LAUNCHER_PUZZLE_HASH))
+      ;; new_merkle_root must be a valid 32-byte hash
+      (is-size-b32 new_merkle_root)
+      ;; LOW-11: new_auth_type must be one of the three supported curves.
+      (any (= new_auth_type AUTH_TYPE_BLS)
+           (= new_auth_type AUTH_TYPE_SECP256R1)
+           (= new_auth_type AUTH_TYPE_SECP256K1))
+      ;; LOW-12: new_owner_pubkey size must match new_auth_type.
+      (if (= new_auth_type AUTH_TYPE_BLS)
+          (= (strlen new_owner_pubkey) 48)
+          (if (= new_auth_type AUTH_TYPE_SECP256R1)
+              (= (strlen new_owner_pubkey) 65)
+              (= (strlen new_owner_pubkey) 33)))
+      (is-uint64 current_timestamp)
+      ;; SECURITY: verify OWNER_PUBKEY is a member of the current MEMBERS_MERKLE_ROOT
+      ;; before accepting any key rotation.  Prevents a third party from rotating keys
+      ;; without proof of membership in the current authorised set.
+      (= MEMBERS_MERKLE_ROOT (simplify_merkle_proof OWNER_PUBKEY member_proof))
+      (c
+        ;; Authenticate with the CURRENT key — rotation is only valid if you own the current key.
+        ;; LOW-11: bind new_auth_type into the signed payload so the signer commits to it.
+        ;; HIGH-5 partial: include my_id in the BLS message.  Secp support for 'k' requires
+        ;; a distinct EIP-712 typehash that covers (new_owner_pubkey, new_auth_type,
+        ;; new_merkle_root); deferred to CRIT-2 extension.  authenticate_spend_bls_only
+        ;; raises if a secp AUTH_TYPE is attempted.
+        (authenticate_spend_bls_only AUTH_TYPE OWNER_PUBKEY
+          (sha256tree (list SPEND_UPDATE_KEYS new_owner_pubkey new_auth_type new_merkle_root my_id)))
+        (c
+          ;; LOW-11: Re-create singleton at new_auth_type (NOT the current AUTH_TYPE),
+          ;; so users can migrate between curve families.
+          ;; This uses curry_hashes, NOT a sha256 shortcut — see inner_puzzle_hash_for_updated_keys.
+          (list CREATE_COIN
+            (inner_puzzle_hash_for_updated_keys
+              SINGLETON_STRUCT vault_inner_mod_hash
+              new_owner_pubkey new_auth_type new_merkle_root
+              IDENTITY_ATTEST_ROOT ZKPASSPORT_BRIDGE_POLICY_HASH
+              POOL_SINGLETON_MOD_HASH POOL_SINGLETON_LAUNCHER_ID POOL_SINGLETON_LAUNCHER_PUZZLE_HASH)
+            my_amount
+            (list my_inner_puzzlehash))
+          (c
+            (list REMARK PROTOCOL_PREFIX SPEND_UPDATE_KEYS new_merkle_root)
+            (merge-lists
+              (time_bound_conditions current_timestamp)
+              (base_conditions SINGLETON_STRUCT my_id my_amount my_inner_puzzlehash)
+            )
+          )
+        )
+      )
+    )
+  )
+
+  (defun spend_update_identity (SINGLETON_STRUCT OWNER_PUBKEY AUTH_TYPE MEMBERS_MERKLE_ROOT
+                                IDENTITY_ATTEST_ROOT ZKPASSPORT_BRIDGE_POLICY_HASH
+                                POOL_SINGLETON_MOD_HASH POOL_SINGLETON_LAUNCHER_ID POOL_SINGLETON_LAUNCHER_PUZZLE_HASH
+                                my_id my_inner_puzzlehash my_amount
+                                vault_inner_mod_hash new_identity_attest_root bridge_parent_id bridge_amount current_timestamp signature_data)
+    (assert
+      (is-size-b32 vault_inner_mod_hash)
+      (= my_inner_puzzlehash
+        (inner_puzzle_hash_for_updated_keys
+          SINGLETON_STRUCT vault_inner_mod_hash
+          OWNER_PUBKEY AUTH_TYPE MEMBERS_MERKLE_ROOT
+          IDENTITY_ATTEST_ROOT ZKPASSPORT_BRIDGE_POLICY_HASH
+          POOL_SINGLETON_MOD_HASH POOL_SINGLETON_LAUNCHER_ID POOL_SINGLETON_LAUNCHER_PUZZLE_HASH))
+      (= IDENTITY_ATTEST_ROOT ZKPASSPORT_EMPTY_ATTEST_ROOT)
+      (is-size-b32 new_identity_attest_root)
+      (not (= new_identity_attest_root ZKPASSPORT_EMPTY_ATTEST_ROOT))
+      (is-size-b32 bridge_parent_id)
+      (is-uint64 bridge_amount)
+      (> bridge_amount 0)
+      (is-uint64 current_timestamp)
+      (c
+        (authenticate_spend_oi AUTH_TYPE OWNER_PUBKEY SPEND_UPDATE_IDENTITY new_identity_attest_root my_id signature_data)
+        (c
+          (list ASSERT_COIN_ANNOUNCEMENT
+            (sha256
+              (sha256 bridge_parent_id ZKPASSPORT_BRIDGE_POLICY_HASH bridge_amount)
+              (concat PROTOCOL_PREFIX
+                (zkpassport_bridge_message SINGLETON_STRUCT new_identity_attest_root ZKPASSPORT_BRIDGE_POLICY_HASH))))
+          (c
+            (list CREATE_COIN
+              (inner_puzzle_hash_for_updated_keys
+                SINGLETON_STRUCT vault_inner_mod_hash
+                OWNER_PUBKEY AUTH_TYPE MEMBERS_MERKLE_ROOT
+                new_identity_attest_root ZKPASSPORT_BRIDGE_POLICY_HASH
+                POOL_SINGLETON_MOD_HASH POOL_SINGLETON_LAUNCHER_ID POOL_SINGLETON_LAUNCHER_PUZZLE_HASH)
+              my_amount
+              (list my_inner_puzzlehash))
+            (c
+              (list REMARK PROTOCOL_PREFIX SPEND_UPDATE_IDENTITY new_identity_attest_root)
+              (merge-lists
+                (time_bound_conditions current_timestamp)
+                (base_conditions SINGLETON_STRUCT my_id my_amount my_inner_puzzlehash)
+              )
+            )
+          )
+        )
+      )
+    )
+  )
+
+  ;; SPEND CASE 'm' — MIGRATE A DEED TO A NEW VAULT
+  ;; p = (deed_launcher_id new_p2_vault_puzzlehash current_timestamp signature_data)
+  ;;
+  ;; Purpose: authorize a deed NFT — held at p2_vault, whose inner puzzle is
+  ;; p2_vault curried to THIS vault's launcher id — to re-bind to a NEW vault by
+  ;; spending the deed to `new_p2_vault_puzzlehash`, the p2_vault puzzle hash
+  ;; curried to the destination vault's launcher id.  This is the on-chain half
+  ;; of the vault upgrade flow (research/SOLSLOT_VAULT_UPGRADE_DESIGN.md): the
+  ;; user launches a new vault at the canonical version, then migrates each deed
+  ;; from the old vault to the new one with one signed spend per deed.
+  ;;
+  ;; Co-spend protocol with p2_vault (the deed's inner puzzle), mirroring 'i':
+  ;;   vault emits   CREATE_PUZZLE_ANNOUNCEMENT(PREFIX + sha256tree(list my_id deed_launcher_id new_p2_vault_puzzlehash))
+  ;;   p2_vault asserts that announcement (ASSERT_PUZZLE_ANNOUNCEMENT from the vault full puzzle hash)
+  ;;     and CREATE_COINs the deed to new_p2_vault_puzzlehash.
+  ;; The deed keeps its launcher id (identity preserved); only its controller
+  ;; (the vault launcher curried inside p2_vault) changes.
+  ;;
+  ;; AUTH: BLS-only, like 'a' and 'k'.  The signed message binds
+  ;;   (SPEND_MIGRATE, deed_launcher_id, new_p2_vault_puzzlehash, my_id)
+  ;; so the OWNER commits to the destination — a relayer assembling the spend
+  ;; cannot redirect the deed to a vault it controls.  secp256k1 / secp256r1
+  ;; migrate needs a distinct EIP-712 typehash covering new_p2_vault_puzzlehash
+  ;; and is deferred to the CRIT-2 extension (authenticate_spend_bls_only raises
+  ;; for secp AUTH_TYPEs).
+  ;;
+  ;; The vault recreates itself unchanged (CREATE_COIN my_inner_puzzlehash) — it
+  ;; stays alive and may be emptied deed-by-deed, then abandoned/melted later.
+  (defun spend_migrate (SINGLETON_STRUCT OWNER_PUBKEY AUTH_TYPE
+                        my_id my_inner_puzzlehash my_amount
+                        deed_launcher_id new_p2_vault_puzzlehash current_timestamp signature_data)
+    (assert
+      (is-size-b32 deed_launcher_id)
+      (is-size-b32 new_p2_vault_puzzlehash)
+      ;; Reject the all-zeros destination — a degenerate puzzle hash that would
+      ;; burn the deed into an unspendable coin (same rationale as the
+      ;; pool_inner_puzhash zero-check in 'a').
+      (not (= new_p2_vault_puzzlehash 0x0000000000000000000000000000000000000000000000000000000000000000))
+      (is-uint64 current_timestamp)
+      (c
+        ;; BLS-only auth that binds the destination; secp deferred (raises).
+        (authenticate_spend_bls_only AUTH_TYPE OWNER_PUBKEY
+          (sha256tree (list SPEND_MIGRATE deed_launcher_id new_p2_vault_puzzlehash my_id)))
+        (c
+          ;; The announcement p2_vault asserts to release the deed to the new vault.
+          (list CREATE_PUZZLE_ANNOUNCEMENT
+            (concat PROTOCOL_PREFIX (sha256tree (list my_id deed_launcher_id new_p2_vault_puzzlehash))))
+          (c
+            ;; Recreate this vault unchanged.
+            (list CREATE_COIN my_inner_puzzlehash my_amount (list my_inner_puzzlehash))
+            (c
+              (list REMARK PROTOCOL_PREFIX SPEND_MIGRATE deed_launcher_id new_p2_vault_puzzlehash)
+              (merge-lists
+                (time_bound_conditions current_timestamp)
+                (base_conditions SINGLETON_STRUCT my_id my_amount my_inner_puzzlehash)
+              )
+            )
+          )
+        )
+      )
+    )
+  )
+
+  ;; SPEND CASE 's' — AUTHORIZE SMARTDEED/SOLS SWAP
+  ;; p = (operation_hash quote_expires_at signature_data deed_transfer)
+  ;; deed_transfer is () for Sols-to-deed, or
+  ;; (deed_launcher_id p2_vault_coin_id smart_deed_inner_hash) for
+  ;; deed-to-Sols. The latter moves the held deed into its immutable
+  ;; SmartDeed inner in the same approval; that ephemeral SmartDeed then
+  ;; performs the protocol-bound pool deposit.
+  ;;
+  ;; pool_singleton_inner_v4 constructs operation_hash from the exact deed,
+  ;; direction, live pool coin, payout or destination, quote, and statutes
+  ;; evidence. This spend proves the current enrolled owner approved exactly
+  ;; that operation. It never moves a deed or Sols by itself.
+  (defun spend_authorize_sols_swap
+      (SINGLETON_STRUCT OWNER_PUBKEY AUTH_TYPE IDENTITY_ATTEST_ROOT
+       ZKPASSPORT_BRIDGE_POLICY_HASH my_id my_inner_puzzlehash my_amount
+       operation_hash quote_expires_at signature_data deed_transfer)
+    (assert
+      (is-size-b32 operation_hash)
+      (is-uint64 quote_expires_at)
+      (> quote_expires_at 0)
+      (not (= IDENTITY_ATTEST_ROOT ZKPASSPORT_EMPTY_ATTEST_ROOT))
+      (not (= ZKPASSPORT_BRIDGE_POLICY_HASH ZERO_B32))
+      (if deed_transfer
+        (assert
+          (is-size-b32 (f deed_transfer))
+          (is-size-b32 (f (r deed_transfer)))
+          (is-size-b32 (f (r (r deed_transfer))))
+          (not (= (f (r (r deed_transfer))) ZERO_B32))
+          1)
+        1)
+      (c
+        (authenticate_operation
+          AUTH_TYPE OWNER_PUBKEY SPEND_AUTHORIZE_SOLS_SWAP
+          operation_hash my_id signature_data)
+        (c
+          (list CREATE_PUZZLE_ANNOUNCEMENT
+            (concat PROTOCOL_PREFIX
+              (sha256tree
+                (list VAULT_SOLS_SWAP_TAG operation_hash my_id))))
+          (c
+            (list CREATE_COIN
+              my_inner_puzzlehash my_amount (list my_inner_puzzlehash))
+            (merge-lists
+              (if deed_transfer
+                (list
+                  (list CREATE_PUZZLE_ANNOUNCEMENT
+                    (concat PROTOCOL_PREFIX
+                      (sha256tree
+                        (list my_id (f deed_transfer)
+                          (f (r (r deed_transfer)))))))
+                  (list ASSERT_COIN_ANNOUNCEMENT
+                    (sha256
+                      (f (r deed_transfer))
+                      (concat PROTOCOL_PREFIX
+                        (sha256 my_id (f deed_transfer)
+                          (f (r (r deed_transfer))))))))
+                ())
+              (c
+                (list ASSERT_BEFORE_SECONDS_ABSOLUTE quote_expires_at)
+                (c
+                  (list REMARK
+                    PROTOCOL_PREFIX SPEND_AUTHORIZE_SOLS_SWAP operation_hash)
+                  (base_conditions
+                    SINGLETON_STRUCT my_id my_amount my_inner_puzzlehash)))))))))
+
+  ;; SPEND CASE 'd' — ACCEPT A GOVERNED FUNDED REDEMPTION
+  ;;
+  ;; p = ((deed_launcher_id deed_commitment collection_id settlement_id)
+  ;;      (payment_asset_id payment_amount payment_recipient_inner_puzzlehash
+  ;;       payment_nonce payment_announcement_id)
+  ;;      signature_data)
+  ;;
+  ;; The permanent maker offer supplies the exact wUSDC.b payment and requests
+  ;; this exact SmartDeed. The vault authorizes its p2_vault coin to move only
+  ;; to OFFER_MOD and asserts the standard CAT settlement announcement for the
+  ;; exact requested payment. All review fields are included in operation_hash.
+  (defun spend_accept_redemption
+      (SINGLETON_STRUCT OWNER_PUBKEY AUTH_TYPE IDENTITY_ATTEST_ROOT
+       ZKPASSPORT_BRIDGE_POLICY_HASH my_id my_inner_puzzlehash my_amount
+       deed_data payment_data signature_data)
+    (assert
+      (is-size-b32 (f deed_data))
+      (is-size-b32 (f (r deed_data)))
+      (is-size-b32 (f (r (r deed_data))))
+      (is-size-b32 (f (r (r (r deed_data)))))
+      (is-size-b32 (f payment_data))
+      (is-uint64 (f (r payment_data)))
+      (> (f (r payment_data)) 0)
+      (is-size-b32 (f (r (r payment_data))))
+      (is-size-b32 (f (r (r (r payment_data)))))
+      (is-size-b32 (f (r (r (r (r payment_data))))))
+      (not (= IDENTITY_ATTEST_ROOT ZKPASSPORT_EMPTY_ATTEST_ROOT))
+      (not (= ZKPASSPORT_BRIDGE_POLICY_HASH ZERO_B32))
+      (c
+        (authenticate_operation
+          AUTH_TYPE OWNER_PUBKEY SPEND_ACCEPT_REDEMPTION
+          (sha256tree
+            (list
+              VAULT_REDEMPTION_ACCEPT_TAG
+              my_id
+              deed_data
+              payment_data))
+          my_id signature_data)
+        (c
+          (list ASSERT_PUZZLE_ANNOUNCEMENT
+            (f (r (r (r (r payment_data))))))
+          (c
+            (list CREATE_PUZZLE_ANNOUNCEMENT
+              (concat PROTOCOL_PREFIX
+                (sha256tree
+                  (list my_id (f deed_data) OFFER_MOD_HASH))))
+            (c
+              (list CREATE_COIN
+                my_inner_puzzlehash my_amount (list my_inner_puzzlehash))
+              (c
+                (list REMARK
+                  PROTOCOL_PREFIX SPEND_ACCEPT_REDEMPTION
+                  (f deed_data)
+                  (f (r (r (r deed_data))))
+                  (f (r payment_data)))
+                (base_conditions
+                  SINGLETON_STRUCT my_id my_amount
+                  my_inner_puzzlehash))))))))
+
+  ;; Main dispatch — validate common inputs, then route.
+  ;; p layout per spend case:
+  ;;   'o'  (deed_launcher_id current_timestamp signature_data)                                  — LOW-13: dropped dead pool_inner_puzhash
+  ;;   'i'  (deed_launcher_id p2_vault_coin_id current_timestamp signature_data)                 — LOW-13: dropped dead pool_inner_puzhash
+  ;;   'a'  (deed_launcher_id token_amount pool_inner_puzhash current_timestamp signature_data)  — 'a' actually uses pool_inner_puzhash
+  ;;   's'  (operation_hash quote_expires_at signature_data)
+  ;;   'd'  ((deed_launcher_id deed_commitment collection_id settlement_id)
+  ;;         (payment_asset_id payment_amount payment_recipient_inner_puzzlehash
+  ;;          payment_nonce payment_announcement_id) signature_data)
+  ;;   'k'  (vault_inner_mod_hash new_owner_pubkey new_auth_type new_merkle_root member_proof current_timestamp signature_data)
+  ;;        — LOW-11 fix added new_auth_type to allow BLS↔secp migration on rotation.
+  ;;   'm'  (deed_launcher_id new_p2_vault_puzzlehash current_timestamp signature_data)  — BLS-only deed migration to a new vault.
+  ;; For BLS (AUTH_TYPE 1): signature_data may be nil — AGG_SIG_ME is enforced by the network.
+  ;; For secp256k1 (AUTH_TYPE 3): signature_data must be the 64-byte compact EIP-712 signature.
+  ;;
+  (assert
+    (is-size-b32 my_id)
+    (is-size-b32 my_inner_puzzlehash)
+    (is-uint64 my_amount)
+    ;; SECURITY: singleton amount must be > 0; a zero-amount singleton is non-standard
+    ;; and could cause lineage proof confusion in downstream puzzles.
+    (> my_amount 0)
+    (if (= spend_case SPEND_DEPOSIT_TO_POOL)
+      ;; LOW-13: 'o' solution shape now has 3 fields instead of 4.
+      (spend_deposit_to_pool SINGLETON_STRUCT OWNER_PUBKEY AUTH_TYPE POOL_SINGLETON_MOD_HASH
+                             POOL_SINGLETON_LAUNCHER_ID POOL_SINGLETON_LAUNCHER_PUZZLE_HASH
+                             my_id my_inner_puzzlehash my_amount
+                             (f p) (f (r p)) (f (r (r p))))
+      (if (= spend_case SPEND_RECEIVE_FROM_POOL)
+        ;; LOW-13: 'i' solution shape now has 4 fields instead of 5.
+        (spend_receive_from_pool SINGLETON_STRUCT OWNER_PUBKEY AUTH_TYPE POOL_SINGLETON_MOD_HASH
+                                 POOL_SINGLETON_LAUNCHER_ID POOL_SINGLETON_LAUNCHER_PUZZLE_HASH
+                                 my_id my_inner_puzzlehash my_amount
+                                 (f p) (f (r p)) (f (r (r p))) (f (r (r (r p)))))
+        (if (= spend_case SPEND_ACCEPT_OFFER)
+          (spend_accept_offer SINGLETON_STRUCT OWNER_PUBKEY AUTH_TYPE IDENTITY_ATTEST_ROOT ZKPASSPORT_BRIDGE_POLICY_HASH
+                              POOL_SINGLETON_MOD_HASH
+                              POOL_SINGLETON_LAUNCHER_ID POOL_SINGLETON_LAUNCHER_PUZZLE_HASH
+                              my_id my_inner_puzzlehash my_amount
+                              (f p) (f (r p)) (f (r (r p))) (f (r (r (r p)))) (f (r (r (r (r p))))) (f (r (r (r (r (r p)))))) (f (r (r (r (r (r (r p))))))))
+          (if (= spend_case SPEND_UPDATE_KEYS)
+            ;; LOW-11 fix: 'k' solution shape is now 7 fields:
+            ;;   vault_inner_mod_hash, new_owner_pubkey, new_auth_type,
+            ;;   new_merkle_root, member_proof, current_timestamp, signature_data
+            (spend_update_keys SINGLETON_STRUCT OWNER_PUBKEY AUTH_TYPE MEMBERS_MERKLE_ROOT
+                               IDENTITY_ATTEST_ROOT ZKPASSPORT_BRIDGE_POLICY_HASH
+                               POOL_SINGLETON_MOD_HASH POOL_SINGLETON_LAUNCHER_ID POOL_SINGLETON_LAUNCHER_PUZZLE_HASH
+                               my_id my_inner_puzzlehash my_amount
+                               (f p) (f (r p)) (f (r (r p))) (f (r (r (r p)))) (f (r (r (r (r p))))) (f (r (r (r (r (r p)))))) (f (r (r (r (r (r (r p))))))))
+            (if (= spend_case SPEND_UPDATE_IDENTITY)
+              (spend_update_identity SINGLETON_STRUCT OWNER_PUBKEY AUTH_TYPE MEMBERS_MERKLE_ROOT
+                                     IDENTITY_ATTEST_ROOT ZKPASSPORT_BRIDGE_POLICY_HASH
+                                     POOL_SINGLETON_MOD_HASH POOL_SINGLETON_LAUNCHER_ID POOL_SINGLETON_LAUNCHER_PUZZLE_HASH
+                                     my_id my_inner_puzzlehash my_amount
+                                     (f p) (f (r p)) (f (r (r p))) (f (r (r (r p)))) (f (r (r (r (r p))))) (f (r (r (r (r (r p)))))))
+              (if (= spend_case SPEND_MIGRATE)
+                (spend_migrate SINGLETON_STRUCT OWNER_PUBKEY AUTH_TYPE
+                               my_id my_inner_puzzlehash my_amount
+                               (f p) (f (r p)) (f (r (r p))) (f (r (r (r p)))))
+                (if (= spend_case SPEND_AUTHORIZE_SOLS_SWAP)
+                  (spend_authorize_sols_swap
+                    SINGLETON_STRUCT OWNER_PUBKEY AUTH_TYPE
+                    IDENTITY_ATTEST_ROOT ZKPASSPORT_BRIDGE_POLICY_HASH
+                    my_id my_inner_puzzlehash my_amount
+                    (f p) (f (r p)) (f (r (r p)))
+                    (f (r (r (r p)))))
+                  (if (= spend_case SPEND_ACCEPT_REDEMPTION)
+                    (spend_accept_redemption
+                      SINGLETON_STRUCT OWNER_PUBKEY AUTH_TYPE
+                      IDENTITY_ATTEST_ROOT ZKPASSPORT_BRIDGE_POLICY_HASH
+                      my_id my_inner_puzzlehash my_amount
+                      (f p) (f (r p)) (f (r (r p))))
+                    (x)) ;; unknown spend case
+                  )
+              )
+            )
+          )
+        )
+      )
+    )
+  )
+)

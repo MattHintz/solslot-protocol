@@ -42,6 +42,7 @@ _SGT_TAIL_MOD: Program | None = None
 _SGT_FREE_INNER_MOD: Program | None = None
 _SGT_LOCKED_INNER_MOD: Program | None = None
 _TRACKER_MOD: Program | None = None
+_TRACKER_V2_MOD: Program | None = None
 
 
 def proposal_tracker_mod() -> Program:
@@ -54,6 +55,14 @@ def proposal_tracker_mod() -> Program:
     if _TRACKER_MOD is None:
         _TRACKER_MOD = load_puzzle("governance_singleton_inner.clsp")
     return _TRACKER_MOD
+
+
+def proposal_tracker_v2_mod() -> Program:
+    """Return the RC22 tracker with typed statutes bill dispatch."""
+    global _TRACKER_V2_MOD
+    if _TRACKER_V2_MOD is None:
+        _TRACKER_V2_MOD = load_puzzle("governance_singleton_inner_v2.clsp")
+    return _TRACKER_V2_MOD
 
 
 def sgt_tail_mod() -> Program:
@@ -97,7 +106,14 @@ TRK_EXPIRE = 4
 BILL_MINT = b"M"           # 0x4d
 BILL_FREEZE = b"F"         # 0x46
 BILL_SETTLE = b"S"         # 0x53
+BILL_REDEMPTION = b"D"     # 0x44 — fund permanent wUSDC.b deed offers
 BILL_VAULT_VERSION = b"V"  # 0x56 — ratify a vault_version_registry code change
+BILL_PARAMETER = b"P"
+BILL_COLLECTION = b"N"
+BILL_ORACLE = b"O"
+BILL_ROUTE = b"R"
+BILL_PAUSE = b"U"
+REDEMPTION_FUND_TAG = b"RDF1"
 
 # Solslot announcement namespace prefix (utility_macros.clib PROTOCOL_PREFIX).
 PROTOCOL_PREFIX = bytes.fromhex("53")  # "S"
@@ -114,6 +130,7 @@ REGISTRY_TAG_ROUTINE = bytes.fromhex("5254")  # "RT"
 # deliberately exported for deterministic fixtures only; deployment plans must
 # provide their own nonzero co-signer public key.
 KOS_MINT_EXECUTE_TAG = bytes.fromhex("4b4f534d")  # "KOSM"
+ADMIN_PROPOSAL_TAG = bytes.fromhex("474f5650")  # "GOVP"
 TEST_KOS_MINT_EXECUTE_PUBKEY = bytes.fromhex(
     "ac5669419e8eb7d00814692207ddf331e45835ee441260f6309fd564e7e92a60"
     "555e5be793654a9b5f949c7f74de8174"
@@ -297,6 +314,57 @@ def proposal_tracker_inner_hash(*args, **kwargs) -> bytes32:
     return proposal_tracker_inner_puzzle(*args, **kwargs).get_tree_hash()
 
 
+def proposal_tracker_v2_inner_puzzle(
+    singleton_struct: Program,
+    sgt_free_mod_hash: bytes32,
+    sgt_locked_mod_hash: bytes32,
+    cat_mod_hash: bytes32,
+    sgt_tail_hash: bytes32,
+    protocol_did_puzhash: bytes32,
+    pool_singleton_struct: Program,
+    admin_authority_struct: Program,
+    statutes_singleton_struct: Program,
+    quorum_bps: int,
+    voting_window_seconds: int,
+    sgt_total_supply: int,
+    min_proposal_stake: int,
+    kos_mint_execute_pubkey: bytes,
+    proposal_hash: int | bytes32 = 0,
+    bill_operation: int | Program = 0,
+    vote_tally: int = 0,
+    voting_deadline: int = 0,
+) -> Program:
+    """Curry the RC22 tracker with the governed-statutes singleton."""
+    if len(kos_mint_execute_pubkey) != 48:
+        raise ValueError("kos_mint_execute_pubkey must be 48 bytes")
+    mod = proposal_tracker_v2_mod()
+    return mod.curry(
+        mod.get_tree_hash(),
+        singleton_struct,
+        sgt_free_mod_hash,
+        sgt_locked_mod_hash,
+        cat_mod_hash,
+        sgt_tail_hash,
+        protocol_did_puzhash,
+        pool_singleton_struct,
+        admin_authority_struct,
+        statutes_singleton_struct,
+        quorum_bps,
+        voting_window_seconds,
+        sgt_total_supply,
+        min_proposal_stake,
+        kos_mint_execute_pubkey,
+        proposal_hash,
+        bill_operation,
+        vote_tally,
+        voting_deadline,
+    )
+
+
+def proposal_tracker_v2_inner_hash(*args, **kwargs) -> bytes32:
+    return proposal_tracker_v2_inner_puzzle(*args, **kwargs).get_tree_hash()
+
+
 def kos_mint_execute_message(
     *,
     governance_singleton_struct: Program,
@@ -408,6 +476,64 @@ def bill_settle(
     )
 
 
+def bill_funded_redemption(
+    *,
+    collection_id: bytes32,
+    settlement_id: bytes32,
+    payment_asset_id: bytes32,
+    total_payment_amount: int,
+    deed_count: int,
+    allocations_root: bytes32,
+) -> Program:
+    """Approve exact funding for permanent per-deed redemption offers."""
+    for label, value in (
+        ("collection_id", collection_id),
+        ("settlement_id", settlement_id),
+        ("payment_asset_id", payment_asset_id),
+        ("allocations_root", allocations_root),
+    ):
+        _require_b32(value, label)
+    if not 0 < total_payment_amount < 2**64:
+        raise ValueError("total_payment_amount must be a positive uint64")
+    if not 0 < deed_count < 2**64:
+        raise ValueError("deed_count must be a positive uint64")
+    return Program.to(
+        [
+            BILL_REDEMPTION,
+            collection_id,
+            settlement_id,
+            payment_asset_id,
+            total_payment_amount,
+            deed_count,
+            allocations_root,
+        ]
+    )
+
+
+def funded_redemption_message_hash(
+    *,
+    collection_id: bytes32,
+    settlement_id: bytes32,
+    payment_asset_id: bytes32,
+    total_payment_amount: int,
+    deed_count: int,
+    allocations_root: bytes32,
+) -> bytes32:
+    """Message paired by the governed non-withdrawable redemption treasury."""
+    bill = bill_funded_redemption(
+        collection_id=collection_id,
+        settlement_id=settlement_id,
+        payment_asset_id=payment_asset_id,
+        total_payment_amount=total_payment_amount,
+        deed_count=deed_count,
+        allocations_root=allocations_root,
+    )
+    values = list(bill.as_iter())
+    return bytes32(
+        Program.to([REDEMPTION_FUND_TAG, *values[1:]]).get_tree_hash()
+    )
+
+
 def bill_vault_version(
     new_vault_inner_mod_hash: bytes32,
     new_canonical_params_hash: bytes32,
@@ -483,6 +609,12 @@ def vault_version_approval_message(
 def proposal_hash_from_bill(bill: Program) -> bytes32:
     """The proposal hash is sha256tree of the bill operation."""
     return bytes32(bill.get_tree_hash())
+
+
+def admin_governance_proposal_message(proposal_hash: bytes32) -> bytes:
+    """Announcement body emitted by the co-spent admin-authority operation."""
+    proposal_hash = _require_b32(proposal_hash, "proposal_hash")
+    return PROTOCOL_PREFIX + ADMIN_PROPOSAL_TAG + bytes(proposal_hash)
 
 
 # ── Tracker EXECUTE coin spend (singleton-wrapped) ──────────────────────────

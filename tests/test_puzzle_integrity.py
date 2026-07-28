@@ -66,7 +66,7 @@ def test_no_duplicate_puzzle_filenames():
     assert len(PUZZLE_FILENAMES) == len(set(PUZZLE_FILENAMES))
 
 
-def test_rc20_manifest_preserves_every_rc19_puzzle_hash():
+def test_rc20_manifest_remains_a_complete_historical_freeze():
     manifest_path = (
         Path(__file__).resolve().parents[1]
         / "release-manifests"
@@ -76,13 +76,9 @@ def test_rc20_manifest_preserves_every_rc19_puzzle_hash():
     preserved = manifest["preservedPuzzleHashes"]
     canonical_names = PUZZLE_FILENAMES[: len(preserved)]
     assert set(preserved) == set(canonical_names)
-
     checksum = hashlib.sha256()
     for filename in canonical_names:
-        expected_hash = preserved[filename]
-        actual = bytes(load_puzzle(filename).get_tree_hash())
-        assert actual.hex() == expected_hash
-        checksum.update(actual)
+        checksum.update(bytes.fromhex(preserved[filename]))
     assert checksum.hexdigest() == manifest["preservedCanonicalChecksum"]
 
 
@@ -93,6 +89,39 @@ def test_rc20_manifest_records_every_new_puzzle_hash():
         / "rc20-puzzle-hashes.json"
     )
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    additions = manifest["newPuzzleHashes"]
+    preserved_count = len(manifest["preservedPuzzleHashes"])
+    assert tuple(additions) == PUZZLE_FILENAMES[
+        preserved_count : preserved_count + len(additions)
+    ]
+    for filename, expected_hash in additions.items():
+        assert bytes(load_puzzle(filename).get_tree_hash()).hex() == expected_hash
+
+
+def test_rc22_manifest_records_every_replacement_and_additive_module():
+    manifest_path = (
+        Path(__file__).resolve().parents[1]
+        / "release-manifests"
+        / "rc22-puzzle-hashes.json"
+    )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    rc20_manifest = json.loads(
+        (
+            Path(__file__).resolve().parents[1]
+            / "release-manifests"
+            / "rc20-puzzle-hashes.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert manifest["preservedCanonicalChecksum"] == rc20_manifest["canonicalChecksum"]
+    replacements = manifest["changedPuzzleHashes"]
+    assert set(replacements) == {"p2_pool_v2.clsp", "p2_vault.clsp"}
+    assert set(manifest["changeReasons"]) == set(replacements)
+    for filename, historical_hash in {
+        **rc20_manifest["preservedPuzzleHashes"],
+        **rc20_manifest["newPuzzleHashes"],
+    }.items():
+        expected_hash = replacements.get(filename, historical_hash)
+        assert bytes(load_puzzle(filename).get_tree_hash()).hex() == expected_hash
     additions = manifest["newPuzzleHashes"]
     assert tuple(additions) == PUZZLE_FILENAMES[-len(additions) :]
     for filename, expected_hash in additions.items():

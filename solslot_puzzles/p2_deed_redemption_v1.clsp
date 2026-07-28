@@ -1,0 +1,104 @@
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; Permanent funded SmartDeed redemption offer.
+;;;
+;;; This puzzle is the inner puzzle of one wUSDC.b CAT coin. It can do exactly
+;;; one thing: offer PAYMENT_AMOUNT wUSDC.b through Chia's standard settlement
+;;; puzzle in exchange for the committed SmartDeed singleton moving to the
+;;; canonical zero-hash settlement sink. There is no timeout, withdrawal, or
+;;; alternative recipient.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(mod
+  (
+    MOD_HASH
+    CAT_MOD_HASH
+    PAYMENT_ASSET_ID
+    OFFER_MOD_HASH
+    SINGLETON_MOD_HASH
+    SINGLETON_LAUNCHER_HASH
+    COLLECTION_ID
+    SETTLEMENT_ID
+    DEED_LAUNCHER_ID
+    DEED_COMMITMENT
+    SHARE_PPM
+    PAYMENT_AMOUNT
+    ;; solution
+    my_parent_id
+    my_full_puzzle_hash
+    my_amount
+  )
+
+  (include condition_codes.clib)
+  (include utils.clib)
+  (include utility_macros.clib)
+
+  (defconstant CANONICAL_DEED_SETTLEMENT_INNER
+    0x0000000000000000000000000000000000000000000000000000000000000000)
+  (defconstant REDEMPTION_OFFER_TAG 0x52444d31) ; "RDM1"
+  (defconstant SHARE_PPM_DENOMINATOR 1000000)
+
+  (defun-inline payment-nonce (parent-id full-puzzle-hash amount)
+    (sha256tree
+      (list (list parent-id full-puzzle-hash amount))))
+
+  (defun-inline deed-settlement-puzzle-hash
+      (singleton-mod-hash launcher-hash deed-launcher-id offer-mod-hash)
+    (calculate_full_puzzle_hash
+      (c singleton-mod-hash (c deed-launcher-id launcher-hash))
+      offer-mod-hash))
+
+  (defun-inline deed-payment-memos
+      (collection-id settlement-id deed-launcher-id deed-commitment share-ppm)
+    (list collection-id settlement-id deed-launcher-id deed-commitment share-ppm))
+
+  (defun-inline deed-payment-message
+      (nonce collection-id settlement-id deed-launcher-id deed-commitment share-ppm)
+    (sha256tree
+      (c
+        nonce
+        (list
+          (list
+            CANONICAL_DEED_SETTLEMENT_INNER
+            1
+            (deed-payment-memos
+              collection-id settlement-id deed-launcher-id deed-commitment
+              share-ppm))))))
+
+  (assert
+    (is-size-b32 MOD_HASH)
+    (is-size-b32 CAT_MOD_HASH)
+    (is-size-b32 PAYMENT_ASSET_ID)
+    (is-size-b32 OFFER_MOD_HASH)
+    (is-size-b32 SINGLETON_MOD_HASH)
+    (is-size-b32 SINGLETON_LAUNCHER_HASH)
+    (is-size-b32 COLLECTION_ID)
+    (is-size-b32 SETTLEMENT_ID)
+    (is-size-b32 DEED_LAUNCHER_ID)
+    (is-size-b32 DEED_COMMITMENT)
+    (is-uint64 SHARE_PPM)
+    (> SHARE_PPM 0)
+    (gte SHARE_PPM_DENOMINATOR SHARE_PPM)
+    (is-uint64 PAYMENT_AMOUNT)
+    (> PAYMENT_AMOUNT 0)
+    (is-size-b32 my_parent_id)
+    (is-size-b32 my_full_puzzle_hash)
+    (= my_amount PAYMENT_AMOUNT)
+    (list
+      (list ASSERT_PUZZLE_ANNOUNCEMENT
+        (sha256
+          (deed-settlement-puzzle-hash
+            SINGLETON_MOD_HASH SINGLETON_LAUNCHER_HASH DEED_LAUNCHER_ID
+            OFFER_MOD_HASH)
+          (deed-payment-message
+            (payment-nonce my_parent_id my_full_puzzle_hash my_amount)
+            COLLECTION_ID SETTLEMENT_ID DEED_LAUNCHER_ID DEED_COMMITMENT
+            SHARE_PPM)))
+      (list CREATE_COIN OFFER_MOD_HASH PAYMENT_AMOUNT
+        (list OFFER_MOD_HASH SETTLEMENT_ID DEED_LAUNCHER_ID))
+      (list ASSERT_MY_PARENT_ID my_parent_id)
+      (list ASSERT_MY_PUZZLEHASH my_full_puzzle_hash)
+      (list ASSERT_MY_AMOUNT PAYMENT_AMOUNT)
+      (list REMARK PROTOCOL_PREFIX REDEMPTION_OFFER_TAG
+        COLLECTION_ID SETTLEMENT_ID DEED_LAUNCHER_ID DEED_COMMITMENT
+        SHARE_PPM PAYMENT_AMOUNT)))
+)

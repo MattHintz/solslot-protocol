@@ -1,0 +1,693 @@
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; Solslot protocol statutes singleton V1.
+;;;
+;;; One governed registry replaces mutable runtime parameters and the separate
+;;; collection NAV trust path. The singleton commits six typed roots:
+;;; parameters, collections, oracle rounds, bridge routes, trusted liquidity
+;;; venues, and scoped pauses.
+;;; Every update changes exactly one entry in exactly one root and must pair
+;;; with a typed SGT governance bill.
+;;;
+;;; Permanent rules are curried, never mutable:
+;;;   - SGT identity and total supply
+;;;   - Sols identity
+;;;   - zkPassport policy
+;;;   - non-withdrawable protocol treasury
+;;;   - Testnet/mainnet network identity
+;;;   - 1% maximum exchange fee
+;;;   - 24-hour code-upgrade delay
+;;;   - vote conservation, replay protection, protocol-only swaps,
+;;;     zkPassport SmartDeed gates, no Sols melt, and no primary Sols purchase
+;;;
+;;; Spend cases:
+;;;   1 EVIDENCE - recreate unchanged and announce one proven typed entry.
+;;;   2 UPDATE   - exact one-entry mutation paired to SGT governance.
+;;;   3 SOLS_EVIDENCE - recreate unchanged and prove the parameter, collection,
+;;;                     and scoped-pause inputs consumed by one pool coin.
+;;;   4 GOVERNANCE_EVIDENCE - recreate unchanged and prove the complete
+;;;                           parameter vector used to open one SGT proposal.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(mod (
+      SELF_MOD_HASH
+      SINGLETON_STRUCT
+      GOV_SINGLETON_STRUCT
+      SGT_TAIL_HASH
+      SGT_TOTAL_SUPPLY
+      SOLS_TAIL_HASH
+      ZKPASSPORT_POLICY_HASH
+      PROTOCOL_TREASURY_PUZHASH
+      NETWORK_ID
+      PARAMETERS_ROOT
+      COLLECTIONS_ROOT
+      ORACLE_ROOT
+      ROUTES_ROOT
+      LIQUIDITY_ROOT
+      PAUSES_ROOT
+      REGISTRY_VERSION
+      ;; solution
+      my_id
+      my_inner_puzhash
+      my_amount
+      spend_case
+      args
+    )
+
+  (include condition_codes.clib)
+  (include utils.clib)
+  (include utility_macros.clib)
+
+  (defconstant SPEND_EVIDENCE 1)
+  (defconstant SPEND_UPDATE 2)
+  (defconstant SPEND_SOLS_EVIDENCE 3)
+  (defconstant SPEND_GOVERNANCE_EVIDENCE 4)
+
+  (defconstant KIND_PARAMETER 1)
+  (defconstant KIND_COLLECTION 2)
+  (defconstant KIND_ORACLE 3)
+  (defconstant KIND_ROUTE 4)
+  (defconstant KIND_PAUSE 5)
+  (defconstant KIND_LIQUIDITY 6)
+
+  (defconstant BILL_PARAMETER 0x50) ; P
+  (defconstant BILL_COLLECTION 0x4e) ; N
+  (defconstant BILL_ORACLE 0x4f) ; O
+  (defconstant BILL_ROUTE 0x52) ; R
+  (defconstant BILL_PAUSE 0x55) ; U
+  (defconstant BILL_LIQUIDITY 0x4c) ; L
+
+  (defconstant STATUTE_UPDATE_TAG 0x53544154) ; STAT
+  (defconstant STATUTE_EVIDENCE_TAG 0x53544556) ; STEV
+  (defconstant SOLS_EVIDENCE_TAG 0x534f4c56) ; SOLV
+  (defconstant GOVERNANCE_EVIDENCE_TAG 0x474f5645) ; GOVE
+  (defconstant MAX_BPS 10000)
+  (defconstant MAX_EXCHANGE_FEE_BPS 100)
+  (defconstant UPGRADE_DELAY_SECONDS 86400)
+
+  (defun count-list (items)
+    (if items
+      (+ 1 (count-list (r items)))
+      0))
+
+  (defun nth-value (index items)
+    (if (= index 0)
+      (f items)
+      (nth-value (- index 1) (r items))))
+
+  (defun replace-index (target new_value items index)
+    (if items
+      (c
+        (if (= index target) new_value (f items))
+        (replace-index target new_value (r items) (+ index 1)))
+      ()))
+
+  (defun find-record (key records)
+    (if records
+      (if (= key (f (f records)))
+        (list 1 (f records))
+        (find-record key (r records)))
+      (list 0 ())))
+
+  (defun upsert-record (key new_value records)
+    (if records
+      (if (= key (f (f records)))
+        (c new_value (r records))
+        (c (f records) (upsert-record key new_value (r records))))
+      (list new_value)))
+
+  (defun all-uint64 (values)
+    (if values
+      (if (is-uint64 (f values))
+        (all-uint64 (r values))
+        ())
+      1))
+
+  (defun valid-parameters (parameters sgt_total_supply)
+    (if (= (count-list parameters) 9)
+      (if (all-uint64 parameters)
+        (all
+          (gte (nth-value 0 parameters) 60)
+          (gte 2592000 (nth-value 0 parameters))
+          (gte (nth-value 1 parameters) 1)
+          (gte MAX_BPS (nth-value 1 parameters))
+          (gte (nth-value 2 parameters) 1)
+          (gte sgt_total_supply (nth-value 2 parameters))
+          (gte (nth-value 3 parameters) 60)
+          (gte 2592000 (nth-value 3 parameters))
+          (gte (nth-value 4 parameters) 30)
+          (gte 3600 (nth-value 4 parameters))
+          (gte MAX_EXCHANGE_FEE_BPS (nth-value 5 parameters))
+          (=
+            (+ (nth-value 6 parameters) (nth-value 7 parameters))
+            (nth-value 5 parameters))
+          (gte (nth-value 8 parameters) 60)
+          (gte 2592000 (nth-value 8 parameters)))
+        ())
+      ()))
+
+  ;; (collection_id nav_micro allocation_ceiling nav_version
+  ;;  valid_after valid_until status)
+  (defun valid-collection (record)
+    (if (= (count-list record) 7)
+      (all
+        (is-size-b32 (nth-value 0 record))
+        (is-uint64 (nth-value 1 record))
+        (> (nth-value 1 record) 0)
+        (is-uint64 (nth-value 2 record))
+        (gte (nth-value 2 record) (nth-value 1 record))
+        (is-uint64 (nth-value 3 record))
+        (> (nth-value 3 record) 0)
+        (is-uint64 (nth-value 4 record))
+        (is-uint64 (nth-value 5 record))
+        (> (nth-value 5 record) (nth-value 4 record))
+        (any
+          (= (nth-value 6 record) 1)
+          (= (nth-value 6 record) 2)
+          (= (nth-value 6 record) 3)))
+      ()))
+
+  ;; (asset_id price_micro observed_at valid_until round_id source_root
+  ;;  source_count haircut_bps stable_min_bps stable_max_bps)
+  (defun valid-oracle (record)
+    (if (= (count-list record) 10)
+      (all
+        (is-size-b32 (nth-value 0 record))
+        (is-uint64 (nth-value 1 record))
+        (> (nth-value 1 record) 0)
+        (is-uint64 (nth-value 2 record))
+        (is-uint64 (nth-value 3 record))
+        (> (nth-value 3 record) (nth-value 2 record))
+        (is-uint64 (nth-value 4 record))
+        (> (nth-value 4 record) 0)
+        (is-size-b32 (nth-value 5 record))
+        (is-uint64 (nth-value 6 record))
+        (gte (nth-value 6 record) 2)
+        (is-uint64 (nth-value 7 record))
+        (gte MAX_BPS (nth-value 7 record))
+        (is-uint64 (nth-value 8 record))
+        (is-uint64 (nth-value 9 record))
+        (if (= (nth-value 8 record) 0)
+          (= (nth-value 9 record) 0)
+          (all
+            (gte (nth-value 8 record) 1)
+            (gte (nth-value 9 record) (nth-value 8 record))
+            (gte 20000 (nth-value 9 record)))))
+      ()))
+
+  ;; (route_id source_chain destination_chain asset remote_asset decimals active)
+  (defun valid-route (record)
+    (if (= (count-list record) 7)
+      (all
+        (is-size-b32 (nth-value 0 record))
+        (is-size-b32 (nth-value 1 record))
+        (is-size-b32 (nth-value 2 record))
+        (is-size-b32 (nth-value 3 record))
+        (is-size-b32 (nth-value 4 record))
+        (is-uint64 (nth-value 5 record))
+        (gte 18 (nth-value 5 record))
+        (any (= (nth-value 6 record) 0) (= (nth-value 6 record) 1)))
+      ()))
+
+  ;; (venue_id chain_id protocol_id factory_id pool_id base_asset_id
+  ;;  quote_asset_id pool_code_hash active)
+  (defun valid-liquidity (record)
+    (if (= (count-list record) 9)
+      (all
+        (is-size-b32 (nth-value 0 record))
+        (is-size-b32 (nth-value 1 record))
+        (is-size-b32 (nth-value 2 record))
+        (is-size-b32 (nth-value 3 record))
+        (is-size-b32 (nth-value 4 record))
+        (is-size-b32 (nth-value 5 record))
+        (is-size-b32 (nth-value 6 record))
+        (not (= (nth-value 5 record) (nth-value 6 record)))
+        (is-size-b32 (nth-value 7 record))
+        (any (= (nth-value 8 record) 0) (= (nth-value 8 record) 1)))
+      ()))
+
+  ;; (scope_id paused expires_at reason_hash)
+  (defun valid-pause (record)
+    (if (= (count-list record) 4)
+      (all
+        (is-size-b32 (nth-value 0 record))
+        (any (= (nth-value 1 record) 0) (= (nth-value 1 record) 1))
+        (is-uint64 (nth-value 2 record))
+        (is-size-b32 (nth-value 3 record))
+        (if (= (nth-value 1 record) 1)
+          (> (nth-value 2 record) 0)
+          1))
+      ()))
+
+  (defun valid-record (kind record)
+    (if (= kind KIND_COLLECTION)
+      (valid-collection record)
+      (if (= kind KIND_ORACLE)
+        (valid-oracle record)
+        (if (= kind KIND_ROUTE)
+          (valid-route record)
+          (if (= kind KIND_LIQUIDITY)
+            (valid-liquidity record)
+            (if (= kind KIND_PAUSE)
+              (valid-pause record)
+              ()))))))
+
+  (defun valid-records (kind records)
+    (if records
+      (if (valid-record kind (f records))
+        (valid-records kind (r records))
+        ())
+      1))
+
+  (defun-inline known-kind (kind)
+    (any
+      (= kind KIND_PARAMETER)
+      (= kind KIND_COLLECTION)
+      (= kind KIND_ORACLE)
+      (= kind KIND_ROUTE)
+      (= kind KIND_PAUSE)
+      (= kind KIND_LIQUIDITY)))
+
+  (defun-inline bill-tag (kind)
+    (if (= kind KIND_PARAMETER)
+      BILL_PARAMETER
+      (if (= kind KIND_COLLECTION)
+        BILL_COLLECTION
+        (if (= kind KIND_ORACLE)
+          BILL_ORACLE
+          (if (= kind KIND_ROUTE)
+            BILL_ROUTE
+            (if (= kind KIND_LIQUIDITY)
+              BILL_LIQUIDITY
+              BILL_PAUSE))))))
+
+  (defun-inline selected-root
+      (kind parameters_root collections_root oracle_root routes_root
+       liquidity_root pauses_root)
+    (if (= kind KIND_PARAMETER)
+      parameters_root
+      (if (= kind KIND_COLLECTION)
+        collections_root
+        (if (= kind KIND_ORACLE)
+          oracle_root
+          (if (= kind KIND_ROUTE)
+            routes_root
+            (if (= kind KIND_LIQUIDITY)
+              liquidity_root
+              pauses_root))))))
+
+  (defun-inline root-for-kind (kind target_kind replacement current)
+    (if (= kind target_kind) replacement current))
+
+  (defun-inline permanent-rules-hash
+      (sgt_tail sgt_supply sols_tail zk_policy treasury network)
+    (sha256tree
+      (list
+        sgt_tail
+        sgt_supply
+        sols_tail
+        zk_policy
+        treasury
+        network
+        MAX_EXCHANGE_FEE_BPS
+        UPGRADE_DELAY_SECONDS
+        1 ; vote conservation
+        1 ; replay protection
+        1 ; treasury non-withdrawal
+        1 ; protocol-only SmartDeed/Sols exchange
+        1 ; zkPassport SmartDeed gate
+        1 ; no Sols melt
+        0))) ; no primary SmartDeed purchase with Sols
+
+  (defun-inline state-hash
+      (parameters collections oracle routes liquidity pauses version
+       permanent_hash)
+    (sha256tree
+      (list
+        parameters
+        collections
+        oracle
+        routes
+        liquidity
+        pauses
+        version
+        permanent_hash)))
+
+  (defun-inline new-inner-puzhash
+      (self_mod singleton_struct gov_struct sgt_tail sgt_supply sols_tail
+       zk_policy treasury network parameters collections oracle routes
+       liquidity pauses version)
+    (curry_hashes self_mod
+      (sha256 1 self_mod)
+      (sha256tree singleton_struct)
+      (sha256tree gov_struct)
+      (sha256 1 sgt_tail)
+      (sha256 1 sgt_supply)
+      (sha256 1 sols_tail)
+      (sha256 1 zk_policy)
+      (sha256 1 treasury)
+      (sha256 1 network)
+      (sha256 1 parameters)
+      (sha256 1 collections)
+      (sha256 1 oracle)
+      (sha256 1 routes)
+      (sha256 1 liquidity)
+      (sha256 1 pauses)
+      (sha256 1 version)))
+
+  (defun-inline identity-conditions
+      (singleton_struct my_id my_inner my_amount)
+    (list
+      (list ASSERT_MY_COIN_ID my_id)
+      (list ASSERT_MY_PUZZLEHASH
+        (calculate_full_puzzle_hash singleton_struct my_inner))
+      (list ASSERT_MY_AMOUNT my_amount)))
+
+  (defun-inline recreate-condition
+      (self_mod singleton_struct gov_struct sgt_tail sgt_supply sols_tail
+       zk_policy treasury network parameters collections oracle routes
+       liquidity pauses version my_amount)
+    (list CREATE_COIN
+      (new-inner-puzhash
+        self_mod singleton_struct gov_struct sgt_tail sgt_supply sols_tail
+        zk_policy treasury network parameters collections oracle routes
+        liquidity pauses version)
+      my_amount))
+
+  (defun-inline validate-witness (kind entries selected_root sgt_supply)
+    (all
+      (= selected_root (sha256tree entries))
+      (if (= kind KIND_PARAMETER)
+        (valid-parameters entries sgt_supply)
+        (all
+          (valid-records kind entries)
+          (has-no-duplicate-firsts entries ())))))
+
+  (defun-inline evidence-value (kind key entries)
+    (if (= kind KIND_PARAMETER)
+      (list 1 (nth-value key entries))
+      (find-record key entries)))
+
+  ;; args = (kind key current_entries)
+  (defun spend-evidence
+      (self_mod singleton_struct gov_struct sgt_tail sgt_supply sols_tail
+       zk_policy treasury network parameters collections oracle routes
+       liquidity pauses version my_id my_inner my_amount kind key
+       current_entries)
+    (assert
+      (known-kind kind)
+      (if (= kind KIND_PARAMETER)
+        (all (is-uint64 key) (gte 8 key))
+        (is-size-b32 key))
+      (validate-witness
+        kind
+        current_entries
+        (selected-root
+          kind parameters collections oracle routes liquidity pauses)
+        sgt_supply)
+      (f (evidence-value kind key current_entries))
+      (c
+        (recreate-condition
+          self_mod singleton_struct gov_struct sgt_tail sgt_supply sols_tail
+          zk_policy treasury network parameters collections oracle routes
+          liquidity pauses version my_amount)
+        (c
+          (list CREATE_PUZZLE_ANNOUNCEMENT
+            (concat PROTOCOL_PREFIX
+              (sha256tree
+                (list
+                  STATUTE_EVIDENCE_TAG
+                  kind
+                  key
+                  (f (r (evidence-value kind key current_entries)))
+                  (selected-root
+                    kind parameters collections oracle routes liquidity pauses)
+                  version
+                  (permanent-rules-hash
+                    sgt_tail sgt_supply sols_tail zk_policy treasury network)))))
+          (identity-conditions singleton_struct my_id my_inner my_amount)))))
+
+  (defun-inline update-entries (kind key new_value current_entries)
+    (if (= kind KIND_PARAMETER)
+      (replace-index key new_value current_entries 0)
+      (upsert-record key new_value current_entries)))
+
+  ;; args = (consumer_coin_id collection_id parameters collections pauses)
+  ;;
+  ;; A Sols pool quote needs three governed facts at once. Revealing the full
+  ;; alpha-sized witnesses keeps the single statutes singleton authoritative
+  ;; and avoids a second cache/registry or a chain of ephemeral evidence coins.
+  (defun spend-sols-evidence
+      (self_mod singleton_struct gov_struct sgt_tail sgt_supply sols_tail
+       zk_policy treasury network parameters_root collections_root oracle_root
+       routes_root liquidity_root pauses_root version my_id my_inner my_amount
+       consumer_id collection_id parameters collections pauses)
+    (assert
+      (is-size-b32 consumer_id)
+      (is-size-b32 collection_id)
+      (validate-witness KIND_PARAMETER parameters parameters_root sgt_supply)
+      (validate-witness KIND_COLLECTION collections collections_root sgt_supply)
+      (validate-witness KIND_PAUSE pauses pauses_root sgt_supply)
+      (f (find-record collection_id collections))
+      (c
+        (recreate-condition
+          self_mod singleton_struct gov_struct sgt_tail sgt_supply sols_tail
+          zk_policy treasury network parameters_root collections_root
+          oracle_root routes_root liquidity_root pauses_root version my_amount)
+        (c
+          (list CREATE_PUZZLE_ANNOUNCEMENT
+            (concat PROTOCOL_PREFIX
+              (sha256tree
+                (list
+                  SOLS_EVIDENCE_TAG
+                  consumer_id
+                  collection_id
+                  parameters
+                  (f (r (find-record collection_id collections)))
+                  (find-record collection_id pauses)
+                  parameters_root
+                  collections_root
+                  oracle_root
+                  routes_root
+                  liquidity_root
+                  pauses_root
+                  version
+                  (permanent-rules-hash
+                    sgt_tail sgt_supply sols_tail zk_policy treasury network)))))
+          (identity-conditions singleton_struct my_id my_inner my_amount)))))
+
+  ;; args = (parameters)
+  (defun spend-governance-evidence
+      (self_mod singleton_struct gov_struct sgt_tail sgt_supply sols_tail
+       zk_policy treasury network parameters_root collections_root oracle_root
+       routes_root liquidity_root pauses_root version my_id my_inner my_amount
+       parameters)
+    (assert
+      (validate-witness KIND_PARAMETER parameters parameters_root sgt_supply)
+      (c
+        (recreate-condition
+          self_mod singleton_struct gov_struct sgt_tail sgt_supply sols_tail
+          zk_policy treasury network parameters_root collections_root
+          oracle_root routes_root liquidity_root pauses_root version my_amount)
+        (c
+          (list CREATE_PUZZLE_ANNOUNCEMENT
+            (concat PROTOCOL_PREFIX
+              (sha256tree
+                (list GOVERNANCE_EVIDENCE_TAG parameters))))
+          (identity-conditions singleton_struct my_id my_inner my_amount)))))
+
+  ;; args =
+  ;; (kind key new_value current_entries new_registry_version gov_inner_puzhash)
+  (defun spend-update
+      (self_mod singleton_struct gov_struct sgt_tail sgt_supply sols_tail
+       zk_policy treasury network parameters collections oracle routes
+       liquidity pauses version my_id my_inner my_amount
+       kind key new_value current_entries new_version gov_inner_puzhash)
+    (assert
+      (known-kind kind)
+      (= new_version (+ version 1))
+      (is-size-b32 gov_inner_puzhash)
+      (if (= kind KIND_PARAMETER)
+        (all
+          (is-uint64 key)
+          (gte 8 key)
+          (is-uint64 new_value))
+        (all
+          (is-size-b32 key)
+          (= key (f new_value))
+          (valid-record kind new_value)))
+      (validate-witness
+        kind
+        current_entries
+        (selected-root
+          kind parameters collections oracle routes liquidity pauses)
+        sgt_supply)
+      (if (= kind KIND_PARAMETER)
+        (valid-parameters
+          (update-entries kind key new_value current_entries)
+          sgt_supply)
+        (all
+          (valid-records
+            kind
+            (update-entries kind key new_value current_entries))
+          (has-no-duplicate-firsts
+            (update-entries kind key new_value current_entries)
+            ())))
+      (c
+        (recreate-condition
+          self_mod singleton_struct gov_struct sgt_tail sgt_supply sols_tail
+          zk_policy treasury network
+          (root-for-kind
+            kind KIND_PARAMETER
+            (sha256tree (update-entries kind key new_value current_entries))
+            parameters)
+          (root-for-kind
+            kind KIND_COLLECTION
+            (sha256tree (update-entries kind key new_value current_entries))
+            collections)
+          (root-for-kind
+            kind KIND_ORACLE
+            (sha256tree (update-entries kind key new_value current_entries))
+            oracle)
+          (root-for-kind
+            kind KIND_ROUTE
+            (sha256tree (update-entries kind key new_value current_entries))
+            routes)
+          (root-for-kind
+            kind KIND_LIQUIDITY
+            (sha256tree (update-entries kind key new_value current_entries))
+            liquidity)
+          (root-for-kind
+            kind KIND_PAUSE
+            (sha256tree (update-entries kind key new_value current_entries))
+            pauses)
+          new_version
+          my_amount)
+        (c
+          (list RECEIVE_MESSAGE 0x10
+            (concat PROTOCOL_PREFIX
+              (sha256tree
+                (list
+                  STATUTE_UPDATE_TAG
+                  (bill-tag kind)
+                  key
+                  new_value
+                  (selected-root
+                    kind parameters collections oracle routes liquidity pauses)
+                  (sha256tree (update-entries kind key new_value current_entries))
+                  version
+                  new_version
+                  (state-hash
+                    parameters collections oracle routes liquidity pauses
+                    version
+                    (permanent-rules-hash
+                      sgt_tail sgt_supply sols_tail zk_policy treasury network))
+                  (state-hash
+                    (root-for-kind
+                      kind KIND_PARAMETER
+                      (sha256tree (update-entries kind key new_value current_entries))
+                      parameters)
+                    (root-for-kind
+                      kind KIND_COLLECTION
+                      (sha256tree (update-entries kind key new_value current_entries))
+                      collections)
+                    (root-for-kind
+                      kind KIND_ORACLE
+                      (sha256tree (update-entries kind key new_value current_entries))
+                      oracle)
+                    (root-for-kind
+                      kind KIND_ROUTE
+                      (sha256tree (update-entries kind key new_value current_entries))
+                      routes)
+                    (root-for-kind
+                      kind KIND_LIQUIDITY
+                      (sha256tree (update-entries kind key new_value current_entries))
+                      liquidity)
+                    (root-for-kind
+                      kind KIND_PAUSE
+                      (sha256tree (update-entries kind key new_value current_entries))
+                      pauses)
+                    new_version
+                    (permanent-rules-hash
+                      sgt_tail sgt_supply sols_tail zk_policy treasury network)))))
+            (calculate_full_puzzle_hash gov_struct gov_inner_puzhash))
+          (c
+            (list CREATE_PUZZLE_ANNOUNCEMENT
+              (concat PROTOCOL_PREFIX
+                (sha256tree
+                  (list
+                    STATUTE_UPDATE_TAG
+                    (bill-tag kind)
+                    key
+                    new_value
+                    version
+                    new_version))))
+            (identity-conditions singleton_struct my_id my_inner my_amount))))))
+
+  (assert
+    (is-size-b32 SELF_MOD_HASH)
+    (is-size-b32 SGT_TAIL_HASH)
+    (is-uint64 SGT_TOTAL_SUPPLY)
+    (> SGT_TOTAL_SUPPLY 0)
+    (is-size-b32 SOLS_TAIL_HASH)
+    (is-size-b32 ZKPASSPORT_POLICY_HASH)
+    (is-size-b32 PROTOCOL_TREASURY_PUZHASH)
+    (is-size-b32 NETWORK_ID)
+    (is-size-b32 PARAMETERS_ROOT)
+    (is-size-b32 COLLECTIONS_ROOT)
+    (is-size-b32 ORACLE_ROOT)
+    (is-size-b32 ROUTES_ROOT)
+    (is-size-b32 LIQUIDITY_ROOT)
+    (is-size-b32 PAUSES_ROOT)
+    (is-uint64 REGISTRY_VERSION)
+    (> REGISTRY_VERSION 0)
+    (is-size-b32 my_id)
+    (is-size-b32 my_inner_puzhash)
+    (is-uint64 my_amount)
+    (if (= spend_case SPEND_EVIDENCE)
+      (spend-evidence
+        SELF_MOD_HASH SINGLETON_STRUCT GOV_SINGLETON_STRUCT
+        SGT_TAIL_HASH SGT_TOTAL_SUPPLY SOLS_TAIL_HASH ZKPASSPORT_POLICY_HASH
+        PROTOCOL_TREASURY_PUZHASH NETWORK_ID
+        PARAMETERS_ROOT COLLECTIONS_ROOT ORACLE_ROOT ROUTES_ROOT LIQUIDITY_ROOT
+        PAUSES_ROOT REGISTRY_VERSION my_id my_inner_puzhash my_amount
+        (f args)
+        (f (r args))
+        (f (r (r args))))
+      (if (= spend_case SPEND_UPDATE)
+        (spend-update
+          SELF_MOD_HASH SINGLETON_STRUCT GOV_SINGLETON_STRUCT
+          SGT_TAIL_HASH SGT_TOTAL_SUPPLY SOLS_TAIL_HASH ZKPASSPORT_POLICY_HASH
+          PROTOCOL_TREASURY_PUZHASH NETWORK_ID
+          PARAMETERS_ROOT COLLECTIONS_ROOT ORACLE_ROOT ROUTES_ROOT
+          LIQUIDITY_ROOT PAUSES_ROOT REGISTRY_VERSION my_id my_inner_puzhash
+          my_amount
+          (f args)
+          (f (r args))
+          (f (r (r args)))
+          (f (r (r (r args))))
+          (f (r (r (r (r args)))))
+          (f (r (r (r (r (r args)))))))
+        (if (= spend_case SPEND_SOLS_EVIDENCE)
+          (spend-sols-evidence
+            SELF_MOD_HASH SINGLETON_STRUCT GOV_SINGLETON_STRUCT
+            SGT_TAIL_HASH SGT_TOTAL_SUPPLY SOLS_TAIL_HASH
+            ZKPASSPORT_POLICY_HASH PROTOCOL_TREASURY_PUZHASH NETWORK_ID
+            PARAMETERS_ROOT COLLECTIONS_ROOT ORACLE_ROOT ROUTES_ROOT
+            LIQUIDITY_ROOT PAUSES_ROOT REGISTRY_VERSION my_id
+            my_inner_puzhash my_amount
+            (f args)
+            (f (r args))
+            (f (r (r args)))
+            (f (r (r (r args))))
+            (f (r (r (r (r args))))))
+          (if (= spend_case SPEND_GOVERNANCE_EVIDENCE)
+            (spend-governance-evidence
+              SELF_MOD_HASH SINGLETON_STRUCT GOV_SINGLETON_STRUCT
+              SGT_TAIL_HASH SGT_TOTAL_SUPPLY SOLS_TAIL_HASH
+              ZKPASSPORT_POLICY_HASH PROTOCOL_TREASURY_PUZHASH NETWORK_ID
+              PARAMETERS_ROOT COLLECTIONS_ROOT ORACLE_ROOT ROUTES_ROOT
+              LIQUIDITY_ROOT PAUSES_ROOT REGISTRY_VERSION my_id
+              my_inner_puzhash my_amount
+              (f args))
+            (x))))))
+)

@@ -1106,9 +1106,9 @@ class TestP2Vault:
             bytes32(b"\x99" * 32),   # next_puzzlehash
         ])
         conds = curried.run(sol).as_python()
-        # ASSERT_MY_AMOUNT, ASSERT_MY_PUZZLEHASH, ASSERT_PUZZLE_ANNOUNCEMENT,
-        # CREATE_COIN, CREATE_COIN_ANNOUNCEMENT
-        assert len(conds) == 5
+        # ASSERT_MY_AMOUNT, ASSERT_PUZZLE_ANNOUNCEMENT, CREATE_COIN, and
+        # CREATE_COIN_ANNOUNCEMENT. The singleton layer binds the puzzle hash.
+        assert len(conds) == 4
 
     def test_p2_vault_moves_nft_to_next_puzzlehash(self):
         curried = curry_p2_vault()
@@ -1312,7 +1312,7 @@ class TestP2Pool:
 
     def test_p2_pool_condition_count(self):
         conds = self.curried.run(self._solution()).as_python()
-        assert len(conds) == 6
+        assert len(conds) == 5
 
     def test_p2_pool_moves_deed_to_next_puzzlehash(self):
         next_puzhash = bytes32(b"\x99" * 32)

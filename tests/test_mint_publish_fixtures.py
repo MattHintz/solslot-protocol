@@ -263,16 +263,16 @@ def test_fixture_matches_pinned_golden_vector() -> None:
     expected = fix["expected"]
     # Pinned in tests/test_mint_publish_driver.py::TestBuildMintPublishArtifacts.
     assert expected["smart_deed_inner_puzhash"] == (
-        "0x3824b62bf43f9b28c048c37b8e4ad639e429aaa093f03c368aa0271160e76312"
+        "0xabc27d088059bbe200d380fda6b6ff38287339e37a6a87e3f33aeb417203291c"
     )
     assert expected["eve_inner_puzhash"] == (
-        "0x67261cfa75e56266d1f2467e0f1514a90e1f1f3b41df1b475c85dba28c185ac0"
+        "0xb69b278adb60552c2d96983d22c03ac8277a5825e1c02090cf2964a4f5b11d15"
     )
     assert expected["deed_full_puzhash"] == (
-        "0x33e9253219cc245d805a017c1cbcbedbe58522c30091b9c3737a28c8292164e2"
+        "0xe261c55fb0b4f5d0e8c4c904839678dc2f31df0542822a7dd2586265409400f3"
     )
     assert expected["proposal_hash"] == (
-        "0x07a29ec70d2092e7a713e18a5534ee10365e583c66ec893d0d1f77128dd0bb8e"
+        "0xab70cbc55e11d48fd4d3456b5edeb54fe8063eb4755ace6ca300012b88afe2fd"
     )
     assert expected["deed_launcher_id"] == (
         "0x1310b78bf387ea58bb9365e261ff099a6971fd2ca5cc98e750b1d07e92e29b1d"

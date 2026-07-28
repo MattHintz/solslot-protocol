@@ -1,0 +1,23 @@
+{
+  "schema": "solslot.puzzle-hashes.v1",
+  "release": "RC22",
+  "preservedRelease": "RC20",
+  "preservedCanonicalChecksum": "5cfb8d524809c1cb605c9d44ddec273a73babc2763cb6fd9f4cf43b847e8e018",
+  "changedPuzzleHashes": {
+    "p2_pool_v2.clsp": "a871d51b4a5b97dd34076fccb3123dc339c7fb60d317b8f04a2ce203760609c0",
+    "p2_vault.clsp": "8d3f524a4837d943d9734df0f01add9d81808b0c72ee017a4e01c5d91699f807"
+  },
+  "changeReasons": {
+    "p2_pool_v2.clsp": "remove the redundant inner ASSERT_MY_PUZZLEHASH; the singleton layer remains authoritative",
+    "p2_vault.clsp": "remove the redundant inner ASSERT_MY_PUZZLEHASH; the singleton layer remains authoritative"
+  },
+  "newPuzzleHashes": {
+    "governance_singleton_inner_v2.clsp": "a62b3955fe9ded542cc478c74fe8cb81bf12e1bfb7b153f69e4a1b5a84dc7291",
+    "protocol_statutes_inner_v1.clsp": "1862f5f4301fe00a4f1801f412774b5514b03b6c528b3783b0ebc61cd451e11d",
+    "vault_singleton_inner_v2.clsp": "eeb1d13717cae2c62553f50e9a47d2ca9999bdfecbd3a2c81fe4ae30f8e4592a",
+    "pool_singleton_inner_v4.clsp": "1d4be5fec4d196e6920d8e04f7680e813e310040348ce153b49191e633650768",
+    "p2_deed_redemption_v1.clsp": "78a759362ae12e73aee1986043fb6e8e0df21ed6e104ed0dc0bd2831c10816dc",
+    "redemption_treasury_v1.clsp": "0d25b689b7c5abdb6e2d882abd70afbd4c025aad0f21ba178c0dddc210090377"
+  },
+  "canonicalChecksum": "16de6272631adcefd914e34151c7c15e1d014229f127b3c89da0da891770ee7b"
+}
