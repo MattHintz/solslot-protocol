@@ -17,6 +17,7 @@ from solslot_puzzles.genesis_ceremony_rc22 import (
     GENESIS_ADMIN_THRESHOLD,
     GENESIS_EVM_CHAIN_ID,
     GENESIS_NETWORK,
+    RC22_BRIDGE_BATCH_BUFFER_AMOUNT,
     RC22_BRIDGE_BATCH_FUNDING_AMOUNT,
     RC22_BRIDGE_PARENT_TOTAL,
     RC22_GENESIS_PLAN_SCHEMA,
@@ -400,6 +401,7 @@ def _top_level_projection(plan: RC22GenesisCeremonyPlan) -> dict[str, Any]:
             "propertyRegistryLauncherAmount": (
                 RC22_PROPERTY_REGISTRY_LAUNCHER_AMOUNT
             ),
+            "bufferFeeAmount": RC22_BRIDGE_BATCH_BUFFER_AMOUNT,
             "networkFeeSource": "separate-fountain-fee-till",
             "initialCoinCount": len(plan.bridge_batch.bridge_coins),
             "lowWaterMark": plan.bridge_batch.low_water_mark,

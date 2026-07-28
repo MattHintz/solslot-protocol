@@ -12,6 +12,7 @@ from chia_rs.sized_bytes import bytes32
 from chia_rs.sized_ints import uint64
 
 from solslot_puzzles.genesis_ceremony_rc22 import (
+    RC22_BRIDGE_BATCH_BUFFER_AMOUNT,
     RC22_BRIDGE_BATCH_FUNDING_AMOUNT,
     RC22_BRIDGE_PARENT_TOTAL,
     RC22_GENESIS_PLAN_SCHEMA,
@@ -89,7 +90,7 @@ def test_rc22_plan_replaces_nav_registry_with_statutes() -> None:
     assert "navRegistry" not in payload["launcherIds"]
     assert "statutes" in payload["fundingCoinIds"]
     assert "nav_registry" not in payload["fundingCoinIds"]
-    assert payload["bridgeBatch"]["fundingAmount"] == 529
+    assert payload["bridgeBatch"]["fundingAmount"] == 530
     assert set(payload["state"]["statutesRoots"]) == {
         "parameters",
         "collections",
@@ -103,6 +104,7 @@ def test_rc22_plan_replaces_nav_registry_with_statutes() -> None:
     )
     assert payload["bridgeBatch"]["parentOutputAmount"] == 528
     assert payload["bridgeBatch"]["propertyRegistryLauncherAmount"] == 1
+    assert payload["bridgeBatch"]["bufferFeeAmount"] == 1
     assert payload["bridgeBatch"]["changeAmount"] == 0
     assert payload["bridgeBatch"]["networkFeeSource"] == (
         "separate-fountain-fee-till"
@@ -177,7 +179,7 @@ def test_pool_funding_requires_exact_launcher_and_seed_amount(
         )
 
 
-def test_bridge_batch_has_unique_outputs_and_no_embedded_fee() -> None:
+def test_bridge_batch_has_unique_outputs_and_one_mojo_buffer_fee() -> None:
     faucet = _FakeFaucet()
     coins = funding_coins(faucet)
     built = build_rc22_genesis_ceremony_bundle(
@@ -204,15 +206,20 @@ def test_bridge_batch_has_unique_outputs_and_no_embedded_fee() -> None:
 
     assert RC22_BRIDGE_PARENT_TOTAL == 528
     assert RC22_PROPERTY_REGISTRY_LAUNCHER_AMOUNT == 1
-    assert RC22_BRIDGE_BATCH_FUNDING_AMOUNT == 529
-    assert created_amount == RC22_BRIDGE_BATCH_FUNDING_AMOUNT
+    assert RC22_BRIDGE_BATCH_BUFFER_AMOUNT == 1
+    assert RC22_BRIDGE_BATCH_FUNDING_AMOUNT == 530
+    assert created_amount == (
+        RC22_BRIDGE_BATCH_FUNDING_AMOUNT
+        - RC22_BRIDGE_BATCH_BUFFER_AMOUNT
+    )
+    assert int(batch_spend.coin.amount) - created_amount == 1
     assert len(additions) == len(built.plan.bridge_batch.parent_coins) + 1
     assert len(addition_ids) == len(set(addition_ids))
     assert ConditionOpcode.RESERVE_FEE not in conditions
 
 
-@pytest.mark.parametrize("wrong_amount", (528, 530, 531))
-def test_bridge_funding_requires_exact_529_mojos(
+@pytest.mark.parametrize("wrong_amount", (528, 529, 531))
+def test_bridge_funding_requires_exact_530_mojos(
     wrong_amount: int,
 ) -> None:
     faucet = _FakeFaucet()
@@ -226,7 +233,7 @@ def test_bridge_funding_requires_exact_529_mojos(
         ),
     )
     wrong_plan = ceremony_plan(faucet, wrong)
-    with pytest.raises(ValueError, match="exactly 529"):
+    with pytest.raises(ValueError, match="exactly 530"):
         build_rc22_genesis_ceremony_bundle(
             plan=wrong_plan,
             faucet=faucet,

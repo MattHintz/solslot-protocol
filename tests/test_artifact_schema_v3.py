@@ -51,7 +51,8 @@ def test_v3_artifact_reconstructs_the_complete_rc22_plan() -> None:
     assert value["genesisPlan"]["schema"] == "solslot-genesis-plan-v3"
     assert "statutes" in value["launcherIds"]
     assert "navRegistry" not in value["launcherIds"]
-    assert value["bridgePolicy"]["fundingAmount"] == 529
+    assert value["bridgePolicy"]["fundingAmount"] == 530
+    assert value["bridgePolicy"]["bufferFeeAmount"] == 1
     assert value["statutes"]["roots"]["liquidityVenues"] == (
         value["genesisPlan"]["state"]["statutesRoots"]["liquidityVenues"]
     )
@@ -68,7 +69,7 @@ def test_v3_artifact_reconstructs_the_complete_rc22_plan() -> None:
     (
         (("genesisPlan", "launcherIds", "pool"), "0x" + "ff" * 32, "reconstruct"),
         (("launcherIds", "pool"), "0x" + "fe" * 32, "launcherIds"),
-        (("bridgePolicy", "fundingAmount"), 530, "bridgePolicy"),
+        (("bridgePolicy", "fundingAmount"), 529, "bridgePolicy"),
         (
             ("statutes", "roots", "liquidityVenues"),
             "0x" + "ff" * 32,
