@@ -43,11 +43,6 @@
             (list
                 (list ASSERT_MY_AMOUNT my_amount)
 
-                ;; Prove supplied NFT coin matches the expected derived puzzle hash
-                (list ASSERT_MY_PUZZLEHASH
-                    (calculate_full_puzzle_hash (c SINGLETON_MOD_HASH (c my_launcher_id LAUNCHER_PUZZLE_HASH)) my_singleton_inner_puzzle_hash)
-                )
-
                 ;; Assert singleton spend behavior
                 (list ASSERT_PUZZLE_ANNOUNCEMENT
                     (sha256

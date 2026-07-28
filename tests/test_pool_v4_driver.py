@@ -104,8 +104,8 @@ EMPTY_POOL = SolsPoolStateV4(
         treasury_assets_micro_usd=0,
         proven_liabilities_micro_usd=0,
         deed_count=0,
-        total_sols_mojos=0,
-        reserve_sols_mojos=0,
+        total_sols_mojos=1,
+        reserve_sols_mojos=1,
     ),
     state_version=1,
 )
@@ -130,6 +130,7 @@ CONFIG = PoolV4Config(
     p2_pool_v2_mod_hash=bytes32(
         load_puzzle("p2_pool_v2.clsp").get_tree_hash()
     ),
+    deed_launcher_puzzle_hash=b32(29),
     reserve_puzzle_hash=b32(32),
     sgt_rewards_puzzle_hash=b32(33),
 )

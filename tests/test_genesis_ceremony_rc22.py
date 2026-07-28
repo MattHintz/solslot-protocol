@@ -15,6 +15,7 @@ from solslot_puzzles.genesis_ceremony_rc22 import (
     RC22_BRIDGE_BATCH_FUNDING_AMOUNT,
     RC22_BRIDGE_PARENT_TOTAL,
     RC22_GENESIS_PLAN_SCHEMA,
+    RC22_POOL_FUNDING_AMOUNT,
     RC22_PROPERTY_REGISTRY_LAUNCHER_AMOUNT,
     RC22GenesisFundingCoins,
     build_rc22_genesis_ceremony_bundle,
@@ -34,7 +35,7 @@ from tests.test_protocol_deployment import _FakeFaucet
 def funding_coins(faucet: _FakeFaucet) -> RC22GenesisFundingCoins:
     amounts = (
         1_000_100,
-        100,
+        RC22_POOL_FUNDING_AMOUNT,
         100,
         100,
         100,
@@ -106,8 +107,17 @@ def test_rc22_plan_replaces_nav_registry_with_statutes() -> None:
     assert payload["bridgeBatch"]["networkFeeSource"] == (
         "separate-fountain-fee-till"
     )
+    assert payload["solsReserveSeed"] == {
+        "amount": 1,
+        "puzzleHash": (
+            "0x" + plan.protocol.sols_reserve_seed_puzzle_hash.hex()
+        ),
+        "coinId": "0x" + plan.protocol.sols_reserve_seed_coin_id.hex(),
+        "circulating": False,
+        "purpose": "permanent-cat-lineage-anchor",
+    }
     assert payload["puzzleHashes"]["poolInnerMod"] == (
-        "0xf6704dc71b171811a142c1a3ed92867880db3bad1e8e49f0f7c5cdf6d246739f"
+        "0x1d4be5fec4d196e6920d8e04f7680e813e310040348ce153b49191e633650768"
     )
 
 
@@ -130,6 +140,41 @@ def test_rc22_bundle_keeps_nine_inputs_and_49_atomic_spends() -> None:
         bytes32(parent.name()) in spent
         for parent in plan.bridge_batch.parent_coins
     )
+    pool_funding_spend = next(
+        spend
+        for spend in built.spend_bundle.coin_spends
+        if spend.coin.name() == coins.pool.name()
+    )
+    pool_additions = compute_additions(pool_funding_spend)
+    assert {
+        bytes32(coin.name()) for coin in pool_additions
+    } == {
+        plan.protocol.pool_launcher_id,
+        plan.protocol.sols_reserve_seed_coin_id,
+    }
+
+
+@pytest.mark.parametrize("wrong_amount", (1, 3, 100))
+def test_pool_funding_requires_exact_launcher_and_seed_amount(
+    wrong_amount: int,
+) -> None:
+    faucet = _FakeFaucet()
+    coins = funding_coins(faucet)
+    wrong = replace(
+        coins,
+        pool=Coin(
+            coins.pool.parent_coin_info,
+            coins.pool.puzzle_hash,
+            uint64(wrong_amount),
+        ),
+    )
+    wrong_plan = ceremony_plan(faucet, wrong)
+    with pytest.raises(ValueError, match="exactly 2"):
+        build_rc22_genesis_ceremony_bundle(
+            plan=wrong_plan,
+            faucet=faucet,
+            funding_coins=wrong,
+        )
 
 
 def test_bridge_batch_has_unique_outputs_and_no_embedded_fee() -> None:

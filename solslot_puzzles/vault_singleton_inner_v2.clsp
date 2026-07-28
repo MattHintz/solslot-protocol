@@ -648,7 +648,12 @@
   )
 
   ;; SPEND CASE 's' — AUTHORIZE SMARTDEED/SOLS SWAP
-  ;; p = (operation_hash quote_expires_at signature_data)
+  ;; p = (operation_hash quote_expires_at signature_data deed_transfer)
+  ;; deed_transfer is () for Sols-to-deed, or
+  ;; (deed_launcher_id p2_vault_coin_id smart_deed_inner_hash) for
+  ;; deed-to-Sols. The latter moves the held deed into its immutable
+  ;; SmartDeed inner in the same approval; that ephemeral SmartDeed then
+  ;; performs the protocol-bound pool deposit.
   ;;
   ;; pool_singleton_inner_v4 constructs operation_hash from the exact deed,
   ;; direction, live pool coin, payout or destination, quote, and statutes
@@ -657,13 +662,21 @@
   (defun spend_authorize_sols_swap
       (SINGLETON_STRUCT OWNER_PUBKEY AUTH_TYPE IDENTITY_ATTEST_ROOT
        ZKPASSPORT_BRIDGE_POLICY_HASH my_id my_inner_puzzlehash my_amount
-       operation_hash quote_expires_at signature_data)
+       operation_hash quote_expires_at signature_data deed_transfer)
     (assert
       (is-size-b32 operation_hash)
       (is-uint64 quote_expires_at)
       (> quote_expires_at 0)
       (not (= IDENTITY_ATTEST_ROOT ZKPASSPORT_EMPTY_ATTEST_ROOT))
       (not (= ZKPASSPORT_BRIDGE_POLICY_HASH ZERO_B32))
+      (if deed_transfer
+        (assert
+          (is-size-b32 (f deed_transfer))
+          (is-size-b32 (f (r deed_transfer)))
+          (is-size-b32 (f (r (r deed_transfer))))
+          (not (= (f (r (r deed_transfer))) ZERO_B32))
+          1)
+        1)
       (c
         (authenticate_operation
           AUTH_TYPE OWNER_PUBKEY SPEND_AUTHORIZE_SOLS_SWAP
@@ -676,13 +689,28 @@
           (c
             (list CREATE_COIN
               my_inner_puzzlehash my_amount (list my_inner_puzzlehash))
-            (c
-              (list ASSERT_BEFORE_SECONDS_ABSOLUTE quote_expires_at)
+            (merge-lists
+              (if deed_transfer
+                (list
+                  (list CREATE_PUZZLE_ANNOUNCEMENT
+                    (concat PROTOCOL_PREFIX
+                      (sha256tree
+                        (list my_id (f deed_transfer)
+                          (f (r (r deed_transfer)))))))
+                  (list ASSERT_COIN_ANNOUNCEMENT
+                    (sha256
+                      (f (r deed_transfer))
+                      (concat PROTOCOL_PREFIX
+                        (sha256 my_id (f deed_transfer)
+                          (f (r (r deed_transfer))))))))
+                ())
               (c
-                (list REMARK
-                  PROTOCOL_PREFIX SPEND_AUTHORIZE_SOLS_SWAP operation_hash)
-                (base_conditions
-                  SINGLETON_STRUCT my_id my_amount my_inner_puzzlehash))))))))
+                (list ASSERT_BEFORE_SECONDS_ABSOLUTE quote_expires_at)
+                (c
+                  (list REMARK
+                    PROTOCOL_PREFIX SPEND_AUTHORIZE_SOLS_SWAP operation_hash)
+                  (base_conditions
+                    SINGLETON_STRUCT my_id my_amount my_inner_puzzlehash)))))))))
 
   ;; SPEND CASE 'd' — ACCEPT A GOVERNED FUNDED REDEMPTION
   ;;
@@ -807,7 +835,8 @@
                     SINGLETON_STRUCT OWNER_PUBKEY AUTH_TYPE
                     IDENTITY_ATTEST_ROOT ZKPASSPORT_BRIDGE_POLICY_HASH
                     my_id my_inner_puzzlehash my_amount
-                    (f p) (f (r p)) (f (r (r p))))
+                    (f p) (f (r p)) (f (r (r p)))
+                    (f (r (r (r p)))))
                   (if (= spend_case SPEND_ACCEPT_REDEMPTION)
                     (spend_accept_redemption
                       SINGLETON_STRUCT OWNER_PUBKEY AUTH_TYPE

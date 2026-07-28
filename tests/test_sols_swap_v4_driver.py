@@ -9,6 +9,7 @@ from chia.wallet.lineage_proof import LineageProof
 from chia.wallet.puzzles.p2_delegated_puzzle_or_hidden_puzzle import puzzle_for_pk
 from chia.wallet.puzzles.singleton_top_layer_v1_1 import (
     SINGLETON_LAUNCHER_HASH,
+    SINGLETON_MOD,
     SINGLETON_MOD_HASH,
     puzzle_for_singleton,
 )
@@ -24,6 +25,8 @@ from solslot_puzzles.pool_v4_driver import (
     p2_pool_v2_inner_hash,
     pool_v4_inner_mod_hash,
 )
+from solslot_puzzles.mint_publish_driver import make_smart_deed_inner
+from solslot_puzzles.protocol_deployment import pool_token_tail_hash
 from solslot_puzzles.protocol_statutes_driver import (
     make_inner_puzzle as make_statutes_inner,
     protocol_statutes_inner_mod_hash,
@@ -46,6 +49,7 @@ from solslot_puzzles.sols_pool_v4 import (
 from solslot_puzzles.sols_swap_v4_driver import (
     SolsSwapOfferError,
     aggregate_sols_to_deed_swap,
+    build_deed_to_sols_protocol_offer,
     build_sols_to_deed_protocol_offer,
     prepare_sols_buyer_offer,
     validate_sols_buyer_offer,
@@ -86,16 +90,19 @@ PROPERTY_ID = b32(9)
 QUOTE_EXPIRES = 1_800_080_000
 PAR_VALUE = 100_000_000
 SHARE_PPM = 100_000
+OWNER_SK = AugSchemeMPL.key_gen(bytes([42]) * 32)
+OWNER_PK = bytes(OWNER_SK.get_g1())
 
 PARAMETERS = ProtocolParameters()
 RULES = PermanentRules(
     sgt_tail_hash=b32(20),
     sgt_total_supply=1_000_000,
-    sols_tail_hash=b32(21),
+    sols_tail_hash=pool_token_tail_hash(POOL_LAUNCHER),
     zkpassport_policy_hash=b32(22),
     protocol_treasury_puzzle_hash=b32(23),
     network_id=b32(24),
 )
+RESERVE_INNER = puzzle_for_pk(OWNER_SK.get_g1())
 COLLECTION = CollectionStatute(
     collection_id=b32(25),
     nav_micro_usd=999_000_000,
@@ -126,8 +133,8 @@ EMPTY_POOL = SolsPoolStateV4(
         treasury_assets_micro_usd=0,
         proven_liabilities_micro_usd=0,
         deed_count=0,
-        total_sols_mojos=0,
-        reserve_sols_mojos=0,
+        total_sols_mojos=1,
+        reserve_sols_mojos=1,
     ),
     state_version=1,
 )
@@ -144,11 +151,10 @@ CONFIG = PoolV4Config(
     p2_pool_v2_mod_hash=bytes32(
         load_puzzle("p2_pool_v2.clsp").get_tree_hash()
     ),
-    reserve_puzzle_hash=b32(30),
+    deed_launcher_puzzle_hash=b32(29),
+    reserve_puzzle_hash=bytes32(RESERVE_INNER.get_tree_hash()),
     sgt_rewards_puzzle_hash=b32(31),
 )
-OWNER_SK = AugSchemeMPL.key_gen(bytes([42]) * 32)
-OWNER_PK = bytes(OWNER_SK.get_g1())
 DEED_COMMITMENT = bytes32(
     Program.to(
         [
@@ -216,6 +222,39 @@ def _singleton_child(
     )
 
 
+def _deed_singleton_child(
+    *,
+    parent_inner: Program,
+    current_inner: Program,
+    seed: int,
+) -> tuple[Coin, LineageProof, Coin]:
+    deed_struct = Program.to(
+        (
+            SINGLETON_MOD_HASH,
+            (DEED_LAUNCHER, CONFIG.deed_launcher_puzzle_hash),
+        )
+    )
+    parent_coin = Coin(
+        b32(seed),
+        bytes32(SINGLETON_MOD.curry(deed_struct, parent_inner).get_tree_hash()),
+        1,
+    )
+    child = Coin(
+        parent_coin.name(),
+        bytes32(SINGLETON_MOD.curry(deed_struct, current_inner).get_tree_hash()),
+        1,
+    )
+    return (
+        child,
+        LineageProof(
+            parent_name=parent_coin.parent_coin_info,
+            inner_puzzle_hash=bytes32(parent_inner.get_tree_hash()),
+            amount=parent_coin.amount,
+        ),
+        parent_coin,
+    )
+
+
 def _fixture() -> SwapFixture:
     empty_pool_inner = make_pool_v4_full(CONFIG, EMPTY_POOL).uncurry()
     assert empty_pool_inner is not None
@@ -237,8 +276,7 @@ def _fixture() -> SwapFixture:
         config=CONFIG,
         deed_commitment=DEED_COMMITMENT,
     )
-    custody_coin, custody_lineage, deed_parent_coin = _singleton_child(
-        launcher_id=DEED_LAUNCHER,
+    custody_coin, custody_lineage, deed_parent_coin = _deed_singleton_child(
         parent_inner=Program.to(1),
         current_inner=custody_inner,
         seed=41,
@@ -514,3 +552,186 @@ def test_protocol_offer_rejects_stale_pool_coin() -> None:
             custody_lineage_proof=lineage(117),
             quote_expires_at=QUOTE_EXPIRES,
         )
+
+
+def test_deed_to_sols_offer_bootstraps_atomically_and_preserves_anchor() -> None:
+    empty_pool_full = make_pool_v4_full(CONFIG, EMPTY_POOL)
+    uncurried_pool = empty_pool_full.uncurry()
+    assert uncurried_pool is not None
+    _, pool_args = uncurried_pool
+    empty_pool_inner = list(pool_args.as_iter())[1]
+    pool_coin, pool_lineage, _ = _singleton_child(
+        launcher_id=POOL_LAUNCHER,
+        parent_inner=empty_pool_inner,
+        current_inner=empty_pool_inner,
+        seed=120,
+    )
+
+    vault_full = puzzle_for_vault_v2_full(
+        vault_launcher_id=VAULT_LAUNCHER,
+        owner_pubkey=OWNER_PK,
+        auth_type=AUTH_TYPE_BLS,
+        members_merkle_root=MEMBERS_ROOT,
+        pool_launcher_id=POOL_LAUNCHER,
+        identity_attest_root=IDENTITY_ROOT,
+        zkpassport_bridge_policy_hash=RULES.zkpassport_policy_hash,
+    )
+    vault_uncurried = vault_full.uncurry()
+    assert vault_uncurried is not None
+    _, vault_args = vault_uncurried
+    vault_inner = list(vault_args.as_iter())[1]
+    vault_coin, vault_lineage, _ = _singleton_child(
+        launcher_id=VAULT_LAUNCHER,
+        parent_inner=vault_inner,
+        current_inner=vault_inner,
+        seed=121,
+    )
+
+    deed_struct = Program.to(
+        (
+            SINGLETON_MOD_HASH,
+            (DEED_LAUNCHER, CONFIG.deed_launcher_puzzle_hash),
+        )
+    )
+    smart_deed_inner = make_smart_deed_inner(
+        deed_singleton_struct_program=deed_struct,
+        protocol_did_puzhash=b32(122),
+        par_value_mojos=PAR_VALUE,
+        asset_class=1,
+        property_id_canon=PROPERTY_ID,
+        collection_id_canon=COLLECTION.collection_id,
+        share_ppm=SHARE_PPM,
+        jurisdiction=b"US-MI",
+        royalty_puzhash=b32(123),
+        royalty_bps=0,
+        pool_singleton_launcher_id=POOL_LAUNCHER,
+        pool_singleton_launcher_puzzle_hash=SINGLETON_LAUNCHER_HASH,
+        p2_pool_mod_hash=CONFIG.p2_pool_v2_mod_hash,
+        p2_vault_mod_hash=CONFIG.p2_vault_mod_hash,
+    )
+    p2_vault_inner = puzzle_hash_for_p2_vault(VAULT_LAUNCHER)
+    current_deed_inner = Program.to(
+        load_puzzle("p2_vault.clsp").curry(
+            SINGLETON_MOD_HASH,
+            VAULT_LAUNCHER,
+            SINGLETON_LAUNCHER_HASH,
+        )
+    )
+    assert bytes32(current_deed_inner.get_tree_hash()) == p2_vault_inner
+    held_deed_coin, held_deed_lineage, _ = _deed_singleton_child(
+        parent_inner=Program.to(1),
+        current_inner=current_deed_inner,
+        seed=124,
+    )
+    ephemeral = Coin(
+        held_deed_coin.name(),
+        bytes32(
+            SINGLETON_MOD.curry(
+                deed_struct,
+                smart_deed_inner,
+            ).get_tree_hash()
+        ),
+        1,
+    )
+    custody_inner = load_puzzle("p2_pool_v2.clsp").curry(
+        CONFIG.p2_pool_v2_mod_hash,
+        SINGLETON_MOD_HASH,
+        POOL_LAUNCHER,
+        SINGLETON_LAUNCHER_HASH,
+        DEED_COMMITMENT,
+    )
+    custody_id = Coin(
+        ephemeral.name(),
+        bytes32(
+            SINGLETON_MOD.curry(
+                deed_struct,
+                custody_inner,
+            ).get_tree_hash()
+        ),
+        1,
+    ).name()
+    seller_inner_hash = b32(125)
+    receipt = prepare_deed_to_sols(
+        pool_coin_id=pool_coin.name(),
+        state=EMPTY_POOL,
+        inventory=(),
+        deed_launcher_id=DEED_LAUNCHER,
+        custody_coin_id=custody_id,
+        deed_commitment=DEED_COMMITMENT,
+        collection=COLLECTION,
+        share_ppm=SHARE_PPM,
+        parameters=PARAMETERS,
+        statutes_state=STATUTES_STATE,
+        pause=None,
+        vault_launcher_id=VAULT_LAUNCHER,
+        vault_coin_id=vault_coin.name(),
+        seller_sols_puzzle_hash=seller_inner_hash,
+        quote_expires_at=QUOTE_EXPIRES,
+    )
+    statutes_inner = make_statutes_inner(
+        singleton_struct=CONFIG.statutes_singleton_struct,
+        governance_singleton_struct=CONFIG.governance_singleton_struct,
+        permanent_rules=RULES,
+        state=STATUTES_STATE,
+    )
+    statutes_coin, statutes_lineage, _ = _singleton_child(
+        launcher_id=STATUTES_LAUNCHER,
+        parent_inner=statutes_inner,
+        current_inner=statutes_inner,
+        seed=126,
+    )
+    reserve_cat = construct_cat_puzzle(
+        CAT_MOD,
+        RULES.sols_tail_hash,
+        RESERVE_INNER,
+    )
+    reserve_coin = Coin(b32(127), bytes32(reserve_cat.get_tree_hash()), 1)
+    protocol = build_deed_to_sols_protocol_offer(
+        receipt=receipt,
+        config=CONFIG,
+        parameters=PARAMETERS,
+        collection=COLLECTION,
+        pause=None,
+        statutes_state=STATUTES_STATE,
+        statutes_coin=statutes_coin,
+        statutes_launcher_id=STATUTES_LAUNCHER,
+        statutes_lineage_proof=statutes_lineage,
+        collections=[COLLECTION],
+        pauses=[],
+        vault_coin=vault_coin,
+        vault_launcher_id=VAULT_LAUNCHER,
+        vault_lineage_proof=vault_lineage,
+        vault_owner_pubkey=OWNER_PK,
+        vault_auth_type=AUTH_TYPE_BLS,
+        vault_members_merkle_root=MEMBERS_ROOT,
+        identity_attest_root=IDENTITY_ROOT,
+        zkpassport_bridge_policy_hash=RULES.zkpassport_policy_hash,
+        vault_signature_data=None,
+        pool_coin=pool_coin,
+        pool_lineage_proof=pool_lineage,
+        p2_vault_deed_coin=held_deed_coin,
+        p2_vault_deed_lineage_proof=held_deed_lineage,
+        smart_deed_inner=smart_deed_inner,
+        par_value=PAR_VALUE,
+        asset_class=1,
+        property_id=PROPERTY_ID,
+        reserve_cat_coin=reserve_coin,
+        reserve_cat_lineage_proof=LineageProof(),
+        reserve_inner_puzzle=RESERVE_INNER,
+        quote_expires_at=QUOTE_EXPIRES,
+    )
+    quote = receipt.deed_to_sols_quote
+    assert quote is not None
+    assert quote.reserve_sols_mojos_paid == 0
+    assert quote.fresh_sols_mojos_minted == quote.seller_sols_mojos
+    assert receipt.next_state.economics.reserve_sols_mojos == 1
+    assert protocol.offer.is_valid()
+    spend = protocol.offer.to_valid_spend()
+    assert len(spend.coin_spends) == 7
+    assert protocol.reserve_cat_spend.coin == reserve_coin
+    assert set(protocol.offer.requested_payments) == {RULES.sols_tail_hash}
+    seller_payment = protocol.offer.requested_payments[
+        RULES.sols_tail_hash
+    ][0]
+    assert seller_payment.puzzle_hash == seller_inner_hash
+    assert int(seller_payment.amount) == quote.seller_sols_mojos

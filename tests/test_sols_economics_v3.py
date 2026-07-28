@@ -33,7 +33,7 @@ def live_state(*, reserve: int = 100_000, total: int = 500_000) -> SolsEconomicS
 
 
 def test_bootstrap_uses_exact_three_dollars_and_thirty_three_cents() -> None:
-    state = SolsEconomicState(False, 0, 0, 0, 0, 0, 0)
+    state = SolsEconomicState(False, 0, 0, 0, 0, 1, 1)
     quote = quote_deed_to_sols(state, deed_value_micro_usd=333_000_000)
 
     assert BOOTSTRAP_VALUE_MICRO_USD_PER_SOLS == 3_330_000
@@ -43,12 +43,15 @@ def test_bootstrap_uses_exact_three_dollars_and_thirty_three_cents() -> None:
     assert quote.reserve_sols_mojos_paid == 0
     assert quote.fresh_sols_mojos_minted == 100_000
     assert quote.next_state.bootstrap_complete is True
+    assert quote.next_state.reserve_sols_mojos == 1
+    assert quote.next_state.total_sols_mojos == 100_001
+    assert quote.next_state.circulating_sols_mojos == 100_000
     assert quote.next_state.nav_micro_usd_per_sols == Fraction(3_330_000, 1)
 
 
 def test_bootstrap_seller_rounding_favors_existing_backing() -> None:
     quote = quote_deed_to_sols(
-        SolsEconomicState(False, 0, 0, 0, 0, 0, 0),
+        SolsEconomicState(False, 0, 0, 0, 0, 1, 1),
         deed_value_micro_usd=100_000_000,
     )
     assert quote.seller_sols_mojos == 30_030
@@ -75,10 +78,10 @@ def test_deed_to_sols_mints_only_exact_reserve_shortfall() -> None:
         deed_value_micro_usd=166_500_000,
     )
     assert quote.seller_sols_mojos == 50_000
-    assert quote.reserve_sols_mojos_paid == 20_000
-    assert quote.fresh_sols_mojos_minted == 30_000
-    assert quote.next_state.total_sols_mojos == 450_000
-    assert quote.next_state.reserve_sols_mojos == 0
+    assert quote.reserve_sols_mojos_paid == 19_999
+    assert quote.fresh_sols_mojos_minted == 30_001
+    assert quote.next_state.total_sols_mojos == 450_001
+    assert quote.next_state.reserve_sols_mojos == 1
     assert quote.next_state.nav_micro_usd_per_sols == Fraction(3_330_000, 1)
 
 

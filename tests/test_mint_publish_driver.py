@@ -814,19 +814,19 @@ class TestBuildMintPublishArtifacts:
         # current observed value in the assertion diff, copy the new
         # hex into the slot, and bump the freeze comment below.
         #
-        # Refrozen 2026-07-18 for PA13 pool identity binding in SmartDeed curry.
+        # Refrozen 2026-07-28 for the RC22 custom deed singleton contract.
         pinned = {
             "smart_deed_inner_puzhash": (
-                "dbadecca7eb32bc914c532a001058b3f82c205b6740883926c0ae3e471e74bf7"
+                "ebe41426b7b857631562927519166faa56972ef8c275214f900a7a683e2f16d4"
             ),
             "eve_inner_puzhash": (
-                "ed1a797a1c7c0e709538aaf7245ed8fe7fa1f4919e07bcd8d5b9e004a53da6da"
+                "5c761c9688d55a1f599d559a273f3c7dad2a92d8d9cd7b40cc603e0988868336"
             ),
             "deed_full_puzhash": (
-                "e20e153e294df3e2f4d81d7f924aa162ea52e97e992b90c8531a9dca5aed32d3"
+                "0c5a48191a9ae9abdada05464ab87cb42419095b32b3c117d3d5aa4b978c2fb1"
             ),
             "proposal_hash": (
-                "b50ab4c0d8c51edca7523d3090aa55ba993a598eff810e1e94cb4d05a81c3896"
+                "caba01803c035dee5969219eaf15759fd9dff44078c3182d96ac9d99787ff817"
             ),
             "deed_launcher_id": (
                 "1310b78bf387ea58bb9365e261ff099a6971fd2ca5cc98e750b1d07e92e29b1d"

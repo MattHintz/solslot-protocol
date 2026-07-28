@@ -59,8 +59,8 @@
         "treasury_assets_micro_usd": "0",
         "proven_liabilities_micro_usd": "0",
         "deed_count": "0",
-        "total_sols_mojos": "0",
-        "reserve_sols_mojos": "0",
+        "total_sols_mojos": "1",
+        "reserve_sols_mojos": "1",
         "backing_micro_usd": "0",
         "circulating_sols_mojos": "0",
         "nav_micro_usd_per_sols": null
@@ -79,8 +79,8 @@
         "treasury_assets_micro_usd": "0",
         "proven_liabilities_micro_usd": "0",
         "deed_count": "1",
-        "total_sols_mojos": "100000",
-        "reserve_sols_mojos": "0",
+        "total_sols_mojos": "100001",
+        "reserve_sols_mojos": "1",
         "backing_micro_usd": "333000000",
         "circulating_sols_mojos": "100000",
         "nav_micro_usd_per_sols": {
@@ -98,8 +98,8 @@
         "treasury_assets_micro_usd": "0",
         "proven_liabilities_micro_usd": "0",
         "deed_count": "0",
-        "total_sols_mojos": "0",
-        "reserve_sols_mojos": "0",
+        "total_sols_mojos": "1",
+        "reserve_sols_mojos": "1",
         "backing_micro_usd": "0",
         "circulating_sols_mojos": "0",
         "nav_micro_usd_per_sols": null
@@ -118,8 +118,8 @@
         "treasury_assets_micro_usd": "0",
         "proven_liabilities_micro_usd": "0",
         "deed_count": "1",
-        "total_sols_mojos": "30030",
-        "reserve_sols_mojos": "0",
+        "total_sols_mojos": "30031",
+        "reserve_sols_mojos": "1",
         "backing_micro_usd": "100000000",
         "circulating_sols_mojos": "30030",
         "nav_micro_usd_per_sols": {
@@ -193,8 +193,8 @@
     "expected": {
       "deed_value_micro_usd": "166500000",
       "seller_sols_mojos": "50000",
-      "reserve_sols_mojos_paid": "20000",
-      "fresh_sols_mojos_minted": "30000",
+      "reserve_sols_mojos_paid": "19999",
+      "fresh_sols_mojos_minted": "30001",
       "used_bootstrap_price": false,
       "next_state": {
         "bootstrap_complete": true,
@@ -202,8 +202,8 @@
         "treasury_assets_micro_usd": "333000000",
         "proven_liabilities_micro_usd": "0",
         "deed_count": "7",
-        "total_sols_mojos": "450000",
-        "reserve_sols_mojos": "0",
+        "total_sols_mojos": "450001",
+        "reserve_sols_mojos": "1",
         "backing_micro_usd": "1498500000",
         "circulating_sols_mojos": "450000",
         "nav_micro_usd_per_sols": {

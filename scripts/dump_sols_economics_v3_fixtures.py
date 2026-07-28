@@ -85,7 +85,7 @@ def live_state(*, reserve: int = 100_000, total: int = 500_000) -> SolsEconomicS
 
 
 def build_fixture() -> dict[str, Any]:
-    empty = SolsEconomicState(False, 0, 0, 0, 0, 0, 0)
+    empty = SolsEconomicState(False, 0, 0, 0, 0, 1, 1)
     base = live_state()
     settlement_shares = (
         SettlementShare("deed-a", 333_333),

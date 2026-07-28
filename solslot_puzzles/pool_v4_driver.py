@@ -8,6 +8,7 @@ from chia.types.blockchain_format.coin import Coin
 from chia.types.blockchain_format.program import Program
 from chia.wallet.puzzles.singleton_top_layer_v1_1 import (
     SINGLETON_LAUNCHER_HASH,
+    SINGLETON_MOD,
     SINGLETON_MOD_HASH,
     puzzle_for_singleton,
 )
@@ -56,6 +57,7 @@ class PoolV4Config:
     p2_vault_mod_hash: bytes32
     vault_v2_mod_hash: bytes32
     p2_pool_v2_mod_hash: bytes32
+    deed_launcher_puzzle_hash: bytes32
     reserve_puzzle_hash: bytes32
     sgt_rewards_puzzle_hash: bytes32
 
@@ -94,6 +96,7 @@ class PoolV4Config:
                 self.p2_vault_mod_hash,
                 self.vault_v2_mod_hash,
                 self.p2_pool_v2_mod_hash,
+                self.deed_launcher_puzzle_hash,
                 self.reserve_puzzle_hash,
                 self.sgt_rewards_puzzle_hash,
             ]
@@ -154,8 +157,14 @@ def deterministic_custody_coin_id(
     deed_launcher_id: bytes32,
     deed_commitment: bytes32,
 ) -> bytes32:
-    full = puzzle_for_singleton(
-        deed_launcher_id,
+    deed_struct = Program.to(
+        (
+            SINGLETON_MOD_HASH,
+            (deed_launcher_id, config.deed_launcher_puzzle_hash),
+        )
+    )
+    full = SINGLETON_MOD.curry(
+        deed_struct,
         load_puzzle("p2_pool_v2.clsp").curry(
             config.p2_pool_v2_mod_hash,
             SINGLETON_MOD_HASH,

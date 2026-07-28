@@ -6,7 +6,8 @@
 ;;;    sols_tail zk_policy protocol_treasury network_id)
 ;;; MARKET_CONFIG:
 ;;;   (cat_mod_hash offer_mod_hash p2_vault_mod_hash vault_v2_mod_hash
-;;;    p2_pool_v2_mod_hash reserve_puzhash sgt_rewards_puzhash)
+;;;    p2_pool_v2_mod_hash deed_launcher_puzhash reserve_puzhash
+;;;    sgt_rewards_puzhash)
 ;;;
 ;;; State:
 ;;;   inventory_root bootstrap_complete inventory_nav treasury_assets
@@ -48,6 +49,7 @@
   (defconstant BOOTSTRAP_VALUE_MICRO_USD_PER_SOLS 3330000)
   (defconstant SOLS_MOJOS_PER_SOLS 1000)
   (defconstant MAX_EXCHANGE_FEE_BPS 100)
+  (defconstant MIN_RESERVE_SOLS_MOJOS 1)
   (defconstant UPGRADE_DELAY_SECONDS 86400)
   (defconstant TOKEN_MINT 1)
   (defconstant DEED_SPEND_POOL_DEPOSIT 0x64)
@@ -226,8 +228,9 @@
   (defun-inline p2-vault-mod (config) (nth 2 config))
   (defun-inline vault-mod (config) (nth 3 config))
   (defun-inline p2-pool-mod (config) (nth 4 config))
-  (defun-inline reserve-puzhash (config) (nth 5 config))
-  (defun-inline rewards-puzhash (config) (nth 6 config))
+  (defun-inline deed-launcher-puzhash (config) (nth 5 config))
+  (defun-inline reserve-puzhash (config) (nth 6 config))
+  (defun-inline rewards-puzhash (config) (nth 7 config))
 
   (defun-inline permanent-rules-hash (config)
     (sha256tree
@@ -315,6 +318,11 @@
 
   (defun singleton-struct-for (SINGLETON_STRUCT launcher-id)
     (c (f SINGLETON_STRUCT) (c launcher-id (r (r SINGLETON_STRUCT)))))
+
+  (defun deed-singleton-struct (SINGLETON_STRUCT MARKET_CONFIG launcher-id)
+    (c
+      (f SINGLETON_STRUCT)
+      (c launcher-id (deed-launcher-puzhash MARKET_CONFIG))))
 
   (defun p2-vault-hash (SINGLETON_STRUCT MARKET_CONFIG vault-launcher-id)
     (curry_hashes (p2-vault-mod MARKET_CONFIG)
@@ -431,7 +439,7 @@
   (defun p2-pool-full-hash
       (SINGLETON_STRUCT MARKET_CONFIG deed-launcher-id deed-commitment)
     (calculate_full_puzzle_hash
-      (singleton-struct-for SINGLETON_STRUCT deed-launcher-id)
+      (deed-singleton-struct SINGLETON_STRUCT MARKET_CONFIG deed-launcher-id)
       (p2-pool-inner-hash SINGLETON_STRUCT MARKET_CONFIG deed-commitment)))
 
   (defun expected-custody-coin-id
@@ -486,6 +494,7 @@
       (is-uint64 total-sols)
       (is-uint64 reserve-sols)
       (gte total-sols reserve-sols)
+      (gte reserve-sols MIN_RESERVE_SOLS_MOJOS)
       (is-uint64 state-version)
       (> state-version 0)
       (require (= (sha256tree parameters) parameters-root) "PARAMETERS_ROOT")
@@ -568,7 +577,9 @@
           (seller-sols bootstrap-complete deed-value current-inventory-nav treasury-assets
                        proven-liabilities total-sols reserve-sols))
         "SELLER_AMOUNT")
-      (require (= reserve-paid (min-value reserve-sols seller-amount))
+      (require
+        (= reserve-paid
+          (min-value (- reserve-sols MIN_RESERVE_SOLS_MOJOS) seller-amount))
                "RESERVE_PAID")
       (require (= fresh-mint (- seller-amount reserve-paid)) "FRESH_MINT")
       (require (= next-root (sha256tree (insert-record record inventory)))

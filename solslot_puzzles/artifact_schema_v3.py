@@ -185,6 +185,10 @@ def _top_level_projection(plan: RC22GenesisCeremonyPlan) -> dict[str, Any]:
             "p2PoolModHash": _hex32(
                 protocol.p2_pool_mod_hash, "p2PoolModHash"
             ),
+            "deedLauncherPuzzleHash": _hex32(
+                protocol.pool_config.deed_launcher_puzzle_hash,
+                "deedLauncherPuzzleHash",
+            ),
             "p2VaultModHash": _hex32(
                 protocol.p2_vault_mod_hash, "p2VaultModHash"
             ),
@@ -250,6 +254,10 @@ def _top_level_projection(plan: RC22GenesisCeremonyPlan) -> dict[str, Any]:
             ),
             "sgtTailHash": _hex32(protocol.sgt_tail_hash, "sgtTailHash"),
             "solsTailHash": _hex32(protocol.sols_tail_hash, "solsTailHash"),
+            "solsReserveSeedPuzzleHash": _hex32(
+                protocol.sols_reserve_seed_puzzle_hash,
+                "solsReserveSeedPuzzleHash",
+            ),
             "bridgePolicy": _hex32(
                 protocol.trusted_zkpassport_bridge_policy_hash,
                 "bridgePolicy",
@@ -261,6 +269,18 @@ def _top_level_projection(plan: RC22GenesisCeremonyPlan) -> dict[str, Any]:
         ),
         "sgtTailHash": _hex32(protocol.sgt_tail_hash, "sgtTailHash"),
         "solsTailHash": _hex32(protocol.sols_tail_hash, "solsTailHash"),
+        "solsReserveSeed": {
+            "amount": 1,
+            "puzzleHash": _hex32(
+                protocol.sols_reserve_seed_puzzle_hash,
+                "solsReserveSeedPuzzleHash",
+            ),
+            "coinId": _hex32(
+                protocol.sols_reserve_seed_coin_id,
+                "solsReserveSeedCoinId",
+            ),
+            "circulating": False,
+        },
         "governanceStruct": {
             "treeHash": _hex32(
                 protocol.governance_singleton_struct_hash,

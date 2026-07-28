@@ -61,6 +61,11 @@ from solslot_puzzles.zkpassport_bridge_driver import (
 RC22_GENESIS_PLAN_SCHEMA = "solslot-genesis-plan-v3"
 RC22_BRIDGE_PARENT_TOTAL = sum(range(1, GENESIS_BRIDGE_BATCH_SIZE + 1))
 RC22_PROPERTY_REGISTRY_LAUNCHER_AMOUNT = 1
+RC22_SOLS_RESERVE_SEED_AMOUNT = 1
+RC22_POOL_FUNDING_AMOUNT = (
+    RC22_PROPERTY_REGISTRY_LAUNCHER_AMOUNT
+    + RC22_SOLS_RESERVE_SEED_AMOUNT
+)
 RC22_BRIDGE_BATCH_FUNDING_AMOUNT = (
     RC22_BRIDGE_PARENT_TOTAL
     + RC22_PROPERTY_REGISTRY_LAUNCHER_AMOUNT
@@ -220,6 +225,15 @@ def _plan_payload(
                 plan.vault_version_registry.launcher_id
             ),
             "propertyRegistry": _hex(plan.property_registry.launcher_id),
+        },
+        "solsReserveSeed": {
+            "amount": RC22_SOLS_RESERVE_SEED_AMOUNT,
+            "puzzleHash": _hex(
+                protocol.sols_reserve_seed_puzzle_hash
+            ),
+            "coinId": _hex(protocol.sols_reserve_seed_coin_id),
+            "circulating": False,
+            "purpose": "permanent-cat-lineage-anchor",
         },
         "puzzleHashes": {
             "poolInnerMod": _hex(protocol.pool_inner_mod_hash),
@@ -634,7 +648,7 @@ def verify_rc22_genesis_ceremony_plan(
         raise ValueError("statutes launcher does not match its funding coin")
     if (
         plan.protocol.pool_inner_mod_hash.hex()
-        != "f6704dc71b171811a142c1a3ed92867880db3bad1e8e49f0f7c5cdf6d246739f"
+        != "1d4be5fec4d196e6920d8e04f7680e813e310040348ce153b49191e633650768"
     ):
         raise ValueError("ceremony plan does not launch frozen Pool V4")
     if plan.plan_hash != _compute_plan_hash(plan):
@@ -664,6 +678,10 @@ def build_rc22_genesis_ceremony_bundle(
         raise ValueError(
             "RC22 bridge batch funding coin must be exactly 529"
         )
+    if int(funding_coins.pool.amount) != RC22_POOL_FUNDING_AMOUNT:
+        raise ValueError(
+            "RC22 pool funding coin must be exactly 2 mojos"
+        )
 
     spends: list[CoinSpend] = []
     signatures: list[Any] = []
@@ -677,15 +695,56 @@ def build_rc22_genesis_ceremony_bundle(
     spends.append(sgt_spend)
     signatures.append(signature)
 
-    singleton_inputs = (
-        (
-            funding_coins.pool,
-            SingletonSurface(
-                plan.protocol.pool_launcher_id,
-                plan.protocol.pool_inner_puzzle_hash,
-                plan.protocol.pool_full_puzzle_hash,
-            ),
+    pool_conditions = [
+        Program.to(
+            [
+                51,
+                bytes32(SINGLETON_LAUNCHER_HASH),
+                RC22_PROPERTY_REGISTRY_LAUNCHER_AMOUNT,
+            ]
         ),
+        Program.to(
+            [
+                51,
+                plan.protocol.sols_reserve_seed_puzzle_hash,
+                RC22_SOLS_RESERVE_SEED_AMOUNT,
+            ]
+        ),
+    ]
+    pool_funding_spend, pool_signature = _signed_faucet_spend(
+        faucet=faucet,
+        coin=funding_coins.pool,
+        conditions=pool_conditions,
+    )
+    spends.append(pool_funding_spend)
+    signatures.append(pool_signature)
+    pool_launcher_coin = Coin(
+        funding_coins.pool.name(),
+        bytes32(SINGLETON_LAUNCHER_HASH),
+        uint64(1),
+    )
+    if bytes32(pool_launcher_coin.name()) != plan.protocol.pool_launcher_id:
+        raise ValueError("pool launcher does not match plan")
+    spends.append(
+        make_spend(
+            pool_launcher_coin,
+            SINGLETON_LAUNCHER,
+            Program.to(
+                [plan.protocol.pool_inner_puzzle_hash, uint64(1), []]
+            ),
+        )
+    )
+    reserve_seed_coin = Coin(
+        funding_coins.pool.name(),
+        plan.protocol.sols_reserve_seed_puzzle_hash,
+        uint64(RC22_SOLS_RESERVE_SEED_AMOUNT),
+    )
+    if bytes32(reserve_seed_coin.name()) != (
+        plan.protocol.sols_reserve_seed_coin_id
+    ):
+        raise ValueError("Sols reserve seed does not match plan")
+
+    singleton_inputs = (
         (
             funding_coins.did,
             SingletonSurface(
@@ -810,7 +869,9 @@ __all__ = [
     "RC22_BRIDGE_BATCH_FUNDING_AMOUNT",
     "RC22_BRIDGE_PARENT_TOTAL",
     "RC22_GENESIS_PLAN_SCHEMA",
+    "RC22_POOL_FUNDING_AMOUNT",
     "RC22_PROPERTY_REGISTRY_LAUNCHER_AMOUNT",
+    "RC22_SOLS_RESERVE_SEED_AMOUNT",
     "RC22GenesisCeremonyBundle",
     "RC22GenesisCeremonyPlan",
     "RC22GenesisFundingCoinIds",

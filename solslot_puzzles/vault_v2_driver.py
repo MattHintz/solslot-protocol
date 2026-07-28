@@ -310,11 +310,28 @@ def inner_solution_for_sols_swap(
     operation_hash: bytes32,
     quote_expires_at: int,
     signature_data: Optional[bytes] = None,
+    deed_launcher_id: bytes32 | None = None,
+    p2_vault_coin_id: bytes32 | None = None,
+    smart_deed_inner_puzzle_hash: bytes32 | None = None,
 ) -> Program:
     if vault_amount <= 0:
         raise ValueError("vault_amount must be positive")
     if quote_expires_at <= 0:
         raise ValueError("quote_expires_at must be positive")
+    deed_fields = (
+        deed_launcher_id,
+        p2_vault_coin_id,
+        smart_deed_inner_puzzle_hash,
+    )
+    if any(value is not None for value in deed_fields) and not all(
+        value is not None for value in deed_fields
+    ):
+        raise ValueError("deed transfer fields must be supplied together")
+    deed_transfer = (
+        list(deed_fields)
+        if deed_launcher_id is not None
+        else []
+    )
     return Program.to(
         [
             vault_coin_id,
@@ -325,6 +342,7 @@ def inner_solution_for_sols_swap(
                 operation_hash,
                 quote_expires_at,
                 signature_data or b"",
+                deed_transfer,
             ],
         ]
     )
@@ -344,6 +362,9 @@ def build_vault_sols_swap_spend(
     quote_expires_at: int,
     lineage_proof: LineageProof,
     signature_data: Optional[bytes] = None,
+    deed_launcher_id: bytes32 | None = None,
+    p2_vault_coin_id: bytes32 | None = None,
+    smart_deed_inner_puzzle_hash: bytes32 | None = None,
 ) -> CoinSpend:
     if identity_attest_root == DEFAULT_IDENTITY_ATTEST_ROOT:
         raise ValueError("vault must have a zkPassport attestation")
@@ -369,6 +390,9 @@ def build_vault_sols_swap_spend(
         operation_hash=operation_hash,
         quote_expires_at=quote_expires_at,
         signature_data=signature_data,
+        deed_launcher_id=deed_launcher_id,
+        p2_vault_coin_id=p2_vault_coin_id,
+        smart_deed_inner_puzzle_hash=smart_deed_inner_puzzle_hash,
     )
     solution = solution_for_singleton(
         lineage_proof,

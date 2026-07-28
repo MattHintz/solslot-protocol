@@ -20,6 +20,7 @@ DEFAULT_EXCHANGE_FEE_BPS = 100
 DEFAULT_PROTOCOL_FEE_BPS = 30
 DEFAULT_SGT_REWARDS_FEE_BPS = 70
 MAX_EXCHANGE_FEE_BPS = 100
+MIN_RESERVE_SOLS_MOJOS = 1
 
 
 def floor_div(numerator: int, denominator: int) -> int:
@@ -60,6 +61,10 @@ class SolsEconomicState:
         for label, value in values.items():
             if value < 0:
                 raise ValueError(f"{label} must be non-negative")
+        if self.reserve_sols_mojos < MIN_RESERVE_SOLS_MOJOS:
+            raise ValueError(
+                "reserve_sols_mojos must preserve the one-mojo CAT anchor"
+            )
         if self.reserve_sols_mojos > self.total_sols_mojos:
             raise ValueError("reserve_sols_mojos cannot exceed total_sols_mojos")
         if self.deed_count == 0 and self.inventory_nav_micro_usd != 0:
@@ -67,10 +72,12 @@ class SolsEconomicState:
         if not self.bootstrap_complete and (
             self.deed_count != 0
             or self.inventory_nav_micro_usd != 0
-            or self.total_sols_mojos != 0
-            or self.reserve_sols_mojos != 0
+            or self.total_sols_mojos != MIN_RESERVE_SOLS_MOJOS
+            or self.reserve_sols_mojos != MIN_RESERVE_SOLS_MOJOS
         ):
-            raise ValueError("an unbootstrapped pool cannot have inventory or Sols")
+            raise ValueError(
+                "an unbootstrapped pool must contain only the Sols CAT anchor"
+            )
         return self
 
     @property
@@ -227,7 +234,10 @@ def quote_deed_to_sols(
     if seller_amount <= 0:
         raise ValueError("deed value is below the minimum Sols precision")
 
-    reserve_paid = min(state.reserve_sols_mojos, seller_amount)
+    spendable_reserve = (
+        state.reserve_sols_mojos - MIN_RESERVE_SOLS_MOJOS
+    )
+    reserve_paid = min(spendable_reserve, seller_amount)
     fresh_mint = seller_amount - reserve_paid
     next_state = SolsEconomicState(
         bootstrap_complete=True,

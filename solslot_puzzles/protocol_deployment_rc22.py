@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 from chia.types.blockchain_format.coin import Coin
 from chia.types.blockchain_format.program import Program
-from chia.wallet.cat_wallet.cat_utils import CAT_MOD_HASH
+from chia.wallet.cat_wallet.cat_utils import CAT_MOD, CAT_MOD_HASH
 from chia.wallet.puzzles.singleton_top_layer_v1_1 import (
     SINGLETON_LAUNCHER_HASH,
     SINGLETON_MOD_HASH,
@@ -20,6 +20,7 @@ from solslot_puzzles.pool_v4_driver import (
     make_pool_v4_inner,
     pool_v4_inner_mod_hash,
 )
+from solslot_puzzles.mint_publish_driver import deed_launcher_puzzle_hash
 from solslot_puzzles.protocol_config_driver import NETWORK_ID_TESTNET11
 from solslot_puzzles.protocol_deployment import (
     cat2_puzzle_hash_for_sgt,
@@ -107,6 +108,8 @@ class RC22ProtocolDeploymentPlan:
     pool_inner_mod_hash: bytes32
     pool_inner_puzzle_hash: bytes32
     pool_full_puzzle_hash: bytes32
+    sols_reserve_seed_puzzle_hash: bytes32
+    sols_reserve_seed_coin_id: bytes32
     governance_inner_puzzle_hash: bytes32
     governance_full_puzzle_hash: bytes32
     governance_singleton_struct_hash: bytes32
@@ -234,8 +237,8 @@ def build_rc22_protocol_deployment_plan(
             treasury_assets_micro_usd=0,
             proven_liabilities_micro_usd=0,
             deed_count=0,
-            total_sols_mojos=0,
-            reserve_sols_mojos=0,
+            total_sols_mojos=1,
+            reserve_sols_mojos=1,
         ),
         state_version=RC22_INITIAL_STATE_VERSION,
     )
@@ -257,6 +260,9 @@ def build_rc22_protocol_deployment_plan(
         p2_pool_v2_mod_hash=bytes32(
             load_puzzle("p2_pool_v2.clsp").get_tree_hash()
         ),
+        deed_launcher_puzzle_hash=deed_launcher_puzzle_hash(
+            protocol_did_singleton_struct=singleton_struct(did_launcher_id)
+        ),
         reserve_puzzle_hash=trusted_treasury_reserve_puzzle_hash,
         sgt_rewards_puzzle_hash=trusted_governance_rewards_puzzle_hash,
     )
@@ -265,6 +271,20 @@ def build_rc22_protocol_deployment_plan(
     pool_full_hash = singleton_full_puzzle_hash(
         pool_launcher_id,
         pool_inner_hash,
+    )
+    sols_reserve_seed_puzzle_hash = bytes32(
+        CAT_MOD.curry(
+            CAT_MOD_HASH,
+            fixed_sols_tail,
+            trusted_treasury_reserve_puzzle_hash,
+        ).get_tree_hash()
+    )
+    sols_reserve_seed_coin_id = bytes32(
+        Coin(
+            pool_genesis_coin_id,
+            sols_reserve_seed_puzzle_hash,
+            uint64(1),
+        ).name()
     )
 
     governance_inner = proposal_tracker_v2_inner_puzzle(
@@ -337,6 +357,8 @@ def build_rc22_protocol_deployment_plan(
         pool_inner_mod_hash=pool_v4_inner_mod_hash(),
         pool_inner_puzzle_hash=pool_inner_hash,
         pool_full_puzzle_hash=pool_full_hash,
+        sols_reserve_seed_puzzle_hash=sols_reserve_seed_puzzle_hash,
+        sols_reserve_seed_coin_id=sols_reserve_seed_coin_id,
         governance_inner_puzzle_hash=governance_inner_hash,
         governance_full_puzzle_hash=governance_full_hash,
         governance_singleton_struct_hash=bytes32(

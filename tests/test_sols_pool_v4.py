@@ -68,8 +68,8 @@ EMPTY_STATE = SolsPoolStateV4(
         treasury_assets_micro_usd=0,
         proven_liabilities_micro_usd=0,
         deed_count=0,
-        total_sols_mojos=0,
-        reserve_sols_mojos=0,
+        total_sols_mojos=1,
+        reserve_sols_mojos=1,
     ),
     state_version=1,
 )
@@ -110,7 +110,7 @@ def test_first_deed_bootstraps_at_three_dollars_thirty_three() -> None:
     assert quote.seller_sols_mojos == 30_000
     assert quote.reserve_sols_mojos_paid == 0
     assert quote.fresh_sols_mojos_minted == 30_000
-    assert quote.next_state.total_sols_mojos == 30_000
+    assert quote.next_state.total_sols_mojos == 30_001
     assert receipt.next_state.economics.inventory_nav_micro_usd == 99_900_000
 
 
@@ -170,8 +170,8 @@ def test_sols_purchase_returns_principal_to_reserve_without_melt() -> None:
     assert quote.fee_split.total_fee_sols_mojos == 300
     assert quote.fee_split.protocol_fee_sols_mojos == 90
     assert quote.fee_split.sgt_rewards_fee_sols_mojos == 210
-    assert receipt.next_state.economics.total_sols_mojos == 30_000
-    assert receipt.next_state.economics.reserve_sols_mojos == 30_000
+    assert receipt.next_state.economics.total_sols_mojos == 30_001
+    assert receipt.next_state.economics.reserve_sols_mojos == 30_001
     assert receipt.next_state.economics.deed_count == 0
 
 

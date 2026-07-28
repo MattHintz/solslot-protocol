@@ -67,6 +67,14 @@ def test_rc22_plan_launches_only_current_protocol_modules() -> None:
     ).get_tree_hash()
     assert built.pool_state.state_version == 1
     assert built.pool_state.economics.bootstrap_complete is False
+    assert built.pool_state.economics.total_sols_mojos == 1
+    assert built.pool_state.economics.reserve_sols_mojos == 1
+    assert built.pool_state.economics.circulating_sols_mojos == 0
+    assert built.sols_reserve_seed_coin_id == Coin(
+        built.pool_genesis_coin_id,
+        built.sols_reserve_seed_puzzle_hash,
+        1,
+    ).name()
 
 
 def test_rc22_plan_derives_each_singleton_from_its_reserved_coin() -> None:
