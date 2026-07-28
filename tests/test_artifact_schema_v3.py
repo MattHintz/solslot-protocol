@@ -52,6 +52,9 @@ def test_v3_artifact_reconstructs_the_complete_rc22_plan() -> None:
     assert "statutes" in value["launcherIds"]
     assert "navRegistry" not in value["launcherIds"]
     assert value["bridgePolicy"]["fundingAmount"] == 529
+    assert value["statutes"]["roots"]["liquidityVenues"] == (
+        value["genesisPlan"]["state"]["statutesRoots"]["liquidityVenues"]
+    )
     assert value["bridgePolicy"]["networkFeeSource"] == (
         "separate-fountain-fee-till"
     )
@@ -66,6 +69,11 @@ def test_v3_artifact_reconstructs_the_complete_rc22_plan() -> None:
         (("genesisPlan", "launcherIds", "pool"), "0x" + "ff" * 32, "reconstruct"),
         (("launcherIds", "pool"), "0x" + "fe" * 32, "launcherIds"),
         (("bridgePolicy", "fundingAmount"), 530, "bridgePolicy"),
+        (
+            ("statutes", "roots", "liquidityVenues"),
+            "0x" + "ff" * 32,
+            "statutes",
+        ),
         (
             ("permanentRules", "solsPrimaryPurchasesDisabled"),
             False,

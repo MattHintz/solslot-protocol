@@ -89,6 +89,17 @@ def test_rc22_plan_replaces_nav_registry_with_statutes() -> None:
     assert "statutes" in payload["fundingCoinIds"]
     assert "nav_registry" not in payload["fundingCoinIds"]
     assert payload["bridgeBatch"]["fundingAmount"] == 529
+    assert set(payload["state"]["statutesRoots"]) == {
+        "parameters",
+        "collections",
+        "oracles",
+        "bridgeRoutes",
+        "liquidityVenues",
+        "pauses",
+    }
+    assert payload["state"]["statutesRoots"]["liquidityVenues"] == (
+        "0x" + plan.protocol.statutes_state.liquidity_root.hex()
+    )
     assert payload["bridgeBatch"]["parentOutputAmount"] == 528
     assert payload["bridgeBatch"]["propertyRegistryLauncherAmount"] == 1
     assert payload["bridgeBatch"]["changeAmount"] == 0

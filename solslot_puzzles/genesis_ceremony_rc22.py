@@ -306,6 +306,22 @@ def _plan_payload(
             "statutesContentHash": _hex(
                 protocol.statutes_state.content_hash
             ),
+            "statutesRoots": {
+                "parameters": _hex(
+                    protocol.statutes_state.parameters_root
+                ),
+                "collections": _hex(
+                    protocol.statutes_state.collections_root
+                ),
+                "oracles": _hex(protocol.statutes_state.oracle_root),
+                "bridgeRoutes": _hex(
+                    protocol.statutes_state.routes_root
+                ),
+                "liquidityVenues": _hex(
+                    protocol.statutes_state.liquidity_root
+                ),
+                "pauses": _hex(protocol.statutes_state.pauses_root),
+            },
             "poolVersion": protocol.pool_state.state_version,
             "poolCommitmentHash": _hex(
                 protocol.pool_state.commitment_hash

@@ -33,10 +33,10 @@ def states():
 def test_manifest_binds_all_nine_release_sources() -> None:
     value = manifest.build_manifest(states())
     assert value["schemaVersion"] == 3
-    assert value["releaseId"] == "solslot-v2-alpha-rc20-20260722"
+    assert value["releaseId"] == "solslot-v2-alpha-rc22-20260727"
     assert {
         source["branch"] for source in value["sources"].values()
-    } == {"release/testnet-alpha-rc20-20260722"}
+    } == {"release/testnet-alpha-rc22-20260727"}
     assert tuple(value["sourceShas"]) == tuple(manifest.SOURCE_REPOSITORIES)
     assert len(value["sources"]) == 9
     assert value["manifestHash"] == manifest.manifest_hash(value)
@@ -52,6 +52,24 @@ def test_manifest_hash_detects_source_tampering() -> None:
 def test_manifest_rejects_incomplete_source_set() -> None:
     with pytest.raises(ValueError, match="each repository exactly once"):
         manifest.build_manifest(states()[:-1])
+
+
+def test_manifest_rejects_a_mixed_or_mismatched_release_branch() -> None:
+    changed = states()
+    changed[0] = manifest.SourceState(
+        name=changed[0].name,
+        repository=changed[0].repository,
+        commit=changed[0].commit,
+        branch="main",
+    )
+    with pytest.raises(ValueError, match="release branch"):
+        manifest.build_manifest(changed)
+
+    with pytest.raises(ValueError, match="correspond"):
+        manifest.build_manifest(
+            states(),
+            release_id="solslot-v2-alpha-rc22-20260728",
+        )
 
 
 @pytest.mark.parametrize(

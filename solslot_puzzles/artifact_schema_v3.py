@@ -314,6 +314,38 @@ def _top_level_projection(plan: RC22GenesisCeremonyPlan) -> dict[str, Any]:
             "vault": plan.vault_version,
             "propertyRegistry": plan.property_registry_version,
         },
+        "statutes": {
+            "contentHash": _hex32(
+                protocol.statutes_state.content_hash,
+                "statutesContentHash",
+            ),
+            "roots": {
+                "parameters": _hex32(
+                    protocol.statutes_state.parameters_root,
+                    "statutesParametersRoot",
+                ),
+                "collections": _hex32(
+                    protocol.statutes_state.collections_root,
+                    "statutesCollectionsRoot",
+                ),
+                "oracles": _hex32(
+                    protocol.statutes_state.oracle_root,
+                    "statutesOracleRoot",
+                ),
+                "bridgeRoutes": _hex32(
+                    protocol.statutes_state.routes_root,
+                    "statutesRoutesRoot",
+                ),
+                "liquidityVenues": _hex32(
+                    protocol.statutes_state.liquidity_root,
+                    "statutesLiquidityRoot",
+                ),
+                "pauses": _hex32(
+                    protocol.statutes_state.pauses_root,
+                    "statutesPausesRoot",
+                ),
+            },
+        },
         "adminAuthority": {
             "threshold": plan.admin_quorum.threshold,
             "policy": GENESIS_ADMIN_POLICY,
