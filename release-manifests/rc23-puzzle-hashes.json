@@ -1,0 +1,15 @@
+{
+  "schema": "solslot.puzzle-hashes.v1",
+  "release": "RC23",
+  "preservedRelease": "RC22",
+  "preservedCanonicalChecksum": "16de6272631adcefd914e34151c7c15e1d014229f127b3c89da0da891770ee7b",
+  "newPuzzleHashes": {
+    "admin_authority_v3_inner.clsp": "8530ef99b5f3f0e9b61505a56e1f57447f9dd326688a007a4ae6f2e656433061",
+    "eip712_member_v2.clsp": "aaf5d0676da9c06b02ae94acc7f226c6b583205d42f5b350bec43df7fcd09ea7"
+  },
+  "changeReasons": {
+    "admin_authority_v3_inner.clsp": "replace the unlaunched mutable Authority V2 roster with three immutable identity-vault launchers, exact owner-plus-one quorum, globally freezing two-stage key changes, cancellation, and permissionless exact completion",
+    "eip712_member_v2.clsp": "preserve CHIP-0037 signing while emitting consensus ASSERT_MY_COIN_ID opcode 70 for Authority V3; the historical V2 fixture remains unchanged"
+  },
+  "canonicalChecksum": "041d91f51bd4e3661d8f7a57660434f8e88688ea3785072eb1980608f46b2ad5"
+}

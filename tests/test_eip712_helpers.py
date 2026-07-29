@@ -11,17 +11,21 @@ gating after a rotation.  These tests are the canary.
 from __future__ import annotations
 
 import pytest
+from chia.types.blockchain_format.program import Program
+import chia_rs
 from chia_rs.sized_bytes import bytes32
 
 from solslot_puzzles.eip712_helpers import (
     MAINNET_GENESIS_CHALLENGE,
     TESTNET11_GENESIS_CHALLENGE,
     compute_eip712_member_leaf_hash,
+    compute_eip712_member_v2_leaf_hash,
     eip712_domain_separator,
     eip712_hash_to_sign,
     eip712_prefix_and_domain_separator,
     eip712_type_hash,
     genesis_challenge_for_network,
+    make_eip712_member_v2_puzzle,
 )
 
 
@@ -263,6 +267,115 @@ class TestComputeLeafHash:
             f"sha256tree of the curried Eip712Member puzzle and the "
             f"on-chain admin-spend signature check would always fail."
         )
+
+
+class TestAuthorityV3Eip712Member:
+    RUN_FLAGS = (
+        chia_rs.MEMPOOL_MODE
+        | chia_rs.ENABLE_SECP_OPS
+        | chia_rs.ENABLE_KECCAK_OPS_OUTSIDE_GUARD
+    )
+
+    @staticmethod
+    def _compressed_pubkey(private_key: object) -> bytes:
+        raw = private_key.public_key.to_bytes()
+        return (b"\x02" if int.from_bytes(raw[32:], "big") % 2 == 0 else b"\x03") + raw[:32]
+
+    def test_valid_signature_emits_consensus_assert_my_coin_id(self):
+        from eth_keys import keys
+
+        private_key = keys.PrivateKey(b"\xa1" * 32)
+        public_key = self._compressed_pubkey(private_key)
+        prefix = eip712_prefix_and_domain_separator(
+            TESTNET11_GENESIS_CHALLENGE
+        )
+        coin_id = bytes32(b"\xa2" * 32)
+        delegated_puzzle_hash = bytes32(b"\xa3" * 32)
+        digest = eip712_hash_to_sign(
+            prefix,
+            coin_id,
+            delegated_puzzle_hash,
+        )
+        signature = private_key.sign_msg_hash(digest).to_bytes()[:64]
+        member = make_eip712_member_v2_puzzle(
+            secp256k1_pubkey=public_key,
+            prefix_and_domain_separator=prefix,
+        )
+
+        result = member.run(
+            Program.to(
+                [
+                    delegated_puzzle_hash,
+                    coin_id,
+                    digest,
+                    signature,
+                ]
+            ),
+            flags=self.RUN_FLAGS,
+        )
+        conditions = list(result.as_iter())
+        assert len(conditions) == 1
+        assert conditions[0].first().as_int() == 70
+        assert conditions[0].rest().first().as_atom() == coin_id
+        assert compute_eip712_member_v2_leaf_hash(
+            secp256k1_pubkey=public_key,
+            prefix_and_domain_separator=prefix,
+        ) == bytes32(member.get_tree_hash())
+
+    def test_tampered_signature_and_cross_network_replay_fail(self):
+        from eth_keys import keys
+
+        private_key = keys.PrivateKey(b"\xb1" * 32)
+        public_key = self._compressed_pubkey(private_key)
+        testnet_prefix = eip712_prefix_and_domain_separator(
+            TESTNET11_GENESIS_CHALLENGE
+        )
+        mainnet_prefix = eip712_prefix_and_domain_separator(
+            MAINNET_GENESIS_CHALLENGE
+        )
+        coin_id = bytes32(b"\xb2" * 32)
+        delegated_puzzle_hash = bytes32(b"\xb3" * 32)
+        testnet_digest = eip712_hash_to_sign(
+            testnet_prefix,
+            coin_id,
+            delegated_puzzle_hash,
+        )
+        signature = private_key.sign_msg_hash(testnet_digest).to_bytes()[:64]
+        member = make_eip712_member_v2_puzzle(
+            secp256k1_pubkey=public_key,
+            prefix_and_domain_separator=testnet_prefix,
+        )
+        tampered = bytes([signature[0] ^ 1]) + signature[1:]
+        with pytest.raises(Exception):
+            member.run(
+                Program.to(
+                    [
+                        delegated_puzzle_hash,
+                        coin_id,
+                        testnet_digest,
+                        tampered,
+                    ]
+                ),
+                flags=self.RUN_FLAGS,
+            )
+
+        mainnet_digest = eip712_hash_to_sign(
+            mainnet_prefix,
+            coin_id,
+            delegated_puzzle_hash,
+        )
+        with pytest.raises(Exception):
+            member.run(
+                Program.to(
+                    [
+                        delegated_puzzle_hash,
+                        coin_id,
+                        mainnet_digest,
+                        signature,
+                    ]
+                ),
+                flags=self.RUN_FLAGS,
+            )
 
 
 # ──────────────────────────────────────────────────────────────────────

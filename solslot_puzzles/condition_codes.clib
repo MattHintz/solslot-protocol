@@ -19,6 +19,8 @@
     ;; Puzzle announcements
     (defconstant CREATE_PUZZLE_ANNOUNCEMENT 62) ; Create a puzzle announcement
     (defconstant ASSERT_PUZZLE_ANNOUNCEMENT 63) ; Assert a puzzle announcement
+    (defconstant ASSERT_CONCURRENT_SPEND 64) ; Assert a coin is spent in this bundle
+    (defconstant ASSERT_CONCURRENT_PUZZLE 65) ; Assert a puzzle is spent in this bundle
 
     ;; CHIP-25 message conditions (secure inter-coin communication)
     (defconstant SEND_MESSAGE 66) ; Send a message (mode msg ...dest_args)

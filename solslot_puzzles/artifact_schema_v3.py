@@ -161,9 +161,68 @@ def artifact_hash(payload: Mapping[str, Any]) -> str:
     return "0x" + hashlib.sha256(canonical_json(unsigned)).hexdigest()
 
 
-def _top_level_projection(plan: RC22GenesisCeremonyPlan) -> dict[str, Any]:
+def _top_level_projection(plan: Any) -> dict[str, Any]:
     protocol = plan.protocol
     canonical = plan.canonical_payload()
+    if hasattr(plan, "admin_authority_v3"):
+        canonical_authority = canonical["adminAuthority"]
+        authority_projection = {
+            "version": 3,
+            "threshold": canonical_authority["threshold"],
+            "policy": canonical_authority["policy"],
+            "ownerIndex": canonical_authority["ownerIndex"],
+            "coadminIndices": list(
+                canonical_authority["coadminIndices"]
+            ),
+            "coadminThreshold": canonical_authority[
+                "coadminThreshold"
+            ],
+            "rosterHash": canonical_authority["adminsHash"],
+            "sourceManifestHash": canonical_authority[
+                "sourceManifestHash"
+            ],
+            "operationalMipsRootHash": canonical_authority[
+                "operationalMipsRootHash"
+            ],
+            "lostRecoveryMipsRootHashes": list(
+                canonical_authority["lostRecoveryMipsRootHashes"]
+            ),
+            "routineDelaySeconds": canonical_authority[
+                "routineDelaySeconds"
+            ],
+            "lostKeyDelaySeconds": canonical_authority[
+                "lostKeyDelaySeconds"
+            ],
+            "identityVaults": list(
+                canonical_authority["identityVaults"]
+            ),
+            "compressedPubkeys": list(
+                canonical_authority["compressedPubkeys"]
+            ),
+            "recoveryKits": list(canonical["adminRecoveryKits"]),
+        }
+    else:
+        authority_projection = {
+            "threshold": plan.admin_quorum.threshold,
+            "policy": GENESIS_ADMIN_POLICY,
+            "ownerIndex": plan.admin_quorum.owner_index,
+            "coadminIndices": list(plan.admin_quorum.coadmin_indices),
+            "coadminThreshold": plan.admin_quorum.coadmin_threshold,
+            "rosterHash": _hex32(
+                plan.admin_quorum.admins_hash, "adminRosterHash"
+            ),
+            "mipsRootHash": _hex32(
+                plan.admin_quorum.mips_root_hash, "adminMipsRootHash"
+            ),
+            "compressedPubkeys": [
+                _hex_value(
+                    pubkey,
+                    "adminCompressedPubkey",
+                    length=33,
+                )
+                for pubkey in plan.admin_quorum.compressed_pubkeys
+            ],
+        }
     return {
         "sourceShas": dict(plan.source_shas),
         "puzzleHashes": {
@@ -367,23 +426,7 @@ def _top_level_projection(plan: RC22GenesisCeremonyPlan) -> dict[str, Any]:
                 ),
             },
         },
-        "adminAuthority": {
-            "threshold": plan.admin_quorum.threshold,
-            "policy": GENESIS_ADMIN_POLICY,
-            "ownerIndex": plan.admin_quorum.owner_index,
-            "coadminIndices": list(plan.admin_quorum.coadmin_indices),
-            "coadminThreshold": plan.admin_quorum.coadmin_threshold,
-            "rosterHash": _hex32(
-                plan.admin_quorum.admins_hash, "adminRosterHash"
-            ),
-            "mipsRootHash": _hex32(
-                plan.admin_quorum.mips_root_hash, "adminMipsRootHash"
-            ),
-            "compressedPubkeys": [
-                _hex_value(pubkey, "adminCompressedPubkey", length=33)
-                for pubkey in plan.admin_quorum.compressed_pubkeys
-            ],
-        },
+        "adminAuthority": authority_projection,
         "validatorSet": {
             "threshold": plan.validator_threshold,
             "pubkeys": [

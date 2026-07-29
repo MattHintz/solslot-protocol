@@ -77,6 +77,24 @@ def test_artifact_signature_helper_is_dependency_light_and_binds_hashes() -> Non
     }
 
 
+def test_artifact_signature_helper_supports_rc23_domain() -> None:
+    typed = genesis_artifact_signing_typed_data(
+        {
+            "schemaVersion": 4,
+            "protocolVersion": "solslot-v2-rc23",
+            "network": "testnet11",
+            "evmChainId": 11155111,
+            "artifactHash": "0x" + "11" * 32,
+            "ceremony": {
+                "ceremonyId": "0x" + "12" * 32,
+                "planHash": "0x" + "13" * 32,
+            },
+        }
+    )
+    assert typed["domain"]["version"] == "4"
+    assert typed["message"]["artifactHash"] == "0x" + "11" * 32
+
+
 @pytest.mark.parametrize("slot", [0, 4])
 def test_admin_enrollment_rejects_invalid_slot(slot: int) -> None:
     with pytest.raises(ValueError, match="slot"):

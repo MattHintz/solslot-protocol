@@ -144,9 +144,16 @@ def genesis_artifact_signing_typed_data(
     artifact validation runs in the isolated ceremony worker so FastAPI request
     threads never import CLVM modules with thread-affine Rust objects.
     """
-    if payload.get("schemaVersion") != 3:
+    schema_version = payload.get("schemaVersion")
+    protocol_version = payload.get("protocolVersion")
+    supported = {
+        3: ("solslot-v2-rc22", "3"),
+        4: ("solslot-v2-rc23", "4"),
+    }
+    if schema_version not in supported:
         raise ValueError("unsupported artifact schemaVersion")
-    if payload.get("protocolVersion") != "solslot-v2-rc22":
+    expected_protocol, domain_version = supported[int(schema_version)]
+    if protocol_version != expected_protocol:
         raise ValueError("unsupported artifact protocolVersion")
     if payload.get("network") != GENESIS_NETWORK:
         raise ValueError("genesis artifact is restricted to testnet11")
@@ -156,7 +163,10 @@ def genesis_artifact_signing_typed_data(
     if not isinstance(ceremony, Mapping):
         raise ValueError("artifact ceremony metadata is missing")
     return {
-        "domain": _domain(int(payload["evmChainId"]), version="3"),
+        "domain": _domain(
+            int(payload["evmChainId"]),
+            version=domain_version,
+        ),
         "primaryType": GENESIS_ARTIFACT_SIGNATURE_TYPE,
         "types": {
             "EIP712Domain": _DOMAIN_FIELDS,

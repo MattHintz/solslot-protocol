@@ -1,0 +1,31 @@
+; eip712_member_v2.clsp -- CHIP-0043 member for EIP-712 daily keys.
+;
+; This is the Authority V3 variant of the historical integration fixture.
+; It preserves the CHIP-0037 signed payload while emitting the consensus
+; ASSERT_MY_COIN_ID opcode (70). The old fixture emitted opcode 73
+; (ASSERT_MY_AMOUNT) and remains unchanged for V2 audit reproducibility.
+
+(mod (PREFIX_AND_DOMAIN_SEPARATOR TYPE_HASH PUBKEY
+      delegated_puzzle_hash
+      my_id signed_hash signature)
+
+  (defconstant ASSERT_MY_COIN_ID 70)
+
+  (if (all
+        (not (secp256k1_verify PUBKEY signed_hash signature))
+        (not (softfork
+                (q . 2745)
+                (q . 1)
+                (mod
+                  (PREFIX_AND_DOMAIN_SEPARATOR TYPE_HASH my_id
+                   delegated_puzzle_hash signed_hash)
+                  (if (= (keccak256 PREFIX_AND_DOMAIN_SEPARATOR
+                                    (keccak256 TYPE_HASH my_id
+                                               delegated_puzzle_hash))
+                         signed_hash)
+                      ()
+                      (x)))
+                (list PREFIX_AND_DOMAIN_SEPARATOR TYPE_HASH my_id
+                      delegated_puzzle_hash signed_hash))))
+      (list (list ASSERT_MY_COIN_ID my_id))
+      (x)))

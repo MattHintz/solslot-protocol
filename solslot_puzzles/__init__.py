@@ -97,6 +97,11 @@ PUZZLE_FILENAMES = (
     # offer for one exact SmartDeed and has no withdrawal or timeout path.
     "p2_deed_redemption_v1.clsp",
     "redemption_treasury_v1.clsp",
+    # RC23 recovery-aware authority. The roster is three immutable identity
+    # singleton launcher ids; key rotations happen behind those identities
+    # and one pending intent freezes every privileged operation.
+    "admin_authority_v3_inner.clsp",
+    "eip712_member_v2.clsp",
 )
 
 # ── Frozen checksum — update after every intentional puzzle change ──
@@ -143,7 +148,7 @@ FROZEN_CHECKSUM: Optional[str] = (
     #   - RC19 native XCH/CAT primary purchases use a dedicated on-demand
     #     offer delegate that binds one exact deed to one canonical vault and
     #     exposes no standalone external-payment escrow branch.
-    "16de6272631adcefd914e34151c7c15e1d014229f127b3c89da0da891770ee7b"
+    "041d91f51bd4e3661d8f7a57660434f8e88688ea3785072eb1980608f46b2ad5"
 )
 
 # ── Cache ──

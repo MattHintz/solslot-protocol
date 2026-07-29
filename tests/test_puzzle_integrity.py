@@ -123,7 +123,38 @@ def test_rc22_manifest_records_every_replacement_and_additive_module():
         expected_hash = replacements.get(filename, historical_hash)
         assert bytes(load_puzzle(filename).get_tree_hash()).hex() == expected_hash
     additions = manifest["newPuzzleHashes"]
+    rc22_end = PUZZLE_FILENAMES.index("redemption_treasury_v1.clsp") + 1
+    assert tuple(additions) == PUZZLE_FILENAMES[
+        rc22_end - len(additions) : rc22_end
+    ]
+    for filename, expected_hash in additions.items():
+        assert bytes(load_puzzle(filename).get_tree_hash()).hex() == expected_hash
+    checksum = hashlib.sha256()
+    for filename in PUZZLE_FILENAMES[:rc22_end]:
+        checksum.update(bytes(load_puzzle(filename).get_tree_hash()))
+    assert checksum.hexdigest() == manifest["canonicalChecksum"]
+
+
+def test_rc23_manifest_preserves_rc22_and_records_authority_v3():
+    manifest_path = (
+        Path(__file__).resolve().parents[1]
+        / "release-manifests"
+        / "rc23-puzzle-hashes.json"
+    )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    rc22_manifest = json.loads(
+        (
+            Path(__file__).resolve().parents[1]
+            / "release-manifests"
+            / "rc22-puzzle-hashes.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert manifest["preservedCanonicalChecksum"] == (
+        rc22_manifest["canonicalChecksum"]
+    )
+    additions = manifest["newPuzzleHashes"]
     assert tuple(additions) == PUZZLE_FILENAMES[-len(additions) :]
+    assert set(manifest["changeReasons"]) == set(additions)
     for filename, expected_hash in additions.items():
         assert bytes(load_puzzle(filename).get_tree_hash()).hex() == expected_hash
     assert compute_puzzles_checksum() == manifest["canonicalChecksum"]
