@@ -34,11 +34,11 @@ from solslot_puzzles.genesis_ceremony import (
     GENESIS_ADMIN_THRESHOLD,
     GENESIS_EVM_CHAIN_ID,
     GENESIS_NETWORK,
-    SOURCE_MANIFEST_VERSION,
 )
 from solslot_puzzles.genesis_ceremony_rc23 import (
     RC23_GENESIS_PLAN_SCHEMA,
     RC23_PROTOCOL_VERSION,
+    RC23_SOURCE_MANIFEST_VERSION,
     RC23GenesisCeremonyPlan,
     RC23GenesisFundingCoinIds,
     build_rc23_genesis_ceremony_plan,
@@ -123,7 +123,7 @@ def build_public_artifact(
             else "independently-reviewed"
         ),
         "buildTimestamp": timestamp,
-        "sourceManifestVersion": SOURCE_MANIFEST_VERSION,
+        "sourceManifestVersion": RC23_SOURCE_MANIFEST_VERSION,
         "ceremony": {
             "ceremonyId": _hex32(plan.ceremony_id, "ceremonyId"),
             "planHash": _hex32(plan.plan_hash, "planHash"),
@@ -370,7 +370,10 @@ def _verify_artifact_content(payload: Mapping[str, Any]) -> None:
         raise ValueError(
             "independently reviewed artifact metadata is invalid"
         )
-    if payload.get("sourceManifestVersion") != SOURCE_MANIFEST_VERSION:
+    if (
+        payload.get("sourceManifestVersion")
+        != RC23_SOURCE_MANIFEST_VERSION
+    ):
         raise ValueError(
             "artifact sourceManifestVersion is unsupported"
         )

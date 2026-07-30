@@ -1,0 +1,50 @@
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; Exact delayed-completion MIPS member for an intermediate Authority V3
+;;; identity singleton.
+;;;
+;;; The destination, message, amount, delay, and only accepted delegated
+;;; puzzle hash are curried. MIPS supplies that delegated hash before the
+;;; member solution. The live coin id is checked on-chain.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(mod
+  (
+    ACTION_TAG
+    OUTPUT_CUSTODY_HASH
+    COIN_ANNOUNCEMENT_MESSAGE
+    MY_AMOUNT
+    DELAY_SECONDS
+    EXPECTED_DELEGATED_PUZZLE_HASH
+    delegated_puzzle_hash
+    my_coin_id
+  )
+
+  (include condition_codes.clib)
+  (include utility_macros.clib)
+
+  (defun-inline maybe-delay (delay)
+    (if delay
+      (list (list ASSERT_SECONDS_RELATIVE delay))
+      ()))
+
+  (assert
+    (> ACTION_TAG 0)
+    (is-size-b32 OUTPUT_CUSTODY_HASH)
+    (is-size-b32 COIN_ANNOUNCEMENT_MESSAGE)
+    (is-size-b32 EXPECTED_DELEGATED_PUZZLE_HASH)
+    (= delegated_puzzle_hash EXPECTED_DELEGATED_PUZZLE_HASH)
+    (is-size-b32 my_coin_id)
+    (is-uint64 MY_AMOUNT)
+    (> MY_AMOUNT 0)
+    (logand MY_AMOUNT 1)
+    (is-uint64 DELAY_SECONDS)
+    (c
+      (list CREATE_COIN OUTPUT_CUSTODY_HASH MY_AMOUNT)
+      (c
+        (list CREATE_COIN_ANNOUNCEMENT COIN_ANNOUNCEMENT_MESSAGE)
+        (c
+          (list ASSERT_MY_COIN_ID my_coin_id)
+          (c
+            (list ASSERT_MY_AMOUNT MY_AMOUNT)
+            (maybe-delay DELAY_SECONDS))))))
+)

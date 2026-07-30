@@ -90,6 +90,14 @@ def test_v4_artifact_reconstructs_authority_v3_and_recovery_roster() -> None:
             "0x" + "fd" * 32,
             "puzzleHashes",
         ),
+        (
+            (
+                "genesisPlan",
+                "recoveryDependencyManifestHash",
+            ),
+            "0x" + "fc" * 32,
+            "reconstruct",
+        ),
     ),
 )
 def test_v4_artifact_rejects_recovery_or_authority_tampering(

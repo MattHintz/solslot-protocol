@@ -143,6 +143,124 @@ def eip712_hash_to_sign(
     return bytes32(keccak256(prefix_and_domain + inner))
 
 
+def eip712_typed_data_for_coin_spend(
+    *,
+    network: str,
+    coin_id: bytes,
+    delegated_puzzle_hash: bytes,
+) -> dict[str, object]:
+    """Return the canonical CHIP-0037 wallet-signing payload.
+
+    The browser receives this complete structure rather than rebuilding a
+    digest from loose fields.  The Chia genesis challenge is carried as the
+    EIP-712 domain salt, which prevents signatures from crossing networks.
+    """
+
+    resolved_coin_id = bytes32(coin_id)
+    resolved_delegated_hash = bytes32(delegated_puzzle_hash)
+    genesis_challenge = genesis_challenge_for_network(network)
+    return {
+        "types": {
+            "EIP712Domain": [
+                {"name": "name", "type": "string"},
+                {"name": "version", "type": "string"},
+                {"name": "salt", "type": "bytes32"},
+            ],
+            "ChiaCoinSpend": [
+                {"name": "coin_id", "type": "bytes32"},
+                {
+                    "name": "delegated_puzzle_hash",
+                    "type": "bytes32",
+                },
+            ],
+        },
+        "primaryType": "ChiaCoinSpend",
+        "domain": {
+            "name": "Chia Coin Spend",
+            "version": "1",
+            "salt": "0x" + bytes(genesis_challenge).hex(),
+        },
+        "message": {
+            "coin_id": "0x" + bytes(resolved_coin_id).hex(),
+            "delegated_puzzle_hash": (
+                "0x" + bytes(resolved_delegated_hash).hex()
+            ),
+        },
+    }
+
+
+def normalize_eip712_member_signature(
+    *,
+    signature: bytes,
+    digest: bytes,
+    compressed_pubkey: bytes,
+) -> bytes:
+    """Verify a wallet signature and return the on-chain 64-byte form.
+
+    Browser wallets normally return ``r || s || v`` while the Chialisp
+    ``secp256k1_verify`` operator consumes ``r || s``.  This helper accepts
+    either representation, validates it against the exact committed public
+    key and digest, and strips only the recovery byte.
+    """
+
+    from eth_keys import keys
+    from eth_keys.exceptions import BadSignature
+
+    raw_signature = bytes(signature)
+    resolved_digest = bytes32(digest)
+    if len(compressed_pubkey) != 33:
+        raise ValueError("compressed_pubkey must be 33 bytes")
+    if len(raw_signature) not in (64, 65):
+        raise ValueError("EIP-712 signature must be 64 or 65 bytes")
+
+    signature_64 = raw_signature[:64]
+    recovery_id = raw_signature[64] if len(raw_signature) == 65 else 0
+    if recovery_id in (27, 28):
+        recovery_id -= 27
+    if recovery_id not in (0, 1):
+        raise ValueError("EIP-712 signature recovery id must be 0, 1, 27, or 28")
+
+    try:
+        public_key = keys.PublicKey.from_compressed_bytes(
+            bytes(compressed_pubkey)
+        )
+        parsed_signature = keys.Signature(
+            signature_bytes=signature_64 + bytes([recovery_id])
+        )
+    except (BadSignature, TypeError, ValueError) as exc:
+        raise ValueError("EIP-712 signature is malformed") from exc
+    if not parsed_signature.verify_msg_hash(resolved_digest, public_key):
+        raise ValueError("EIP-712 signature does not match the committed key")
+    return signature_64
+
+
+def build_eip712_member_solution(
+    *,
+    network: str,
+    coin_id: bytes,
+    delegated_puzzle_hash: bytes,
+    compressed_pubkey: bytes,
+    signature: bytes,
+) -> Program:
+    """Build a verified Authority V3 EIP-712 member solution."""
+
+    resolved_coin_id = bytes32(coin_id)
+    resolved_delegated_hash = bytes32(delegated_puzzle_hash)
+    digest = eip712_hash_to_sign(
+        eip712_prefix_and_domain_separator(
+            genesis_challenge_for_network(network)
+        ),
+        resolved_coin_id,
+        resolved_delegated_hash,
+    )
+    signature_64 = normalize_eip712_member_signature(
+        signature=signature,
+        digest=digest,
+        compressed_pubkey=compressed_pubkey,
+    )
+    return Program.to([resolved_coin_id, digest, signature_64])
+
+
 # ──────────────────────────────────────────────────────────────────────
 # Eip712Member leaf-hash computation
 # ──────────────────────────────────────────────────────────────────────
@@ -485,6 +603,9 @@ __all__ = [
     "eip712_domain_separator",
     "eip712_prefix_and_domain_separator",
     "eip712_hash_to_sign",
+    "eip712_typed_data_for_coin_spend",
+    "normalize_eip712_member_signature",
+    "build_eip712_member_solution",
     "compute_eip712_member_leaf_hash",
     "make_eip712_member_puzzle",
     "compute_eip712_member_v2_leaf_hash",

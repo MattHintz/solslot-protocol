@@ -1,0 +1,19 @@
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; Canonical Authority V3 transition action.
+;;;
+;;; The action is fully curried. Its tree hash is therefore a stable value
+;;; that identity-vault singleton members can sign and pair through CHIP-25
+;;; messages without trusting a driver-supplied condition list.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(mod (ACTION_TAG BINDING_HASH)
+
+  (include condition_codes.clib)
+  (include utility_macros.clib)
+
+  (assert
+    (> ACTION_TAG 0)
+    (is-size-b32 BINDING_HASH)
+    (list
+      (list CREATE_PUZZLE_ANNOUNCEMENT BINDING_HASH)))
+)

@@ -17,6 +17,7 @@ from solslot_puzzles.genesis_ceremony_rc23 import (
     RC23_BRIDGE_BATCH_FUNDING_AMOUNT,
     RC23_BRIDGE_PARENT_TOTAL,
     RC23_GENESIS_PLAN_SCHEMA,
+    RC23_SOURCE_MANIFEST_VERSION,
     RC23_ADMIN_AUTHORITY_FUNDING_AMOUNT,
     RC23_POOL_FUNDING_AMOUNT,
     RC23_PROPERTY_REGISTRY_LAUNCHER_AMOUNT,
@@ -24,6 +25,9 @@ from solslot_puzzles.genesis_ceremony_rc23 import (
     build_rc23_genesis_ceremony_bundle,
     build_rc23_genesis_ceremony_plan,
     verify_rc23_genesis_ceremony_plan,
+)
+from solslot_puzzles.recovery_dependencies import (
+    RECOVERY_DEPENDENCY_MANIFEST_HASH,
 )
 from solslot_puzzles.sgt_driver import TEST_KOS_MINT_EXECUTE_PUBKEY
 from tests.test_genesis_ceremony import (
@@ -105,6 +109,10 @@ def test_rc23_plan_replaces_nav_registry_with_statutes() -> None:
     verify_rc23_genesis_ceremony_plan(plan)
     payload = plan.canonical_payload()
     assert payload["schema"] == RC23_GENESIS_PLAN_SCHEMA
+    assert payload["sourceManifestVersion"] == RC23_SOURCE_MANIFEST_VERSION
+    assert payload["recoveryDependencyManifestHash"] == (
+        "0x" + RECOVERY_DEPENDENCY_MANIFEST_HASH
+    )
     assert "statutes" in payload["launcherIds"]
     assert "navRegistry" not in payload["launcherIds"]
     assert "statutes" in payload["fundingCoinIds"]
@@ -158,6 +166,17 @@ def test_rc23_plan_replaces_nav_registry_with_statutes() -> None:
     assert payload["puzzleHashes"]["poolInnerMod"] == (
         "0x1d4be5fec4d196e6920d8e04f7680e813e310040348ce153b49191e633650768"
     )
+
+
+def test_rc23_plan_rejects_recovery_dependency_drift() -> None:
+    faucet = _FakeFaucet()
+    plan = ceremony_plan(faucet, funding_coins(faucet))
+    altered = replace(
+        plan,
+        recovery_dependency_manifest_hash=bytes32(b"\xff" * 32),
+    )
+    with pytest.raises(ValueError, match="recovery dependencies"):
+        verify_rc23_genesis_ceremony_plan(altered)
 
 
 def test_rc23_bundle_keeps_nine_inputs_and_launches_four_authority_vaults() -> None:

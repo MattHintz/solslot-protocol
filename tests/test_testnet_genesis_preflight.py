@@ -8,6 +8,13 @@ import subprocess
 import sys
 from pathlib import Path
 
+from solslot_puzzles.artifact_schema_v4 import build_public_artifact
+from tests.test_genesis_ceremony_rc23 import (
+    ceremony_plan as protocol_ceremony_plan,
+    funding_coins,
+)
+from tests.test_protocol_deployment import _FakeFaucet
+
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "testnet_genesis_preflight.py"
 SPEC = importlib.util.spec_from_file_location("solslot_genesis_preflight", SCRIPT)
@@ -44,94 +51,24 @@ def _source_shas() -> dict[str, str]:
 
 
 def _ceremony_plan() -> tuple[dict, dict, dict, dict]:
-    ceremony_id = _hex(1)
-    sources = _source_shas()
-    admin_keys = [_admin_key(index) for index in (1, 2, 3)]
-    roster_hash = _hex(220)
-    evm_addresses = {
-        "forwarder": _address(1),
-        "verifierAdapter": _address(2),
-        "attestationEmitter": _address(3),
-    }
-    validator_keys = [_hex(index, 48) for index in (31, 32, 33)]
-    plan = {
-        "schema": "solslot-genesis-plan-v2",
-        "sourceManifestVersion": 3,
-        "protocolVersion": "solslot-v2",
-        "ceremonyId": ceremony_id,
-        "network": "testnet11",
-        "evmChainId": 11155111,
-        "expiresAt": 2_000_000_000,
-        "sourceShas": sources,
-        "evmAddresses": evm_addresses,
-        "kosMintExecutePubkey": _hex(29, 48),
-        "fundingCoinIds": {
-            name: _hex(10 + index)
-            for index, name in enumerate(preflight.FUNDING_NAMES)
-        },
-        "launcherIds": {
-            name: _hex(30 + index)
-            for index, name in enumerate(preflight.LAUNCHER_NAMES)
-        },
-        "puzzleHashes": {
-            "poolInner": _hex(50),
-            "poolFull": _hex(51),
-            "didInner": _hex(52),
-            "didFull": _hex(53),
-            "governanceInner": _hex(54),
-            "governanceFull": _hex(55),
-            "navRegistryInner": _hex(56),
-            "navRegistryFull": _hex(57),
-            "protocolConfigInner": _hex(58),
-            "protocolConfigFull": _hex(59),
-            "adminAuthorityInner": _hex(60),
-            "adminAuthorityFull": _hex(61),
-            "vaultVersionRegistryInner": _hex(62),
-            "vaultVersionRegistryFull": _hex(63),
-            "sgtTail": _hex(64),
-            "bridgePolicy": _hex(65),
-        },
-        "protocolParameters": {"quorum_bps": 5000},
-        "stateVersions": {
-            "navRegistry": 1,
-            "protocolConfig": 1,
-            "adminAuthority": 2,
-            "vault": 2,
-        },
-        "adminAuthority": {
-            "threshold": 2,
-            "policy": "owner-plus-one",
-            "ownerIndex": 0,
-            "coadminIndices": [1, 2],
-            "coadminThreshold": 1,
-            "compressedPubkeys": admin_keys,
-            "adminsHash": roster_hash,
-            "mipsRootHash": _hex(221),
-        },
-        "validatorSet": {"threshold": 2, "pubkeys": validator_keys},
-        "bridgeBatch": {
-            "count": 32,
-            "lowWaterMark": 8,
-            "parentCoinIds": [_hex(1000 + index) for index in range(32)],
-            "bridgeCoinIds": [_hex(2000 + index) for index in range(32)],
-        },
-        "trustedDestinations": {
-            "treasuryReservePuzzleHash": _hex(70),
-            "protocolTreasuryPuzzleHash": _hex(71),
-            "governanceRewardsPuzzleHash": _hex(72),
-            "governanceRewardsRoot": _hex(73),
-        },
-        "canonicalVaultParamsHash": _hex(74),
-        "retiredCoordinates": [_hex(75), _hex(76)],
-    }
-    plan["planHash"] = preflight.plan_hash(plan)
+    faucet = _FakeFaucet()
+    plan = protocol_ceremony_plan(
+        faucet,
+        funding_coins(faucet),
+    ).canonical_payload()
+    ceremony_id = plan["ceremonyId"]
+    sources = plan["sourceShas"]
+    admin_keys = plan["adminAuthority"]["compressedPubkeys"]
+    roster_hash = plan["adminAuthority"]["adminsHash"]
+    evm_addresses = plan["evmAddresses"]
+    validator_keys = plan["validatorSet"]["pubkeys"]
     record = {
         "ceremony_id": ceremony_id,
         "network": "testnet11",
         "state": "plan_approved",
         "draft": {
             "schemaVersion": 2,
-            "sourceManifestVersion": 3,
+            "sourceManifestVersion": 4,
             "network": "testnet11",
             "evmChainId": 11155111,
             "reviewClass": "independent-release-review",
@@ -166,11 +103,22 @@ def _ceremony_plan() -> tuple[dict, dict, dict, dict]:
     spend_bundle_id = _hex(230)
     approval = {
         "schemaVersion": 2,
-        "sourceManifestVersion": 3,
+        "sourceManifestVersion": 4,
         "ceremonyId": ceremony_id,
         "planHash": plan["planHash"],
         "sourceShas": sources,
         "consensusSimulationBundleId": spend_bundle_id,
+        "authorityV3Review": {
+            "artifactHash": _hex(290),
+            "fileSha256": _hex(291),
+            "reviewerCount": 4,
+            "scopes": [
+                "chialisp-wrapper",
+                "mips-composition",
+                "safe-recovery-module",
+                "safe-authority-guards",
+            ],
+        },
         "approvals": [
             {
                 "lane": lane,
@@ -207,68 +155,19 @@ def _ceremony_plan() -> tuple[dict, dict, dict, dict]:
 
 
 def _public_artifact(record: dict, plan: dict) -> dict:
+    faucet = _FakeFaucet()
+    plan_object = protocol_ceremony_plan(
+        faucet,
+        funding_coins(faucet),
+    )
+    assert plan_object.canonical_payload() == plan
     admin_keys = plan["adminAuthority"]["compressedPubkeys"]
-    artifact = {
-        "schemaVersion": 2,
-        "sourceManifestVersion": 3,
-        "protocolVersion": "solslot-v2",
-        "network": "testnet11",
-        "evmChainId": 11155111,
-        "reviewClass": "independent-release-review",
-        "testOnly": False,
-        "auditStatus": "independently-reviewed",
-        "buildTimestamp": "2026-07-14T00:00:00+00:00",
-        "ceremony": {
-            "ceremonyId": record["ceremony_id"],
-            "planHash": record["plan_hash"],
-            "spendBundleId": record["spend_bundle_id"],
-            "confirmedBlockIndex": record["confirmed_block_index"],
-            "requiredChiaConfirmations": 3,
-        },
-        "sourceShas": plan["sourceShas"],
-        "puzzleHashes": plan["puzzleHashes"],
-        "launcherIds": plan["launcherIds"],
-        "sgtGenesisCoinId": _hex(80),
-        "sgtTailHash": plan["puzzleHashes"]["sgtTail"],
-        "governanceStruct": {
-            "treeHash": _hex(81),
-            "launcherId": plan["launcherIds"]["governance"],
-            "mintExecuteCosignerPubkey": plan["kosMintExecutePubkey"],
-        },
-        "protocolParameters": plan["protocolParameters"],
-        "stateVersions": plan["stateVersions"],
-        "adminAuthority": {
-            "threshold": 2,
-            "policy": "owner-plus-one",
-            "ownerIndex": 0,
-            "coadminIndices": [1, 2],
-            "coadminThreshold": 1,
-            "rosterHash": plan["adminAuthority"]["adminsHash"],
-            "mipsRootHash": plan["adminAuthority"]["mipsRootHash"],
-            "compressedPubkeys": admin_keys,
-        },
-        "validatorSet": plan["validatorSet"],
-        "bridgePolicy": {
-            "policyVersion": 2,
-            "policyHash": plan["puzzleHashes"]["bridgePolicy"],
-            "initialCoinCount": 32,
-            "lowWaterMark": 8,
-            "parentCoinIds": plan["bridgeBatch"]["parentCoinIds"],
-            "bridgeCoinIds": plan["bridgeBatch"]["bridgeCoinIds"],
-        },
-        "canonicalVaultParamsHash": plan["canonicalVaultParamsHash"],
-        "evmAddresses": plan["evmAddresses"],
-        "retiredCoordinates": plan["retiredCoordinates"],
-        "signaturePolicy": {
-            "type": "SolslotGenesisArtifact",
-            "threshold": 2,
-            "policy": "owner-plus-one",
-            "ownerIndex": 0,
-            "coadminIndices": [1, 2],
-            "coadminThreshold": 1,
-            "rosterHash": plan["adminAuthority"]["adminsHash"],
-        },
-        "signatures": [
+    return build_public_artifact(
+        plan=plan_object,
+        spend_bundle_id=record["spend_bundle_id"],
+        confirmed_block_index=record["confirmed_block_index"],
+        build_timestamp="2026-07-29T00:00:00+00:00",
+        signatures=[
             {
                 "adminIndex": index,
                 "compressedPubkey": admin_keys[index],
@@ -276,16 +175,29 @@ def _public_artifact(record: dict, plan: dict) -> dict:
             }
             for index in (0, 2)
         ],
-    }
-    artifact["artifactHash"] = preflight.artifact_hash(artifact)
-    return artifact
+        review_class="independent-release-review",
+    )
 
 
 def _write_evidence(path: Path, plan: dict, approval: dict, artifact: dict) -> None:
+    review_receipt = {
+        "schemaVersion": 1,
+        "kind": "solslot-authority-v3-independent-review",
+        "artifactHash": approval["authorityV3Review"][
+            "artifactHash"
+        ],
+    }
+    review_bytes = (
+        json.dumps(review_receipt, sort_keys=True, indent=2) + "\n"
+    ).encode("ascii")
+    archived_approval = copy.deepcopy(approval)
+    archived_approval["authorityV3Review"]["fileSha256"] = (
+        "0x" + hashlib.sha256(review_bytes).hexdigest()
+    )
     payloads = {
         "plan.json": plan,
         "spend_bundle.json": {"aggregatedSignature": "00", "coinSpends": []},
-        "audit_approval.json": approval,
+        "audit_approval.json": archived_approval,
         "public_artifact.json": artifact,
     }
     path.mkdir()
@@ -293,9 +205,13 @@ def _write_evidence(path: Path, plan: dict, approval: dict, artifact: dict) -> N
         (path / name).write_text(
             json.dumps(payload, sort_keys=True, indent=2) + "\n", encoding="ascii"
         )
+    (path / "authority_v3_review.json").write_bytes(review_bytes)
+    evidence_names = sorted(
+        [*payloads, "authority_v3_review.json"]
+    )
     sums = "".join(
         hashlib.sha256((path / name).read_bytes()).hexdigest() + "  " + name + "\n"
-        for name in sorted(payloads)
+        for name in evidence_names
     )
     (path / "sha256sums.txt").write_text(sums, encoding="ascii")
 
@@ -309,7 +225,7 @@ def test_pre_broadcast_accepts_complete_frozen_evidence(tmp_path: Path) -> None:
         approval,
         tmp_path / "new-output",
         findings,
-        now=1_900_000_000,
+        now=1_700_000_000,
     )
     assert findings == []
 
@@ -345,7 +261,7 @@ def test_pre_broadcast_accepts_internal_engineering_testnet_review(tmp_path: Pat
         approval,
         tmp_path / "new-output",
         findings,
-        now=1_900_000_000,
+        now=1_700_000_000,
     )
     assert findings == []
 
@@ -359,7 +275,7 @@ def test_pre_broadcast_accepts_internal_engineering_testnet_review(tmp_path: Pat
         approval,
         tmp_path / "new-output",
         rejected,
-        now=1_900_000_000,
+        now=1_700_000_000,
     )
     assert any("test-only" in item.message for item in rejected)
 
@@ -375,7 +291,7 @@ def test_pre_broadcast_rejects_review_record_not_returned_by_api(tmp_path: Path)
         approval,
         tmp_path / "new-output",
         findings,
-        now=1_900_000_000,
+        now=1_700_000_000,
     )
 
     assert any("canonical API preflight record" in item.message for item in findings)
@@ -396,6 +312,57 @@ def test_pre_broadcast_rejects_expiry_and_lost_quorum(tmp_path: Path) -> None:
     messages = "\n".join(item.message for item in findings)
     assert "expired" in messages
     assert "two distinct administrator plan signatures" in messages
+
+
+def _rehash_plan_record(record: dict, plan: dict) -> None:
+    plan["planHash"] = preflight.plan_hash(plan)
+    record["plan_hash"] = plan["planHash"]
+    for signature in record["plan_signatures"]:
+        signature["plan_hash"] = plan["planHash"]
+
+
+def test_pre_broadcast_rejects_recovery_dependency_drift() -> None:
+    record, plan, _approval, _api_evidence = _ceremony_plan()
+    plan["recoveryDependencyManifestHash"] = _hex(999)
+    _rehash_plan_record(record, plan)
+
+    findings: list[preflight.Finding] = []
+    preflight._validate_plan(record, findings, now=1_700_000_000)
+
+    assert any("pinned administrator recovery dependencies" in item.message for item in findings)
+
+
+def test_pre_broadcast_rejects_identity_launcher_split_drift() -> None:
+    record, plan, _approval, _api_evidence = _ceremony_plan()
+    plan["adminAuthority"]["identityVaults"][1]["launcherAmount"] = 9
+    _rehash_plan_record(record, plan)
+
+    findings: list[preflight.Finding] = []
+    preflight._validate_plan(record, findings, now=1_700_000_000)
+
+    assert any("identity slot 1 is not canonical" in item.message for item in findings)
+
+
+def test_pre_broadcast_rejects_bridge_funding_drift() -> None:
+    record, plan, _approval, _api_evidence = _ceremony_plan()
+    plan["bridgeBatch"]["fundingAmount"] = 531
+    _rehash_plan_record(record, plan)
+
+    findings: list[preflight.Finding] = []
+    preflight._validate_plan(record, findings, now=1_700_000_000)
+
+    assert any("bridge batch must contain 32 coins" in item.message for item in findings)
+
+
+def test_pre_broadcast_rejects_authority_source_commitment_drift() -> None:
+    record, plan, _approval, _api_evidence = _ceremony_plan()
+    plan["adminAuthority"]["sourceManifestHash"] = _hex(998)
+    _rehash_plan_record(record, plan)
+
+    findings: list[preflight.Finding] = []
+    preflight._validate_plan(record, findings, now=1_700_000_000)
+
+    assert any("Authority V3 source commitment" in item.message for item in findings)
 
 
 def test_post_genesis_accepts_locked_checksummed_release(tmp_path: Path) -> None:
@@ -419,9 +386,9 @@ def test_post_genesis_accepts_locked_checksummed_release(tmp_path: Path) -> None
         for entry in artifact["signatures"]
     ]
     lock = {
-        "schemaVersion": 2,
-        "sourceManifestVersion": 3,
-        "protocolVersion": "solslot-v2",
+        "schemaVersion": 4,
+        "sourceManifestVersion": 4,
+        "protocolVersion": "solslot-v2-rc23",
         "reviewClass": artifact["reviewClass"],
         "testOnly": artifact["testOnly"],
         "auditStatus": artifact["auditStatus"],
@@ -430,14 +397,14 @@ def test_post_genesis_accepts_locked_checksummed_release(tmp_path: Path) -> None
         "artifactHash": artifact["artifactHash"],
         "spendBundleId": record["spend_bundle_id"],
         "confirmedBlockIndex": record["confirmed_block_index"],
-        "lockedAt": 1_900_000_100,
+        "lockedAt": 1_700_000_100,
     }
     evidence_dir = tmp_path / "evidence"
     _write_evidence(evidence_dir, plan, approval, artifact)
     attestation = {
-        "schemaVersion": 2,
-        "sourceManifestVersion": 3,
-        "protocolVersion": "solslot-v2",
+        "schemaVersion": 4,
+        "sourceManifestVersion": 4,
+        "protocolVersion": "solslot-v2-rc23",
         "network": "testnet11",
         "artifactHash": artifact["artifactHash"],
         "writeLocks": {
@@ -477,6 +444,25 @@ def test_post_genesis_accepts_locked_checksummed_release(tmp_path: Path) -> None
         broken_findings,
     )
     assert any("customerWeb" in item.message for item in broken_findings)
+
+    (evidence_dir / "authority_v3_review.json").write_text(
+        "{}\n",
+        encoding="ascii",
+    )
+    tampered_findings: list[preflight.Finding] = []
+    preflight.check_post_genesis(
+        record,
+        artifact,
+        lock,
+        evidence_dir,
+        attestation,
+        tampered_findings,
+    )
+    assert any(
+        "Authority V3 review" in item.message
+        or "authority_v3_review.json" in item.message
+        for item in tampered_findings
+    )
 
 
 def test_repository_gate_rejects_dirty_or_wrong_frozen_commit(tmp_path: Path) -> None:
@@ -528,7 +514,7 @@ def test_malformed_operator_evidence_fails_closed_without_crashing(tmp_path: Pat
         approval,
         tmp_path / "new-output",
         findings,
-        now=1_900_000_000,
+        now=1_700_000_000,
     )
     assert any(item.severity == "error" for item in findings)
     assert any("must be an object" in item.message for item in findings)

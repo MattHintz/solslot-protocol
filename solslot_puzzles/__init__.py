@@ -101,6 +101,10 @@ PUZZLE_FILENAMES = (
     # singleton launcher ids; key rotations happen behind those identities
     # and one pending intent freezes every privileged operation.
     "admin_authority_v3_inner.clsp",
+    "admin_authority_action_v1.clsp",
+    "admin_identity_action_v1.clsp",
+    "admin_identity_terminal_action_v1.clsp",
+    "admin_identity_prepare_announcement_v1.clsp",
     "eip712_member_v2.clsp",
 )
 
@@ -148,7 +152,10 @@ FROZEN_CHECKSUM: Optional[str] = (
     #   - RC19 native XCH/CAT primary purchases use a dedicated on-demand
     #     offer delegate that binds one exact deed to one canonical vault and
     #     exposes no standalone external-payment escrow branch.
-    "041d91f51bd4e3661d8f7a57660434f8e88688ea3785072eb1980608f46b2ad5"
+    # RC23 appends the recovery-aware authority and four exact transition
+    # helpers. The release manifest records each new tree hash and preserves
+    # the complete RC22 checksum.
+    "106ef3357b4f39f21e62b8c903f49c3f5d537cf0dfa2a4348e551eeb5bf07f99"
 )
 
 # ── Cache ──

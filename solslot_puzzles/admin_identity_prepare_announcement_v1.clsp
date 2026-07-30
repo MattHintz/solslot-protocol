@@ -1,0 +1,60 @@
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; Authority V3 lost-key preparation announcement validator.
+;;;
+;;; Recovery remains unable to emit arbitrary puzzle announcements or CHIP
+;;; messages. This wrapper permits exactly one coin announcement, and binds
+;;; its message to the one CREATE_COIN output enforced by the upstream
+;;; FORCE_1_OF_2 and PREVENT_MULTIPLE_CREATE_COINS wrappers.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(mod (Conditions)
+
+  (include condition_codes.clib)
+  (include sha256tree.clib)
+  (include utility_macros.clib)
+
+  (defconstant ID_ACTION_PREPARE 0x03)
+
+  (defun count-list (items)
+    (if items (+ 1 (count-list (r items))) 0))
+
+  (defun find-create-coin (conditions)
+    (if conditions
+      (if (= (f (f conditions)) CREATE_COIN)
+        (f conditions)
+        (find-create-coin (r conditions)))
+      (x)))
+
+  (defun count-announcements (conditions)
+    (if conditions
+      (+
+        (if (= (f (f conditions)) CREATE_COIN_ANNOUNCEMENT) 1 0)
+        (count-announcements (r conditions)))
+      0))
+
+  (defun has-bound-announcement (conditions expected_message)
+    (if conditions
+      (if
+        (all
+          (= (f (f conditions)) CREATE_COIN_ANNOUNCEMENT)
+          (= (count-list (f conditions)) 2)
+          (= (f (r (f conditions))) expected_message))
+        1
+        (has-bound-announcement (r conditions) expected_message))
+      ()))
+
+  (defun-inline validate (conditions create_coin)
+    (assert
+      (= (count-list create_coin) 3)
+      (= (count-announcements conditions) 1)
+      (has-bound-announcement
+        conditions
+        (sha256tree
+          (list
+            ID_ACTION_PREPARE
+            (f (r create_coin))
+            (f (r (r create_coin))))))
+      conditions))
+
+  (validate Conditions (find-create-coin Conditions))
+)

@@ -4,12 +4,20 @@
   "preservedRelease": "RC22",
   "preservedCanonicalChecksum": "16de6272631adcefd914e34151c7c15e1d014229f127b3c89da0da891770ee7b",
   "newPuzzleHashes": {
-    "admin_authority_v3_inner.clsp": "8530ef99b5f3f0e9b61505a56e1f57447f9dd326688a007a4ae6f2e656433061",
+    "admin_authority_v3_inner.clsp": "a8f01fcd5869ce286d4504531d786e055ebca36fcb9ecd1b8aaf118564c286ae",
+    "admin_authority_action_v1.clsp": "e4115ef7c8bafff1490657637af6f9fb2df7cf7265dd5b8e9aab2557617e5a2f",
+    "admin_identity_action_v1.clsp": "37d216ee6ed5a4488e73fe3e8eb4294f19a1154faacb17c095220b40df972b94",
+    "admin_identity_terminal_action_v1.clsp": "ccb501bd5b482d0df0580d9fb5b50f9e6ae823977caa4e50ad454cb7dc3af11e",
+    "admin_identity_prepare_announcement_v1.clsp": "1af3093179c445ddd6ce89c8e3b14b0c0f39044fa79b6aada79f7d5f920a9e65",
     "eip712_member_v2.clsp": "aaf5d0676da9c06b02ae94acc7f226c6b583205d42f5b350bec43df7fcd09ea7"
   },
   "changeReasons": {
     "admin_authority_v3_inner.clsp": "replace the unlaunched mutable Authority V2 roster with three immutable identity-vault launchers, exact owner-plus-one quorum, globally freezing two-stage key changes, cancellation, and permissionless exact completion",
+    "admin_authority_action_v1.clsp": "curry every Authority V3 transition field into one stable action hash that identity singletons pair through authenticated CHIP-25 messages",
+    "admin_identity_action_v1.clsp": "bind an identity transition to its exact output custody, authority action, live singleton coin, puzzle hash, amount, and paired message",
+    "admin_identity_terminal_action_v1.clsp": "restrict delayed cancellation and completion to the exact committed destination, delegated puzzle, coin, amount, announcement, and timelock",
+    "admin_identity_prepare_announcement_v1.clsp": "allow lost-key preparation to emit only the one coin announcement derived from the single restricted replacement output",
     "eip712_member_v2.clsp": "preserve CHIP-0037 signing while emitting consensus ASSERT_MY_COIN_ID opcode 70 for Authority V3; the historical V2 fixture remains unchanged"
   },
-  "canonicalChecksum": "041d91f51bd4e3661d8f7a57660434f8e88688ea3785072eb1980608f46b2ad5"
+  "canonicalChecksum": "106ef3357b4f39f21e62b8c903f49c3f5d537cf0dfa2a4348e551eeb5bf07f99"
 }

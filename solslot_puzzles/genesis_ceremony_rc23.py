@@ -36,7 +36,6 @@ from solslot_puzzles.genesis_ceremony import (
     GENESIS_EVM_CHAIN_ID,
     GENESIS_NETWORK,
     GENESIS_VALIDATOR_THRESHOLD,
-    SOURCE_MANIFEST_VERSION,
     BridgeBatchPlan,
     SingletonSurface,
     _funding_spend,
@@ -44,6 +43,9 @@ from solslot_puzzles.genesis_ceremony import (
     _normalize_source_shas,
     _signed_faucet_spend,
     _singleton_spends,
+)
+from solslot_puzzles.recovery_dependencies import (
+    RECOVERY_DEPENDENCY_MANIFEST_HASH,
 )
 from solslot_puzzles.eip712_helpers import keccak256
 from solslot_puzzles.protocol_deployment import singleton_full_puzzle_hash
@@ -63,6 +65,7 @@ from solslot_puzzles.zkpassport_bridge_driver import (
 
 RC23_GENESIS_PLAN_SCHEMA = "solslot-genesis-plan-v4"
 RC23_PROTOCOL_VERSION = "solslot-v2-rc23"
+RC23_SOURCE_MANIFEST_VERSION = 4
 RC23_BRIDGE_PARENT_TOTAL = sum(range(1, GENESIS_BRIDGE_BATCH_SIZE + 1))
 RC23_PROPERTY_REGISTRY_LAUNCHER_AMOUNT = 1
 RC23_BRIDGE_BATCH_BUFFER_AMOUNT = 1
@@ -196,6 +199,7 @@ class RC23GenesisCeremonyPlan:
     evm_chain_id: int
     expires_at: int
     source_shas: Mapping[str, str]
+    recovery_dependency_manifest_hash: bytes32
     evm_addresses: Mapping[str, str]
     funding: RC23GenesisFundingCoinIds
     protocol: RC22ProtocolDeploymentPlan
@@ -256,8 +260,11 @@ def _plan_payload(
         "network": plan.network,
         "evmChainId": plan.evm_chain_id,
         "expiresAt": plan.expires_at,
-        "sourceManifestVersion": SOURCE_MANIFEST_VERSION,
+        "sourceManifestVersion": RC23_SOURCE_MANIFEST_VERSION,
         "sourceShas": dict(plan.source_shas),
+        "recoveryDependencyManifestHash": _hex(
+            plan.recovery_dependency_manifest_hash
+        ),
         "evmAddresses": dict(plan.evm_addresses),
         "faucetPuzzleHash": _hex(
             protocol.faucet_inner_puzzle_hash
@@ -549,6 +556,30 @@ def _compute_plan_hash(plan: RC23GenesisCeremonyPlan) -> bytes32:
     )
 
 
+def _source_manifest_hash(
+    source_shas: Mapping[str, str],
+    recovery_dependency_manifest_hash: bytes32,
+) -> bytes32:
+    return bytes32(
+        hashlib.sha256(
+            json.dumps(
+                {
+                    "version": RC23_SOURCE_MANIFEST_VERSION,
+                    "sources": source_shas,
+                    "dependencies": {
+                        "administratorRecovery": _hex(
+                            recovery_dependency_manifest_hash
+                        )
+                    },
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=True,
+            ).encode("ascii")
+        ).digest()
+    )
+
+
 def build_rc23_genesis_ceremony_plan(
     *,
     ceremony_id: bytes32,
@@ -570,6 +601,7 @@ def build_rc23_genesis_ceremony_plan(
     trusted_governance_rewards_puzzle_hash: bytes32,
     trusted_governance_rewards_root: bytes32,
     retired_coordinates: Sequence[bytes32],
+    recovery_dependency_manifest_hash: bytes32 | None = None,
     parameters: ProtocolParameters | None = None,
     network: str = GENESIS_NETWORK,
     evm_chain_id: int = GENESIS_EVM_CHAIN_ID,
@@ -588,6 +620,15 @@ def build_rc23_genesis_ceremony_plan(
         raise ValueError("expires_at must be positive")
     funding.validate()
     normalized_sources = _normalize_source_shas(source_shas)
+    dependency_manifest_hash = (
+        recovery_dependency_manifest_hash
+        if recovery_dependency_manifest_hash is not None
+        else bytes32.from_hexstr(RECOVERY_DEPENDENCY_MANIFEST_HASH)
+    )
+    _nonzero(
+        dependency_manifest_hash,
+        "recovery dependency manifest hash",
+    )
     normalized_evm = _normalize_evm_addresses(evm_addresses)
     if protocol_config_version < 1 or admin_authority_version < 1:
         raise ValueError("config and authority versions must be at least one")
@@ -602,18 +643,9 @@ def build_rc23_genesis_ceremony_plan(
     if len(retired) != len(set(retired)):
         raise ValueError("retired coordinates must be distinct")
 
-    source_manifest_hash = bytes32(
-        hashlib.sha256(
-            json.dumps(
-                {
-                    "version": SOURCE_MANIFEST_VERSION,
-                    "sources": normalized_sources,
-                },
-                sort_keys=True,
-                separators=(",", ":"),
-                ensure_ascii=True,
-            ).encode("ascii")
-        ).digest()
+    source_manifest_hash = _source_manifest_hash(
+        normalized_sources,
+        dependency_manifest_hash,
     )
     authority_v3 = admin_authority.build_genesis_admin_authority_v3(
         parent_coin_id=funding.admin_authority,
@@ -770,6 +802,7 @@ def build_rc23_genesis_ceremony_plan(
         evm_chain_id=evm_chain_id,
         expires_at=expires_at,
         source_shas=normalized_sources,
+        recovery_dependency_manifest_hash=dependency_manifest_hash,
         evm_addresses=normalized_evm,
         funding=funding,
         protocol=protocol,
@@ -808,6 +841,21 @@ def verify_rc23_genesis_ceremony_plan(
         raise ValueError("ceremony plan network is not testnet11")
     if plan.evm_chain_id != GENESIS_EVM_CHAIN_ID:
         raise ValueError("ceremony plan EVM chain is not Base Sepolia")
+    expected_dependency_hash = bytes32.from_hexstr(
+        RECOVERY_DEPENDENCY_MANIFEST_HASH
+    )
+    if (
+        plan.recovery_dependency_manifest_hash
+        != expected_dependency_hash
+        or plan.admin_authority_v3.source_manifest_hash
+        != _source_manifest_hash(
+            plan.source_shas,
+            expected_dependency_hash,
+        )
+    ):
+        raise ValueError(
+            "ceremony plan does not bind the pinned recovery dependencies"
+        )
     if (
         plan.admin_authority_v3.authority_launcher_id
         != plan.admin_authority.launcher_id

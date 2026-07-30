@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the deterministic nine-repository RC22 source manifest."""
+"""Build the deterministic nine-repository RC23 source manifest."""
 
 from __future__ import annotations
 
@@ -9,14 +9,23 @@ import json
 import os
 import subprocess
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Mapping, Sequence
+from typing import Any, Mapping, Sequence
 from urllib.parse import urlsplit, urlunsplit
 
+from solslot_puzzles.recovery_dependencies import (
+    PINNED_CNI_WALLET_SDK_COMMIT,
+    PINNED_CNI_WALLET_SDK_LICENSE,
+    PINNED_CNI_WALLET_SDK_REPOSITORY,
+    RECOVERY_DEPENDENCY_MANIFEST_HASH,
+)
+from solslot_puzzles import FROZEN_CHECKSUM
 
-RELEASE_ID = "solslot-v2-alpha-rc22-20260727"
-RELEASE_BRANCH = "release/testnet-alpha-rc22-20260727"
-SOURCE_MANIFEST_VERSION = 3
+
+RELEASE_ID = "solslot-v2-alpha-rc23-20260729"
+RELEASE_BRANCH = "release/testnet-alpha-rc23-20260729"
+SOURCE_MANIFEST_VERSION = 4
 SOURCE_REPOSITORIES = {
     "protocol": "https://github.com/MattHintz/solslot-protocol",
     "evm": "https://github.com/MattHintz/solslot-evm",
@@ -58,6 +67,23 @@ def canonical_json(value: Mapping[str, object]) -> bytes:
 def manifest_hash(value: Mapping[str, object]) -> str:
     unsigned = {key: item for key, item in value.items() if key != "manifestHash"}
     return "0x" + hashlib.sha256(canonical_json(unsigned)).hexdigest()
+
+
+def file_sha256(value: bytes) -> str:
+    return hashlib.sha256(value).hexdigest()
+
+
+def authority_source_commitment(source_shas: Mapping[str, str]) -> str:
+    payload = {
+        "version": SOURCE_MANIFEST_VERSION,
+        "sources": dict(source_shas),
+        "dependencies": {
+            "administratorRecovery": (
+                "0x" + RECOVERY_DEPENDENCY_MANIFEST_HASH
+            )
+        },
+    }
+    return "0x" + hashlib.sha256(canonical_json(payload)).hexdigest()
 
 
 def normalize_remote(value: str) -> str:
@@ -123,8 +149,8 @@ def build_manifest(
     by_name = {item.name: item for item in states}
     if set(by_name) != set(SOURCE_REPOSITORIES) or len(states) != len(by_name):
         raise ValueError("release source states must contain each repository exactly once")
-    if not release_id.startswith("solslot-v2-alpha-rc22-"):
-        raise ValueError("release_id must identify an RC22 alpha release")
+    if not release_id.startswith("solslot-v2-alpha-rc23-"):
+        raise ValueError("release_id must identify an RC23 alpha release")
     expected_branch = (
         "release/testnet-alpha-"
         + release_id.removeprefix("solslot-v2-alpha-")
@@ -133,15 +159,29 @@ def build_manifest(
         raise ValueError("release branch must correspond to release_id")
     if {item.branch for item in states} != {release_branch}:
         raise ValueError("all source states must use the release branch")
+    source_shas = {
+        name: by_name[name].commit for name in SOURCE_REPOSITORIES
+    }
     payload: dict[str, object] = {
         "schemaVersion": SOURCE_MANIFEST_VERSION,
         "kind": "solslot-release-source-manifest",
         "releaseId": release_id,
         "network": "testnet11",
         "testOnly": True,
-        "sourceShas": {
-            name: by_name[name].commit for name in SOURCE_REPOSITORIES
+        "sourceShas": source_shas,
+        "dependencies": {
+            "administratorRecovery": {
+                "repository": PINNED_CNI_WALLET_SDK_REPOSITORY,
+                "commit": PINNED_CNI_WALLET_SDK_COMMIT,
+                "license": PINNED_CNI_WALLET_SDK_LICENSE,
+                "manifestHash": (
+                    "0x" + RECOVERY_DEPENDENCY_MANIFEST_HASH
+                ),
+            }
         },
+        "authoritySourceCommitment": authority_source_commitment(
+            source_shas
+        ),
         "sources": {
             name: {
                 "repository": by_name[name].repository,
@@ -155,11 +195,103 @@ def build_manifest(
     return payload
 
 
+def verify_release_refs(path: Path, commit: str) -> None:
+    main_commit = _git(path, "rev-parse", "origin/main^{commit}").lower()
+    tag_commit = _git(path, "rev-list", "-n", "1", RELEASE_ID).lower()
+    if main_commit != commit or tag_commit != commit:
+        raise ValueError(
+            f"{path} must have the exact RC23 commit on origin/main and {RELEASE_ID}"
+        )
+
+
+def build_launch_evidence(
+    manifest: Mapping[str, Any],
+    *,
+    manifest_file_sha256: str,
+    puzzle_inventory: Mapping[str, Any],
+    puzzle_inventory_file_sha256: str,
+    generated_at: str,
+    release_refs_verified: bool,
+) -> dict[str, Any]:
+    if (
+        manifest.get("schemaVersion") != SOURCE_MANIFEST_VERSION
+        or manifest.get("releaseId") != RELEASE_ID
+        or manifest.get("manifestHash") != manifest_hash(manifest)
+    ):
+        raise ValueError("RC23 source manifest is invalid")
+    if release_refs_verified is not True:
+        raise ValueError(
+            "launch evidence requires exact origin/main and RC23 tag verification"
+        )
+    if (
+        puzzle_inventory.get("schema") != "solslot.puzzle-hashes.v1"
+        or puzzle_inventory.get("release") != "RC23"
+        or puzzle_inventory.get("canonicalChecksum") != FROZEN_CHECKSUM
+    ):
+        raise ValueError("RC23 puzzle inventory is stale")
+    try:
+        parsed_time = datetime.fromisoformat(
+            generated_at.replace("Z", "+00:00")
+        )
+    except ValueError as exc:
+        raise ValueError("generated_at must be ISO-8601") from exc
+    if parsed_time.tzinfo is None:
+        raise ValueError("generated_at must include a timezone")
+    return {
+        "schemaVersion": 5,
+        "kind": "solslot-rc23-launch-source-evidence",
+        "releaseTag": RELEASE_ID,
+        "releaseId": RELEASE_ID,
+        "generatedAt": generated_at,
+        "network": "testnet11",
+        "testOnly": True,
+        "auditStatus": "pending-external-review",
+        "completeReleaseManifest": True,
+        "releaseRefsVerified": True,
+        "manifestHash": manifest["manifestHash"],
+        "sourceManifestFileSha256": manifest_file_sha256,
+        "sourceManifest": dict(manifest),
+        "protocolFreeze": {
+            "puzzleInventory": dict(puzzle_inventory),
+            "puzzleInventoryFileSha256": (
+                puzzle_inventory_file_sha256
+            ),
+            "canonicalPuzzleChecksum": FROZEN_CHECKSUM,
+            "recoveryDependencyManifestHash": (
+                "0x" + RECOVERY_DEPENDENCY_MANIFEST_HASH
+            ),
+        },
+        "readiness": {
+            "sourceFreezeReady": True,
+            "independentAuthorityReviewReady": False,
+            "freshFundingVerified": False,
+            "ceremonyPackageReady": False,
+            "settlementRehearsalReady": False,
+            "freshAdministratorEnrollmentComplete": False,
+        },
+    }
+
+
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     for name, argument in ARGUMENT_NAMES.items():
         parser.add_argument(f"--{argument}", dest=name, type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--evidence-output", type=Path)
+    parser.add_argument(
+        "--puzzle-inventory",
+        type=Path,
+        default=(
+            Path(__file__).resolve().parents[1]
+            / "release-manifests"
+            / "rc23-puzzle-hashes.json"
+        ),
+    )
+    parser.add_argument("--generated-at")
+    parser.add_argument(
+        "--require-release-refs",
+        action="store_true",
+    )
     return parser.parse_args(argv)
 
 
@@ -173,12 +305,57 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         for name in SOURCE_REPOSITORIES
     ]
+    if args.evidence_output and not args.require_release_refs:
+        raise ValueError(
+            "--evidence-output requires --require-release-refs"
+        )
+    if args.require_release_refs:
+        for state in states:
+            verify_release_refs(
+                getattr(args, state.name),
+                state.commit,
+            )
     manifest = build_manifest(states)
     output = args.output.resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
     temporary = output.with_name(output.name + ".tmp")
-    temporary.write_text(json.dumps(manifest, indent=2) + "\n", encoding="ascii")
+    manifest_bytes = (
+        json.dumps(manifest, indent=2) + "\n"
+    ).encode("ascii")
+    temporary.write_bytes(manifest_bytes)
     os.replace(temporary, output)
+    if args.evidence_output:
+        puzzle_inventory_path = args.puzzle_inventory.resolve()
+        puzzle_inventory_bytes = puzzle_inventory_path.read_bytes()
+        puzzle_inventory = json.loads(puzzle_inventory_bytes)
+        if not isinstance(puzzle_inventory, Mapping):
+            raise ValueError("RC23 puzzle inventory must be an object")
+        generated_at = args.generated_at or (
+            datetime.now(timezone.utc)
+            .replace(microsecond=0)
+            .isoformat()
+            .replace("+00:00", "Z")
+        )
+        evidence = build_launch_evidence(
+            manifest,
+            manifest_file_sha256=file_sha256(manifest_bytes),
+            puzzle_inventory=puzzle_inventory,
+            puzzle_inventory_file_sha256=file_sha256(
+                puzzle_inventory_bytes
+            ),
+            generated_at=generated_at,
+            release_refs_verified=True,
+        )
+        evidence_output = args.evidence_output.resolve()
+        evidence_output.parent.mkdir(parents=True, exist_ok=True)
+        evidence_temporary = evidence_output.with_name(
+            evidence_output.name + ".tmp"
+        )
+        evidence_temporary.write_text(
+            json.dumps(evidence, indent=2) + "\n",
+            encoding="ascii",
+        )
+        os.replace(evidence_temporary, evidence_output)
     print(json.dumps(manifest, sort_keys=True))
     return 0
 

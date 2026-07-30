@@ -1,28 +1,33 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Solslot Admin Authority V3
 ;;;
-;;; The administrator roster is constitutional and immutable:
+;;; Constitutional authority is immutable:
 ;;;   identity slot 0 AND (identity slot 1 OR identity slot 2)
 ;;;
-;;; The three identity singleton launcher ids are curried into this puzzle.
-;;; Daily and recovery keys live behind those identity singletons, so a key
-;;; rotation never mutates the authority roster or this puzzle's MIPS roots.
+;;; Identity launcher IDs are permanent. Mutable daily and recovery keys live
+;;; behind those identity singletons. The authority mirrors only their current
+;;; custody hashes so it can validate exact continuation and key-change spends.
 ;;;
-;;; Any pending key change freezes OPERATIONAL spends. The root records one
-;;; exact intent, target identity coin, replacement custody/member hashes, and
-;;; delay. Completion is permissionless after the delay but requires a coin
-;;; announcement from the committed identity coin proving the exact custody
-;;; transition. The old operational quorum can veto until completion.
+;;; A pending key change freezes all operational authority spends. The old
+;;; daily key can veto through one exact cancellation branch. After the
+;;; committed delay, completion is permissionless and can only install the
+;;; committed replacement custody hash.
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (mod
   (
     SELF_MOD_HASH
+    SINGLETON_MOD_HASH
+    SINGLETON_LAUNCHER_HASH
+    AUTHORITY_LAUNCHER_ID
+    AUTHORITY_ACTION_MOD_HASH
+    IDENTITY_ACTION_MOD_HASH
     OPERATIONAL_MIPS_ROOT_HASH
     LOST_RECOVERY_MIPS_ROOT_HASHES
     IDENTITY_LAUNCHER_0
     IDENTITY_LAUNCHER_1
     IDENTITY_LAUNCHER_2
+    CURRENT_IDENTITY_CUSTODY_HASHES
     ROUTINE_DELAY_SECONDS
     LOST_KEY_DELAY_SECONDS
     SOURCE_MANIFEST_HASH
@@ -31,6 +36,7 @@
     PENDING_SLOT
     PENDING_INTENT_HASH
     PENDING_IDENTITY_COIN_ID
+    PENDING_ORIGINAL_CUSTODY_HASH
     PENDING_REPLACEMENT_CUSTODY_HASH
     PENDING_REPLACEMENT_MEMBER_HASH
     PENDING_DELAY_SECONDS
@@ -49,19 +55,75 @@
   (defconstant SPEND_PREPARE_LOST      0x03)
   (defconstant SPEND_CANCEL            0x04)
   (defconstant SPEND_COMPLETE          0x05)
+  (defconstant SPEND_PREPARE_KIT       0x06)
 
-  ;; Use numeric zero (nil), matching Program.to(0) in the driver. 0x00 is
-  ;; a one-byte zero atom and is not CLVM integer zero.
   (defconstant PENDING_NONE            0)
   (defconstant PENDING_ROUTINE         0x01)
   (defconstant PENDING_LOST            0x02)
+  (defconstant PENDING_RECOVERY_KIT    0x03)
+
+  (defconstant ID_ACTION_OPERATIONAL   0x01)
+  (defconstant ID_ACTION_APPROVE       0x02)
+  (defconstant ID_ACTION_PREPARE       0x03)
+  (defconstant ID_ACTION_CANCEL        0x04)
+  (defconstant ID_ACTION_COMPLETE      0x05)
+
+  (defconstant SINGLETON_MEMBER_MODE   0x12)
   (defconstant SLOT_COUNT              3)
   (defconstant ZERO_32
     0x0000000000000000000000000000000000000000000000000000000000000000)
 
+  (defun count-list (items)
+    (if items (+ 1 (count-list (r items))) 0))
+
+  (defun nth-value (index items)
+    (if (= index 0)
+      (f items)
+      (nth-value (- index 1) (r items))))
+
+  (defun replace-nth (index replacement items)
+    (if (= index 0)
+      (c replacement (r items))
+      (c (f items) (replace-nth (- index 1) replacement (r items)))))
+
+  (defun all-b32 (items)
+    (if items
+      (if (is-size-b32 (f items)) (all-b32 (r items)) ())
+      1))
+
+  (defun-inline identity-launcher-for-slot (slot)
+    (if (= slot 0)
+      IDENTITY_LAUNCHER_0
+      (if (= slot 1) IDENTITY_LAUNCHER_1 IDENTITY_LAUNCHER_2)))
+
+  (defun-inline identity-amount-for-slot (slot)
+    (if (= slot 0) 3 (if (= slot 1) 5 7)))
+
+  (defun-inline identity-custody-for-slot (slot custody_hashes)
+    (nth-value slot custody_hashes))
+
+  (defun-inline singleton-struct-for-launcher (launcher_id)
+    (c
+      SINGLETON_MOD_HASH
+      (c launcher_id SINGLETON_LAUNCHER_HASH)))
+
+  (defun-inline identity-full-puzzle-hash (slot custody_hash)
+    (calculate_full_puzzle_hash
+      (singleton-struct-for-launcher (identity-launcher-for-slot slot))
+      custody_hash))
+
+  (defun-inline lost-recovery-root-for-slot (slot)
+    (nth-value slot LOST_RECOVERY_MIPS_ROOT_HASHES))
+
+  (defun-inline expected-delay-for-kind (kind)
+    (if (= kind PENDING_LOST)
+      LOST_KEY_DELAY_SECONDS
+      ROUTINE_DELAY_SECONDS))
+
   (defun-inline state-hash
-      (new_version new_kind new_slot new_intent new_identity_coin
-       new_custody_hash new_member_hash new_delay)
+      (custody_hashes new_version new_kind new_slot new_intent
+       new_identity_coin new_original_custody new_replacement_custody
+       new_member_hash new_delay)
     (sha256tree
       (list
         OPERATIONAL_MIPS_ROOT_HASH
@@ -69,55 +131,102 @@
         IDENTITY_LAUNCHER_0
         IDENTITY_LAUNCHER_1
         IDENTITY_LAUNCHER_2
+        custody_hashes
         SOURCE_MANIFEST_HASH
         new_version
         new_kind
         new_slot
         new_intent
         new_identity_coin
-        new_custody_hash
+        new_original_custody
+        new_replacement_custody
         new_member_hash
         new_delay)))
 
   (defun-inline new-inner-puzhash
-      (new_version new_kind new_slot new_intent new_identity_coin
-       new_custody_hash new_member_hash new_delay)
+      (custody_hashes new_version new_kind new_slot new_intent
+       new_identity_coin new_original_custody new_replacement_custody
+       new_member_hash new_delay)
     (curry_hashes SELF_MOD_HASH
-      (sha256 1 SELF_MOD_HASH)
-      (sha256 1 OPERATIONAL_MIPS_ROOT_HASH)
+      (sha256tree SELF_MOD_HASH)
+      (sha256tree SINGLETON_MOD_HASH)
+      (sha256tree SINGLETON_LAUNCHER_HASH)
+      (sha256tree AUTHORITY_LAUNCHER_ID)
+      (sha256tree AUTHORITY_ACTION_MOD_HASH)
+      (sha256tree IDENTITY_ACTION_MOD_HASH)
+      (sha256tree OPERATIONAL_MIPS_ROOT_HASH)
       (sha256tree LOST_RECOVERY_MIPS_ROOT_HASHES)
-      (sha256 1 IDENTITY_LAUNCHER_0)
-      (sha256 1 IDENTITY_LAUNCHER_1)
-      (sha256 1 IDENTITY_LAUNCHER_2)
-      (sha256 1 ROUTINE_DELAY_SECONDS)
-      (sha256 1 LOST_KEY_DELAY_SECONDS)
-      (sha256 1 SOURCE_MANIFEST_HASH)
-      (sha256 1 new_version)
-      (sha256 1 new_kind)
-      (sha256 1 new_slot)
-      (sha256 1 new_intent)
-      (sha256 1 new_identity_coin)
-      (sha256 1 new_custody_hash)
-      (sha256 1 new_member_hash)
-      (sha256 1 new_delay)))
+      (sha256tree IDENTITY_LAUNCHER_0)
+      (sha256tree IDENTITY_LAUNCHER_1)
+      (sha256tree IDENTITY_LAUNCHER_2)
+      (sha256tree custody_hashes)
+      (sha256tree ROUTINE_DELAY_SECONDS)
+      (sha256tree LOST_KEY_DELAY_SECONDS)
+      (sha256tree SOURCE_MANIFEST_HASH)
+      (sha256tree new_version)
+      (sha256tree new_kind)
+      (sha256tree new_slot)
+      (sha256tree new_intent)
+      (sha256tree new_identity_coin)
+      (sha256tree new_original_custody)
+      (sha256tree new_replacement_custody)
+      (sha256tree new_member_hash)
+      (sha256tree new_delay)))
+
+  (defun-inline current-inner-puzhash _noargs
+    (new-inner-puzhash
+      CURRENT_IDENTITY_CUSTODY_HASHES
+      AUTHORITY_VERSION
+      PENDING_KIND
+      PENDING_SLOT
+      PENDING_INTENT_HASH
+      PENDING_IDENTITY_COIN_ID
+      PENDING_ORIGINAL_CUSTODY_HASH
+      PENDING_REPLACEMENT_CUSTODY_HASH
+      PENDING_REPLACEMENT_MEMBER_HASH
+      PENDING_DELAY_SECONDS))
+
+  (defun-inline current-full-puzhash _noargs
+    (calculate_full_puzzle_hash
+      (singleton-struct-for-launcher AUTHORITY_LAUNCHER_ID)
+      (current-inner-puzhash)))
 
   (defun-inline emit-state
-      (new_version new_kind new_slot new_intent new_identity_coin
-       new_custody_hash new_member_hash new_delay my_amount action)
+      (custody_hashes new_version new_kind new_slot new_intent
+       new_identity_coin new_original_custody new_replacement_custody
+       new_member_hash new_delay amount action)
     (list
       (list CREATE_COIN
         (new-inner-puzhash
-          new_version new_kind new_slot new_intent new_identity_coin
-          new_custody_hash new_member_hash new_delay)
-        my_amount)
+          custody_hashes new_version new_kind new_slot new_intent
+          new_identity_coin new_original_custody new_replacement_custody
+          new_member_hash new_delay)
+        amount)
       (list CREATE_PUZZLE_ANNOUNCEMENT
         (concat
           PROTOCOL_PREFIX
           action
           (state-hash
-            new_version new_kind new_slot new_intent new_identity_coin
-            new_custody_hash new_member_hash new_delay)))
-      (list ASSERT_MY_AMOUNT my_amount)))
+            custody_hashes new_version new_kind new_slot new_intent
+            new_identity_coin new_original_custody new_replacement_custody
+            new_member_hash new_delay)))
+      (list ASSERT_MY_PUZZLEHASH (current-full-puzhash))
+      (list ASSERT_MY_AMOUNT amount)))
+
+  (defun-inline empty-state (custody_hashes new_version amount action)
+    (emit-state
+      custody_hashes
+      new_version
+      PENDING_NONE
+      0
+      ZERO_32
+      ZERO_32
+      ZERO_32
+      ZERO_32
+      ZERO_32
+      0
+      amount
+      action))
 
   (defun conditions-contain-announcement (conditions message)
     (if conditions
@@ -129,21 +238,85 @@
         (conditions-contain-announcement (r conditions) message))
       ()))
 
-  (defun-inline identity-launcher-for-slot (slot)
-    (if (= slot 0)
-      IDENTITY_LAUNCHER_0
-      (if (= slot 1) IDENTITY_LAUNCHER_1 IDENTITY_LAUNCHER_2)))
+  (defun conditions-contain-receive
+      (conditions delegated_hash identity_full_hash)
+    (if conditions
+      (if
+        (all
+          (= (f (f conditions)) RECEIVE_MESSAGE)
+          (= (f (r (f conditions))) SINGLETON_MEMBER_MODE)
+          (= (f (r (r (f conditions)))) delegated_hash)
+          (= (f (r (r (r (f conditions))))) identity_full_hash))
+        1
+        (conditions-contain-receive
+          (r conditions) delegated_hash identity_full_hash))
+      ()))
 
-  (defun-inline lost-recovery-root-for-slot (slot)
-    (if (= slot 0)
-      (f LOST_RECOVERY_MIPS_ROOT_HASHES)
-      (if (= slot 1)
-        (f (r LOST_RECOVERY_MIPS_ROOT_HASHES))
-        (f (r (r LOST_RECOVERY_MIPS_ROOT_HASHES))))))
+  (defun-inline authority-action-hash (action binding)
+    (curry_hashes AUTHORITY_ACTION_MOD_HASH
+      (sha256tree action)
+      (sha256tree binding)))
+
+  (defun-inline identity-action-hash
+      (action output_custody authority_full authority_delegated
+       authority_announcement coin_announcement identity_full amount)
+    (curry_hashes IDENTITY_ACTION_MOD_HASH
+      (sha256tree action)
+      (sha256tree output_custody)
+      (sha256tree authority_full)
+      (sha256tree authority_delegated)
+      (sha256tree authority_announcement)
+      (sha256tree coin_announcement)
+      (sha256tree identity_full)
+      (sha256tree amount)))
+
+  (defun-inline record-slot (record) (f record))
+  (defun-inline record-coin (record) (f (r record)))
+
+  (defun valid-record (record)
+    (all
+      (= (count-list record) 2)
+      (is-uint64 (record-slot record))
+      (> SLOT_COUNT (record-slot record))
+      (is-size-b32 (record-coin record))
+      (not (= (record-coin record) ZERO_32))))
+
+  (defun-inline valid-operational-records (records)
+    (all
+      (= (count-list records) 2)
+      (valid-record (f records))
+      (valid-record (f (r records)))
+      (= (record-slot (f records)) 0)
+      (any
+        (= (record-slot (f (r records))) 1)
+        (= (record-slot (f (r records))) 2))))
+
+  (defun-inline records-contain-slot (records slot)
+    (any
+      (= (record-slot (f records)) slot)
+      (= (record-slot (f (r records))) slot)))
+
+  (defun-inline valid-lost-records (records target_slot)
+    (all
+      (= (count-list records) 2)
+      (valid-record (f records))
+      (valid-record (f (r records)))
+      (> (record-slot (f (r records))) (record-slot (f records)))
+      (not (records-contain-slot records target_slot))
+      (= (+ (record-slot (f records)) (record-slot (f (r records))))
+        (- 3 target_slot))))
+
+  (defun-inline valid-prepare-records (kind records target_slot)
+    (if (= kind PENDING_LOST)
+      (valid-lost-records records target_slot)
+      (all
+        (valid-operational-records records)
+        (records-contain-slot records target_slot))))
 
   (defun-inline prepare-binding-hash
       (kind slot intent_hash current_identity_coin_id
-       intermediate_identity_coin_id replacement_custody_hash
+       intermediate_identity_coin_id original_custody_hash
+       intermediate_custody_hash replacement_custody_hash
        replacement_member_hash delay new_version)
     (sha256tree
       (list
@@ -152,6 +325,8 @@
         intent_hash
         current_identity_coin_id
         intermediate_identity_coin_id
+        original_custody_hash
+        intermediate_custody_hash
         replacement_custody_hash
         replacement_member_hash
         delay
@@ -160,196 +335,481 @@
         new_version
         (identity-launcher-for-slot slot))))
 
-  (defun-inline cancel-binding-hash (new_version)
-    (sha256tree
-      (list
-        SPEND_CANCEL
-        PENDING_KIND
-        PENDING_SLOT
-        PENDING_INTENT_HASH
-        PENDING_IDENTITY_COIN_ID
-        PENDING_REPLACEMENT_CUSTODY_HASH
-        PENDING_REPLACEMENT_MEMBER_HASH
-        SOURCE_MANIFEST_HASH
-        AUTHORITY_VERSION
-        new_version)))
+  (defun-inline target-prepare-message
+      (kind slot intent_hash current_identity_coin_id
+       intermediate_identity_coin_id intermediate_custody_hash
+       replacement_custody_hash)
+    (if (= kind PENDING_LOST)
+      (sha256tree
+        (list
+          ID_ACTION_PREPARE
+          intermediate_custody_hash
+          (identity-amount-for-slot slot)))
+      (sha256tree
+        (list
+          ID_ACTION_PREPARE
+          kind
+          slot
+          intent_hash
+          current_identity_coin_id
+          intermediate_identity_coin_id
+          intermediate_custody_hash
+          replacement_custody_hash
+          SOURCE_MANIFEST_HASH))))
 
-  (defun-inline completion-message ()
+  (defun-inline cancel-message ()
     (sha256tree
       (list
-        SPEND_COMPLETE
+        ID_ACTION_CANCEL
         PENDING_KIND
         PENDING_SLOT
         PENDING_INTENT_HASH
+        PENDING_ORIGINAL_CUSTODY_HASH
         PENDING_REPLACEMENT_CUSTODY_HASH
         PENDING_REPLACEMENT_MEMBER_HASH
         SOURCE_MANIFEST_HASH)))
 
-  (defun-inline empty-state (new_version my_amount action)
-    (emit-state
-      new_version
-      PENDING_NONE
-      0
-      ZERO_32
-      ZERO_32
-      ZERO_32
-      ZERO_32
-      0
-      my_amount
-      action))
+  (defun-inline completion-message ()
+    (sha256tree
+      (list
+        ID_ACTION_COMPLETE
+        PENDING_KIND
+        PENDING_SLOT
+        PENDING_INTENT_HASH
+        PENDING_ORIGINAL_CUSTODY_HASH
+        PENDING_REPLACEMENT_CUSTODY_HASH
+        PENDING_REPLACEMENT_MEMBER_HASH
+        SOURCE_MANIFEST_HASH)))
 
-  (defun-inline transition-slot (args) (f args))
-  (defun-inline transition-intent (args) (f (r args)))
-  (defun-inline transition-current-coin (args) (f (r (r args))))
-  (defun-inline transition-intermediate-coin (args)
-    (f (r (r (r args)))))
-  (defun-inline transition-custody (args)
-    (f (r (r (r (r args))))))
+  (defun-inline transition-slot (args) (nth-value 0 args))
+  (defun-inline transition-intent (args) (nth-value 1 args))
+  (defun-inline transition-current-coin (args) (nth-value 2 args))
+  (defun-inline transition-intermediate-coin (args) (nth-value 3 args))
+  (defun-inline transition-intermediate-custody (args) (nth-value 4 args))
+  (defun-inline transition-replacement-custody (args) (nth-value 5 args))
 
-  (defun-inline handle-operational
-      (mips_reveal mips_solution my_amount new_version)
+  (defun-inline identity-pair-condition
+      (record action_kind target_slot target_custody authority_delegated
+       authority_announcement target_coin_announcement)
+    (list
+      (list SEND_MESSAGE
+        SINGLETON_MEMBER_MODE
+        (identity-action-hash
+          (if (= (record-slot record) target_slot)
+            action_kind
+            ID_ACTION_APPROVE)
+          (if (= (record-slot record) target_slot)
+            target_custody
+            (identity-custody-for-slot
+              (record-slot record)
+              CURRENT_IDENTITY_CUSTODY_HASHES))
+          (current-full-puzhash)
+          authority_delegated
+          authority_announcement
+          (if (= (record-slot record) target_slot)
+            target_coin_announcement
+            ())
+          (identity-full-puzzle-hash
+            (record-slot record)
+            (identity-custody-for-slot
+              (record-slot record)
+              CURRENT_IDENTITY_CUSTODY_HASHES))
+          (identity-amount-for-slot (record-slot record)))
+        (identity-full-puzzle-hash
+          (record-slot record)
+          (identity-custody-for-slot
+            (record-slot record)
+            CURRENT_IDENTITY_CUSTODY_HASHES)))
+      (list ASSERT_CONCURRENT_SPEND (record-coin record))))
+
+  (defun-inline identity-pair-conditions
+      (records action_kind target_slot target_custody authority_delegated
+       authority_announcement target_coin_announcement)
+    (merge-lists
+      (identity-pair-condition
+        (f records)
+        action_kind
+        target_slot
+        target_custody
+        authority_delegated
+        authority_announcement
+        target_coin_announcement)
+      (identity-pair-condition
+        (f (r records))
+        action_kind
+        target_slot
+        target_custody
+        authority_delegated
+        authority_announcement
+        target_coin_announcement)))
+
+  (defun-inline validate-pair-receives
+      (records mips_conditions authority_delegated)
+    (all
+      (conditions-contain-receive
+        mips_conditions
+        authority_delegated
+        (identity-full-puzzle-hash
+          (record-slot (f records))
+          (identity-custody-for-slot
+            (record-slot (f records))
+            CURRENT_IDENTITY_CUSTODY_HASHES)))
+      (conditions-contain-receive
+        mips_conditions
+        authority_delegated
+        (identity-full-puzzle-hash
+          (record-slot (f (r records)))
+          (identity-custody-for-slot
+            (record-slot (f (r records)))
+            CURRENT_IDENTITY_CUSTODY_HASHES)))))
+
+  (defun-inline handle-operational-resolved
+      (mips_reveal authority_delegated records amount new_version
+       mips_conditions)
     (assert
       (= PENDING_KIND PENDING_NONE)
       (= (sha256tree mips_reveal) OPERATIONAL_MIPS_ROOT_HASH)
+      (is-size-b32 authority_delegated)
+      (valid-operational-records records)
+      (validate-pair-receives records mips_conditions authority_delegated)
       (merge-lists
-        (a mips_reveal mips_solution)
-        (empty-state new_version my_amount SPEND_OPERATIONAL))))
+        mips_conditions
+        (merge-lists
+          (identity-pair-conditions
+            records
+            ID_ACTION_OPERATIONAL
+            3
+            ZERO_32
+            authority_delegated
+            ()
+            ())
+          (empty-state
+            CURRENT_IDENTITY_CUSTODY_HASHES
+            new_version
+            amount
+            SPEND_OPERATIONAL)))))
+
+  (defun-inline handle-operational
+      (mips_reveal mips_solution authority_delegated records amount new_version)
+    (handle-operational-resolved
+      mips_reveal
+      authority_delegated
+      records
+      amount
+      new_version
+      (a mips_reveal mips_solution)))
+
+  (defun-inline handle-prepare-final
+      (kind expected_delay mips_reveal replacement_member_reveal
+       replacement_member_solution authority_delegated records amount
+       new_version slot intent_hash current_identity_coin
+       intermediate_identity_coin intermediate_custody replacement_custody
+       original_custody replacement_member_hash mips_conditions binding
+       target_message expected_authority_delegated expected_intermediate_coin)
+    (assert
+      (= PENDING_KIND PENDING_NONE)
+      (is-uint64 slot)
+      (> SLOT_COUNT slot)
+      (is-size-b32 intent_hash)
+      (not (= intent_hash ZERO_32))
+      (is-size-b32 current_identity_coin)
+      (not (= current_identity_coin ZERO_32))
+      (is-size-b32 intermediate_identity_coin)
+      (= intermediate_identity_coin expected_intermediate_coin)
+      (not (= current_identity_coin intermediate_identity_coin))
+      (is-size-b32 intermediate_custody)
+      (not (= intermediate_custody ZERO_32))
+      (not (= intermediate_custody original_custody))
+      (is-size-b32 replacement_custody)
+      (not (= replacement_custody ZERO_32))
+      (not (= replacement_custody original_custody))
+      (not (= replacement_custody intermediate_custody))
+      (= authority_delegated expected_authority_delegated)
+      (= (sha256tree mips_reveal)
+        (if (= kind PENDING_LOST)
+          (lost-recovery-root-for-slot slot)
+          OPERATIONAL_MIPS_ROOT_HASH))
+      (valid-prepare-records kind records slot)
+      (validate-pair-receives
+        records mips_conditions authority_delegated)
+      (conditions-contain-announcement mips_conditions binding)
+      (merge-lists
+        (a replacement_member_reveal
+          (c binding replacement_member_solution))
+        (merge-lists
+          mips_conditions
+          (merge-lists
+            (identity-pair-conditions
+              records
+              ID_ACTION_PREPARE
+              (if (= kind PENDING_LOST) 3 slot)
+              intermediate_custody
+              authority_delegated
+              binding
+              target_message)
+            (c
+              (list ASSERT_CONCURRENT_SPEND current_identity_coin)
+              (c
+                (list ASSERT_COIN_ANNOUNCEMENT
+                  (sha256 current_identity_coin target_message))
+                (emit-state
+                  (replace-nth
+                    slot
+                    intermediate_custody
+                    CURRENT_IDENTITY_CUSTODY_HASHES)
+                  new_version
+                  kind
+                  slot
+                  intent_hash
+                  intermediate_identity_coin
+                  original_custody
+                  replacement_custody
+                  replacement_member_hash
+                  expected_delay
+                  amount
+                  (if (= kind PENDING_ROUTINE)
+                    SPEND_PREPARE_ROUTINE
+                    (if (= kind PENDING_LOST)
+                      SPEND_PREPARE_LOST
+                      SPEND_PREPARE_KIT))))))))))
+
+  (defun-inline handle-prepare-bound
+      (kind expected_delay mips_reveal replacement_member_reveal
+       replacement_member_solution authority_delegated records amount
+       new_version slot intent_hash current_identity_coin
+       intermediate_identity_coin intermediate_custody replacement_custody
+       original_custody replacement_member_hash mips_conditions binding
+       target_message)
+    (handle-prepare-final
+      kind
+      expected_delay
+      mips_reveal
+      replacement_member_reveal
+      replacement_member_solution
+      authority_delegated
+      records
+      amount
+      new_version
+      slot
+      intent_hash
+      current_identity_coin
+      intermediate_identity_coin
+      intermediate_custody
+      replacement_custody
+      original_custody
+      replacement_member_hash
+      mips_conditions
+      binding
+      target_message
+      (authority-action-hash
+        (if (= kind PENDING_ROUTINE)
+          SPEND_PREPARE_ROUTINE
+          (if (= kind PENDING_LOST)
+            SPEND_PREPARE_LOST
+            SPEND_PREPARE_KIT))
+        binding)
+      (sha256
+        current_identity_coin
+        (identity-full-puzzle-hash slot intermediate_custody)
+        (identity-amount-for-slot slot))))
+
+  (defun-inline handle-prepare-fields
+      (kind expected_delay mips_reveal replacement_member_reveal
+       replacement_member_solution authority_delegated records amount
+       new_version slot intent_hash current_identity_coin
+       intermediate_identity_coin intermediate_custody replacement_custody
+       original_custody replacement_member_hash mips_conditions)
+    (handle-prepare-bound
+      kind
+      expected_delay
+      mips_reveal
+      replacement_member_reveal
+      replacement_member_solution
+      authority_delegated
+      records
+      amount
+      new_version
+      slot
+      intent_hash
+      current_identity_coin
+      intermediate_identity_coin
+      intermediate_custody
+      replacement_custody
+      original_custody
+      replacement_member_hash
+      mips_conditions
+      (prepare-binding-hash
+        kind
+        slot
+        intent_hash
+        current_identity_coin
+        intermediate_identity_coin
+        original_custody
+        intermediate_custody
+        replacement_custody
+        replacement_member_hash
+        expected_delay
+        new_version)
+      (target-prepare-message
+        kind
+        slot
+        intent_hash
+        current_identity_coin
+        intermediate_identity_coin
+        intermediate_custody
+        replacement_custody)))
 
   (defun-inline handle-prepare
       (kind expected_delay mips_reveal mips_solution
-       replacement_member_reveal replacement_member_solution transition_args
-       my_amount new_version)
-    (assert
-      (= PENDING_KIND PENDING_NONE)
-      (is-uint64 (transition-slot transition_args))
-      (> SLOT_COUNT (transition-slot transition_args))
-      (is-size-b32 (transition-intent transition_args))
-      (not (= (transition-intent transition_args) ZERO_32))
-      (is-size-b32 (transition-current-coin transition_args))
-      (not (= (transition-current-coin transition_args) ZERO_32))
-      (is-size-b32 (transition-intermediate-coin transition_args))
-      (not (= (transition-intermediate-coin transition_args) ZERO_32))
-      (not
-        (= (transition-current-coin transition_args)
-           (transition-intermediate-coin transition_args)))
-      (is-size-b32 (transition-custody transition_args))
-      (not (= (transition-custody transition_args) ZERO_32))
-      (= (sha256tree mips_reveal)
-        (if (= kind PENDING_ROUTINE)
-          OPERATIONAL_MIPS_ROOT_HASH
-          (lost-recovery-root-for-slot
-            (transition-slot transition_args))))
-      (conditions-contain-announcement
-        (a mips_reveal mips_solution)
-        (prepare-binding-hash
-          kind
-          (transition-slot transition_args)
-          (transition-intent transition_args)
-          (transition-current-coin transition_args)
-          (transition-intermediate-coin transition_args)
-          (transition-custody transition_args)
-          (sha256tree replacement_member_reveal)
-          expected_delay
-          new_version))
-      (merge-lists
-        (a replacement_member_reveal
-          (c
-            (prepare-binding-hash
-              kind
-              (transition-slot transition_args)
-              (transition-intent transition_args)
-              (transition-current-coin transition_args)
-              (transition-intermediate-coin transition_args)
-              (transition-custody transition_args)
-              (sha256tree replacement_member_reveal)
-              expected_delay
-              new_version)
-            replacement_member_solution))
-        (merge-lists
-          (a mips_reveal mips_solution)
-          (c
-            (list ASSERT_CONCURRENT_SPEND
-              (transition-current-coin transition_args))
-            (emit-state
-              new_version
-              kind
-              (transition-slot transition_args)
-              (transition-intent transition_args)
-              (transition-intermediate-coin transition_args)
-              (transition-custody transition_args)
-              (sha256tree replacement_member_reveal)
-              expected_delay
-              my_amount
-              (if (= kind PENDING_ROUTINE)
-                SPEND_PREPARE_ROUTINE
-                SPEND_PREPARE_LOST)))))))
+       replacement_member_reveal replacement_member_solution
+       authority_delegated records transition_args amount new_version)
+    (handle-prepare-fields
+      kind
+      expected_delay
+      mips_reveal
+      replacement_member_reveal
+      replacement_member_solution
+      authority_delegated
+      records
+      amount
+      new_version
+      (transition-slot transition_args)
+      (transition-intent transition_args)
+      (transition-current-coin transition_args)
+      (transition-intermediate-coin transition_args)
+      (transition-intermediate-custody transition_args)
+      (transition-replacement-custody transition_args)
+      (identity-custody-for-slot
+        (transition-slot transition_args)
+        CURRENT_IDENTITY_CUSTODY_HASHES)
+      (sha256tree replacement_member_reveal)
+      (a mips_reveal mips_solution)))
 
-  (defun-inline handle-cancel
-      (mips_reveal mips_solution my_amount new_version)
+  (defun-inline handle-cancel (amount new_version)
     (assert
       (not (= PENDING_KIND PENDING_NONE))
-      (= (sha256tree mips_reveal) OPERATIONAL_MIPS_ROOT_HASH)
-      (conditions-contain-announcement
-        (a mips_reveal mips_solution)
-        (cancel-binding-hash new_version))
       (merge-lists
-        (a mips_reveal mips_solution)
-        (c
+        (list
+          ; The authority spend is permissionless while pending, but it only
+          ; pairs the old daily key with this exact restore action.
+          (list SEND_MESSAGE
+            SINGLETON_MEMBER_MODE
+            (identity-action-hash
+              ID_ACTION_CANCEL
+              PENDING_ORIGINAL_CUSTODY_HASH
+              (current-full-puzhash)
+              (authority-action-hash SPEND_CANCEL (cancel-message))
+              ()
+              (cancel-message)
+              (identity-full-puzzle-hash
+                PENDING_SLOT
+                (identity-custody-for-slot
+                  PENDING_SLOT
+                  CURRENT_IDENTITY_CUSTODY_HASHES))
+              (identity-amount-for-slot PENDING_SLOT))
+            (identity-full-puzzle-hash
+              PENDING_SLOT
+              (identity-custody-for-slot
+                PENDING_SLOT
+                CURRENT_IDENTITY_CUSTODY_HASHES)))
+          (list RECEIVE_MESSAGE
+            SINGLETON_MEMBER_MODE
+            (authority-action-hash SPEND_CANCEL (cancel-message))
+            (identity-full-puzzle-hash
+              PENDING_SLOT
+              (identity-custody-for-slot
+                PENDING_SLOT
+                CURRENT_IDENTITY_CUSTODY_HASHES)))
           (list ASSERT_CONCURRENT_SPEND PENDING_IDENTITY_COIN_ID)
-          (empty-state new_version my_amount SPEND_CANCEL)))))
+          (list ASSERT_COIN_ANNOUNCEMENT
+            (sha256 PENDING_IDENTITY_COIN_ID (cancel-message))))
+        (empty-state
+          (replace-nth
+            PENDING_SLOT
+            PENDING_ORIGINAL_CUSTODY_HASH
+            CURRENT_IDENTITY_CUSTODY_HASHES)
+          new_version
+          amount
+          SPEND_CANCEL))))
 
-  (defun-inline handle-complete (my_amount new_version)
+  (defun-inline handle-complete (amount new_version)
     (assert
       (not (= PENDING_KIND PENDING_NONE))
-      (list
-        (list ASSERT_SECONDS_RELATIVE PENDING_DELAY_SECONDS)
-        (list ASSERT_CONCURRENT_SPEND PENDING_IDENTITY_COIN_ID)
-        (list ASSERT_COIN_ANNOUNCEMENT
-          (sha256 PENDING_IDENTITY_COIN_ID (completion-message)))
-        (f (empty-state new_version my_amount SPEND_COMPLETE))
-        (f (r (empty-state new_version my_amount SPEND_COMPLETE)))
-        (f (r (r (empty-state new_version my_amount SPEND_COMPLETE)))))))
+      (merge-lists
+        (list
+          (list ASSERT_SECONDS_RELATIVE PENDING_DELAY_SECONDS)
+          (list ASSERT_CONCURRENT_SPEND PENDING_IDENTITY_COIN_ID)
+          (list ASSERT_COIN_ANNOUNCEMENT
+            (sha256 PENDING_IDENTITY_COIN_ID (completion-message))))
+        (empty-state
+          (replace-nth
+            PENDING_SLOT
+            PENDING_REPLACEMENT_CUSTODY_HASH
+            CURRENT_IDENTITY_CUSTODY_HASHES)
+          new_version
+          amount
+          SPEND_COMPLETE))))
 
   (assert
+    (is-size-b32 SINGLETON_MOD_HASH)
+    (is-size-b32 SINGLETON_LAUNCHER_HASH)
+    (is-size-b32 AUTHORITY_LAUNCHER_ID)
+    (= (count-list CURRENT_IDENTITY_CUSTODY_HASHES) SLOT_COUNT)
+    (all-b32 CURRENT_IDENTITY_CUSTODY_HASHES)
     (is-uint64 my_amount)
     (logand my_amount 1)
     (is-uint64 new_authority_version)
     (= new_authority_version (+ AUTHORITY_VERSION 1))
     (if (= spend_tag SPEND_OPERATIONAL)
       (handle-operational
-        (f spend_args)
-        (f (r spend_args))
+        (nth-value 0 spend_args)
+        (nth-value 1 spend_args)
+        (nth-value 2 spend_args)
+        (nth-value 3 spend_args)
         my_amount
         new_authority_version)
       (if (= spend_tag SPEND_PREPARE_ROUTINE)
         (handle-prepare
           PENDING_ROUTINE
           ROUTINE_DELAY_SECONDS
-          (f spend_args)
-          (f (r spend_args))
-          (f (r (r spend_args)))
-          (f (r (r (r spend_args))))
-          (r (r (r (r spend_args))))
+          (nth-value 0 spend_args)
+          (nth-value 1 spend_args)
+          (nth-value 2 spend_args)
+          (nth-value 3 spend_args)
+          (nth-value 4 spend_args)
+          (nth-value 5 spend_args)
+          (nth-value 6 spend_args)
           my_amount
           new_authority_version)
-          (if (= spend_tag SPEND_PREPARE_LOST)
-            (handle-prepare
-              PENDING_LOST
-              LOST_KEY_DELAY_SECONDS
-            (f spend_args)
-            (f (r spend_args))
-            (f (r (r spend_args)))
-            (f (r (r (r spend_args))))
-            (r (r (r (r spend_args))))
+        (if (= spend_tag SPEND_PREPARE_LOST)
+          (handle-prepare
+            PENDING_LOST
+            LOST_KEY_DELAY_SECONDS
+            (nth-value 0 spend_args)
+            (nth-value 1 spend_args)
+            (nth-value 2 spend_args)
+            (nth-value 3 spend_args)
+            (nth-value 4 spend_args)
+            (nth-value 5 spend_args)
+            (nth-value 6 spend_args)
             my_amount
             new_authority_version)
-          (if (= spend_tag SPEND_CANCEL)
-            (handle-cancel
-              (f spend_args)
-              (f (r spend_args))
+          (if (= spend_tag SPEND_PREPARE_KIT)
+            (handle-prepare
+              PENDING_RECOVERY_KIT
+              ROUTINE_DELAY_SECONDS
+              (nth-value 0 spend_args)
+              (nth-value 1 spend_args)
+              (nth-value 2 spend_args)
+              (nth-value 3 spend_args)
+              (nth-value 4 spend_args)
+              (nth-value 5 spend_args)
+              (nth-value 6 spend_args)
               my_amount
               new_authority_version)
-            (if (= spend_tag SPEND_COMPLETE)
-              (handle-complete my_amount new_authority_version)
-              (x)))))))
+            (if (= spend_tag SPEND_CANCEL)
+              (handle-cancel my_amount new_authority_version)
+              (if (= spend_tag SPEND_COMPLETE)
+                (handle-complete my_amount new_authority_version)
+                (x))))))))
 )

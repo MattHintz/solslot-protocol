@@ -20,10 +20,19 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from solslot_puzzles.artifact_schema_v4 import (
+    verify_public_artifact as verify_rc23_public_artifact,
+)
+from solslot_puzzles.recovery_dependencies import (
+    RECOVERY_DEPENDENCY_MANIFEST_HASH,
+)
 
 PROTOCOL_ROOT = Path(__file__).resolve().parents[1]
 WORKSPACE_ROOT = PROTOCOL_ROOT.parent
-SOURCE_MANIFEST_VERSION = 3
+SOURCE_MANIFEST_VERSION = 4
+PROTOCOL_VERSION = "solslot-v2-rc23"
+GENESIS_PLAN_SCHEMA = "solslot-genesis-plan-v4"
+ARTIFACT_SCHEMA_VERSION = 4
 SOURCE_NAMES = (
     "protocol",
     "evm",
@@ -50,9 +59,12 @@ LAUNCHER_NAMES = (
     "pool",
     "did",
     "governance",
-    "navRegistry",
+    "statutes",
     "protocolConfig",
     "adminAuthority",
+    "adminIdentity0",
+    "adminIdentity1",
+    "adminIdentity2",
     "vaultVersionRegistry",
     "propertyRegistry",
 )
@@ -61,11 +73,14 @@ FUNDING_NAMES = (
     "pool",
     "did",
     "governance",
-    "navRegistry",
-    "protocolConfig",
-    "adminAuthority",
-    "vaultVersionRegistry",
-    "bridgeBatch",
+    "statutes",
+    "protocol_config",
+    "admin_authority",
+    "vault_version_registry",
+    "bridge_batch",
+)
+RECOVERY_DEPENDENCY_MANIFEST_HASH_HEX = (
+    "0x" + RECOVERY_DEPENDENCY_MANIFEST_HASH
 )
 EVM_NAMES = ("forwarder", "verifierAdapter", "attestationEmitter")
 AUDIT_LANES = (
@@ -167,6 +182,22 @@ def artifact_hash(artifact: Mapping[str, Any]) -> str:
         if key not in {"artifactHash", "signatures"}
     }
     return canonical_hash(unsigned)
+
+
+def authority_source_commitment(
+    source_shas: Mapping[str, str],
+) -> str:
+    return canonical_hash(
+        {
+            "version": SOURCE_MANIFEST_VERSION,
+            "sources": dict(source_shas),
+            "dependencies": {
+                "administratorRecovery": (
+                    RECOVERY_DEPENDENCY_MANIFEST_HASH_HEX
+                )
+            },
+        }
+    )
 
 
 def load_json(path: Path, findings: list[Finding], label: str) -> dict[str, Any] | None:
@@ -396,17 +427,27 @@ def _validate_plan(
         if draft.get("schemaVersion") != 2 or draft.get("network") != "testnet11":
             findings.append(Finding("error", "ceremony draft is not Solslot V2 testnet11"))
         if draft.get("sourceManifestVersion") != SOURCE_MANIFEST_VERSION:
-            findings.append(Finding("error", "ceremony draft source manifest is not RC20 V3"))
+            findings.append(Finding("error", "ceremony draft source manifest is not RC23 V4"))
         if draft.get("evmChainId") != 11155111:
             findings.append(Finding("error", "ceremony draft is not bound to Sepolia"))
     if plan is None:
         return None, source_shas
-    if plan.get("schema") != "solslot-genesis-plan-v2":
-        findings.append(Finding("error", "ceremony plan schema is not V2"))
-    if plan.get("protocolVersion") != "solslot-v2":
-        findings.append(Finding("error", "ceremony plan protocolVersion is not solslot-v2"))
+    if plan.get("schema") != GENESIS_PLAN_SCHEMA:
+        findings.append(Finding("error", "ceremony plan schema is not RC23 V4"))
+    if plan.get("protocolVersion") != PROTOCOL_VERSION:
+        findings.append(Finding("error", "ceremony plan protocolVersion is not RC23"))
     if plan.get("sourceManifestVersion") != SOURCE_MANIFEST_VERSION:
-        findings.append(Finding("error", "ceremony plan source manifest is not RC20 V3"))
+        findings.append(Finding("error", "ceremony plan source manifest is not RC23 V4"))
+    if (
+        plan.get("recoveryDependencyManifestHash")
+        != RECOVERY_DEPENDENCY_MANIFEST_HASH_HEX
+    ):
+        findings.append(
+            Finding(
+                "error",
+                "ceremony plan does not bind the pinned administrator recovery dependencies",
+            )
+        )
     if plan.get("network") != "testnet11" or plan.get("evmChainId") != 11155111:
         findings.append(Finding("error", "ceremony plan is not testnet11/Sepolia"))
     _require_hex(
@@ -465,7 +506,11 @@ def _validate_plan(
     roster_keys = _validate_roster(record, findings)
     if admin:
         keys = [str(value).lower() for value in admin.get("compressedPubkeys", [])]
-        if admin.get("threshold") != 2 or keys != roster_keys:
+        if (
+            admin.get("version") != 3
+            or admin.get("threshold") != 2
+            or keys != roster_keys
+        ):
             findings.append(Finding("error", "plan administrator authority does not bind the frozen roster"))
         if (
             admin.get("policy") != "owner-plus-one"
@@ -477,7 +522,166 @@ def _validate_plan(
         if admin.get("adminsHash") != record.get("roster_hash"):
             findings.append(Finding("error", "plan administrator hash differs from the frozen roster"))
         _require_hex(admin.get("adminsHash"), 32, "plan.adminAuthority.adminsHash", findings)
-        _require_hex(admin.get("mipsRootHash"), 32, "plan.adminAuthority.mipsRootHash", findings)
+        expected_source_commitment = (
+            authority_source_commitment(plan_sources)
+            if plan_sources is not None
+            else None
+        )
+        if (
+            expected_source_commitment
+            and admin.get("sourceManifestHash")
+            != expected_source_commitment
+        ):
+            findings.append(
+                Finding(
+                    "error",
+                    "Authority V3 source commitment differs from the frozen sources",
+                )
+            )
+        _require_hex(
+            admin.get("operationalMipsRootHash"),
+            32,
+            "plan.adminAuthority.operationalMipsRootHash",
+            findings,
+        )
+        lost_roots = admin.get("lostRecoveryMipsRootHashes")
+        if not isinstance(lost_roots, list) or len(lost_roots) != 3:
+            findings.append(
+                Finding(
+                    "error",
+                    "Authority V3 must bind three lost-key recovery roots",
+                )
+            )
+        else:
+            for root in lost_roots:
+                _require_hex(
+                    root,
+                    32,
+                    "plan.adminAuthority lost recovery root",
+                    findings,
+                )
+        if (
+            admin.get("routineDelaySeconds") != 86_400
+            or admin.get("lostKeyDelaySeconds") != 604_800
+            or admin.get("fundingAmount") != 16
+            or admin.get("pending") is not False
+        ):
+            findings.append(
+                Finding(
+                    "error",
+                    "Authority V3 delays, funding, or pending state are not canonical",
+                )
+            )
+        identities = admin.get("identityVaults")
+        if not isinstance(identities, list) or len(identities) != 3:
+            findings.append(
+                Finding(
+                    "error",
+                    "Authority V3 must contain three identity vaults",
+                )
+            )
+        else:
+            expected_launchers = [
+                launchers.get(f"adminIdentity{slot}")
+                if launchers
+                else None
+                for slot in range(3)
+            ]
+            for slot, identity in enumerate(identities):
+                if not isinstance(identity, Mapping):
+                    findings.append(
+                        Finding(
+                            "error",
+                            "Authority V3 identity entry must be an object",
+                        )
+                    )
+                    continue
+                if (
+                    identity.get("slot") != slot
+                    or identity.get("launcherAmount")
+                    != (3, 5, 7)[slot]
+                    or identity.get("launcherId")
+                    != expected_launchers[slot]
+                    or identity.get("dailyCompressedPubkey")
+                    != (roster_keys[slot] if len(roster_keys) == 3 else None)
+                ):
+                    findings.append(
+                        Finding(
+                            "error",
+                            f"Authority V3 identity slot {slot} is not canonical",
+                        )
+                    )
+                for key in (
+                    "dailyMemberHash",
+                    "recoveryMemberHash",
+                    "custodyHash",
+                    "fullPuzzleHash",
+                ):
+                    _require_hex(
+                        identity.get(key),
+                        32,
+                        f"plan.adminAuthority.identityVaults[{slot}].{key}",
+                        findings,
+                    )
+                _require_hex(
+                    identity.get("recoveryBlsPubkey"),
+                    48,
+                    (
+                        "plan.adminAuthority.identityVaults"
+                        f"[{slot}].recoveryBlsPubkey"
+                    ),
+                    findings,
+                )
+
+    recovery_kits = plan.get("adminRecoveryKits")
+    if not isinstance(recovery_kits, list) or len(recovery_kits) != 3:
+        findings.append(
+            Finding(
+                "error",
+                "plan must contain three administrator recovery kits",
+            )
+        )
+    else:
+        for slot, kit in enumerate(recovery_kits):
+            if not isinstance(kit, Mapping) or kit.get("slot") != slot:
+                findings.append(
+                    Finding(
+                        "error",
+                        "administrator recovery kits must use slots 0, 1, and 2",
+                    )
+                )
+                continue
+            if _integer(
+                kit.get("revision"),
+                f"admin recovery kit {slot} revision",
+                findings,
+                minimum=1,
+            ) is None:
+                continue
+            _require_hex(
+                kit.get("evmGuardian"),
+                20,
+                f"admin recovery kit {slot} EVM guardian",
+                findings,
+            )
+            _require_hex(
+                kit.get("recoveryBlsPubkey"),
+                48,
+                f"admin recovery kit {slot} BLS key",
+                findings,
+            )
+            _require_hex(
+                kit.get("recoveryBlsCommitment"),
+                32,
+                f"admin recovery kit {slot} BLS commitment",
+                findings,
+            )
+            _require_hex(
+                kit.get("drillChallengeHash"),
+                32,
+                f"admin recovery kit {slot} drill",
+                findings,
+            )
 
     validators = _require_mapping(plan.get("validatorSet"), "plan.validatorSet", findings)
     if validators:
@@ -495,7 +699,17 @@ def _validate_plan(
     if bridge:
         parents = bridge.get("parentCoinIds")
         coins = bridge.get("bridgeCoinIds")
-        if bridge.get("count") != 32 or bridge.get("lowWaterMark") != 8:
+        if (
+            bridge.get("count") != 32
+            or bridge.get("lowWaterMark") != 8
+            or bridge.get("fundingAmount") != 530
+            or bridge.get("parentOutputAmount") != 528
+            or bridge.get("propertyRegistryLauncherAmount") != 1
+            or bridge.get("bufferFeeAmount") != 1
+            or bridge.get("changeAmount") != 0
+            or bridge.get("networkFeeSource")
+            != "separate-fountain-fee-till"
+        ):
             findings.append(Finding("error", "bridge batch must contain 32 coins with low-water mark 8"))
         for values, label in ((parents, "parent"), (coins, "bridge")):
             if not isinstance(values, list) or len(values) != 32:
@@ -550,6 +764,48 @@ def _validate_audit_approval(
     for key, value in expected.items():
         if approval.get(key) != value:
             findings.append(Finding("error", f"audit approval {key} does not match ceremony"))
+    authority_review = _require_mapping(
+        approval.get("authorityV3Review"),
+        "Authority V3 independent review",
+        findings,
+    )
+    if authority_review:
+        _require_hex(
+            authority_review.get("artifactHash"),
+            32,
+            "Authority V3 review artifact hash",
+            findings,
+        )
+        _require_hex(
+            authority_review.get("fileSha256"),
+            32,
+            "Authority V3 review file checksum",
+            findings,
+        )
+        scopes = authority_review.get("scopes")
+        if (
+            _integer(
+                authority_review.get("reviewerCount"),
+                "Authority V3 reviewer count",
+                findings,
+                minimum=1,
+            )
+            is None
+            or not isinstance(scopes, list)
+            or set(scopes)
+            != {
+                "chialisp-wrapper",
+                "mips-composition",
+                "safe-recovery-module",
+                "safe-authority-guards",
+            }
+        ):
+            findings.append(
+                Finding(
+                    "error",
+                    "Authority V3 review does not cover all four trust boundaries",
+                )
+            )
     if review_class == INTERNAL_ENGINEERING_TESTNET_REVIEW_CLASS:
         if (
             approval.get("reviewClass") != review_class
@@ -677,16 +933,40 @@ def check_pre_broadcast(
 def _validate_artifact(
     artifact: Mapping[str, Any], findings: list[Finding]
 ) -> dict[str, str] | None:
-    if artifact.get("schemaVersion") != 2 or artifact.get("protocolVersion") != "solslot-v2":
-        findings.append(Finding("error", "public artifact is not schema/protocol V2"))
+    try:
+        verify_rc23_public_artifact(
+            artifact,
+            signature_verifier=lambda *_args: True,
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        findings.append(
+            Finding(
+                "error",
+                f"public artifact does not reconstruct from RC23 rules: {exc}",
+            )
+        )
+    if (
+        artifact.get("schemaVersion") != ARTIFACT_SCHEMA_VERSION
+        or artifact.get("protocolVersion") != PROTOCOL_VERSION
+    ):
+        findings.append(Finding("error", "public artifact is not RC23 schema V4"))
     if artifact.get("sourceManifestVersion") != SOURCE_MANIFEST_VERSION:
-        findings.append(Finding("error", "public artifact source manifest is not RC20 V3"))
+        findings.append(Finding("error", "public artifact source manifest is not RC23 V4"))
     if artifact.get("network") != "testnet11" or artifact.get("evmChainId") != 11155111:
         findings.append(Finding("error", "public artifact is not testnet11/Sepolia"))
     review_class = artifact.get("reviewClass")
     if review_class == INTERNAL_ENGINEERING_TESTNET_REVIEW_CLASS:
-        if artifact.get("testOnly") is not True or artifact.get("auditStatus") != "unaudited":
-            findings.append(Finding("error", "internal artifact is not marked test-only and unaudited"))
+        if (
+            artifact.get("testOnly") is not True
+            or artifact.get("auditStatus")
+            != "pending-external-review"
+        ):
+            findings.append(
+                Finding(
+                    "error",
+                    "internal artifact is not test-only and pending external review",
+                )
+            )
     elif review_class == INDEPENDENT_REVIEW_CLASS:
         if artifact.get("testOnly") is not False or artifact.get("auditStatus") != "independently-reviewed":
             findings.append(Finding("error", "independent artifact review metadata is invalid"))
@@ -734,7 +1014,12 @@ def _validate_artifact(
     admin_keys: list[str] = []
     if admin:
         admin_keys = [str(value).lower() for value in admin.get("compressedPubkeys", [])]
-        if admin.get("threshold") != 2 or len(admin_keys) != 3 or len(set(admin_keys)) != 3:
+        if (
+            admin.get("version") != 3
+            or admin.get("threshold") != 2
+            or len(admin_keys) != 3
+            or len(set(admin_keys)) != 3
+        ):
             findings.append(Finding("error", "artifact administrator roster is invalid"))
         if (
             admin.get("policy") != "owner-plus-one"
@@ -745,6 +1030,41 @@ def _validate_artifact(
             findings.append(Finding("error", "artifact administrator authority is not owner-plus-one"))
         for key in admin_keys:
             _require_hex(key, 33, "artifact administrator public key", findings)
+        identities = admin.get("identityVaults")
+        if not isinstance(identities, list) or len(identities) != 3:
+            findings.append(
+                Finding(
+                    "error",
+                    "artifact Authority V3 identity-vault roster is incomplete",
+                )
+            )
+        elif [
+            item.get("launcherId")
+            for item in identities
+            if isinstance(item, Mapping)
+        ] != [
+            (launchers or {}).get(f"adminIdentity{slot}")
+            for slot in range(3)
+        ]:
+            findings.append(
+                Finding(
+                    "error",
+                    "artifact Authority V3 identity launchers are inconsistent",
+                )
+            )
+    recovery_kits = artifact.get("adminRecoveryKits")
+    if (
+        not isinstance(recovery_kits, list)
+        or len(recovery_kits) != 3
+        or [item.get("slot") for item in recovery_kits if isinstance(item, Mapping)]
+        != [0, 1, 2]
+    ):
+        findings.append(
+            Finding(
+                "error",
+                "artifact administrator recovery-kit roster is incomplete",
+            )
+        )
     policy = _require_mapping(artifact.get("signaturePolicy"), "artifact.signaturePolicy", findings)
     if admin and policy and (
         policy.get("type") != "SolslotGenesisArtifact"
@@ -794,10 +1114,16 @@ def _validate_artifact(
     if bridge:
         if (
             bridge.get("policyVersion") != 2
+            or bridge.get("fundingAmount") != 530
+            or bridge.get("parentOutputAmount") != 528
+            or bridge.get("propertyRegistryLauncherAmount") != 1
+            or bridge.get("bufferFeeAmount") != 1
+            or bridge.get("networkFeeSource")
+            != "separate-fountain-fee-till"
             or bridge.get("initialCoinCount") != 32
             or bridge.get("lowWaterMark") != 8
         ):
-            findings.append(Finding("error", "artifact bridge policy is not the V2 32-coin policy"))
+            findings.append(Finding("error", "artifact bridge policy is not the RC23 530-mojo policy"))
         _require_hex(bridge.get("policyHash"), 32, "artifact bridge policy hash", findings)
         for key in ("parentCoinIds", "bridgeCoinIds"):
             values = bridge.get(key)
@@ -831,7 +1157,13 @@ def _validate_checksums(
             findings.append(Finding("error", f"invalid checksum line: {line!r}"))
             continue
         entries[match.group(2)] = match.group(1)
-    required = {"plan.json", "spend_bundle.json", "audit_approval.json", "public_artifact.json"}
+    required = {
+        "plan.json",
+        "spend_bundle.json",
+        "audit_approval.json",
+        "authority_v3_review.json",
+        "public_artifact.json",
+    }
     if not required.issubset(entries):
         findings.append(Finding("error", f"checksum evidence is missing {sorted(required - set(entries))}"))
     actual_files = {path.name for path in evidence_dir.iterdir() if path.is_file()} - {"sha256sums.txt"}
@@ -844,19 +1176,48 @@ def _validate_checksums(
     evidence_artifact = load_json(evidence_dir / "public_artifact.json", findings, "evidence artifact")
     if evidence_artifact is not None and evidence_artifact != artifact:
         findings.append(Finding("error", "evidence artifact differs from the public artifact"))
+    evidence_approval = load_json(
+        evidence_dir / "audit_approval.json",
+        findings,
+        "evidence audit approval",
+    )
+    if evidence_approval is not None:
+        authority_review = _require_mapping(
+            evidence_approval.get("authorityV3Review"),
+            "evidence Authority V3 review",
+            findings,
+        )
+        expected_review_hash = (
+            authority_review.get("fileSha256")
+            if authority_review
+            else None
+        )
+        review_path = evidence_dir / "authority_v3_review.json"
+        actual_review_hash = (
+            "0x" + hashlib.sha256(review_path.read_bytes()).hexdigest()
+            if review_path.is_file()
+            else None
+        )
+        if expected_review_hash != actual_review_hash:
+            findings.append(
+                Finding(
+                    "error",
+                    "archived Authority V3 review differs from its approved checksum",
+                )
+            )
 
 
 def _validate_release_attestation(
     attestation: Mapping[str, Any], artifact: Mapping[str, Any], findings: list[Finding]
 ) -> None:
     if (
-        attestation.get("schemaVersion") != 2
+        attestation.get("schemaVersion") != ARTIFACT_SCHEMA_VERSION
         or attestation.get("sourceManifestVersion") != SOURCE_MANIFEST_VERSION
-        or attestation.get("protocolVersion") != "solslot-v2"
+        or attestation.get("protocolVersion") != PROTOCOL_VERSION
         or attestation.get("network") != "testnet11"
         or attestation.get("artifactHash") != artifact.get("artifactHash")
     ):
-        findings.append(Finding("error", "release attestation does not match the V2 testnet artifact"))
+        findings.append(Finding("error", "release attestation does not match the RC23 testnet artifact"))
     locks = _require_mapping(attestation.get("writeLocks"), "release writeLocks", findings)
     if locks and locks != {
         "alphaWritesEnabled": False,
@@ -917,9 +1278,9 @@ def check_post_genesis(
         findings.append(Finding("error", "locked state is missing its canonical artifact"))
 
     lock_expected = {
-        "schemaVersion": 2,
+        "schemaVersion": ARTIFACT_SCHEMA_VERSION,
         "sourceManifestVersion": SOURCE_MANIFEST_VERSION,
-        "protocolVersion": "solslot-v2",
+        "protocolVersion": PROTOCOL_VERSION,
         "reviewClass": artifact.get("reviewClass"),
         "testOnly": artifact.get("testOnly"),
         "auditStatus": artifact.get("auditStatus"),

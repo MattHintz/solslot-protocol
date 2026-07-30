@@ -1,0 +1,50 @@
+{
+  "schema": "solslot.recovery-dependencies.v1",
+  "release": "RC23",
+  "upstreamRecoverySdk": {
+    "repository": "https://github.com/Chia-Network/cni-wallet-sdk",
+    "commit": "fb8f4ea8279709287b022d6c388aef4751765d4c",
+    "license": "Apache-2.0",
+    "licenseSha256": "857c4192434aa7c1a05244640a6796166988196bb47369f378611bc3c2436736",
+    "cargoLockSha256": "edf0da96dbcc7d1d3e032448c4bf420ce0a3df6d921bae91b69d99ce787a7bcb",
+    "chiaPuzzlesCrate": {
+      "version": "0.20.3",
+      "cargoChecksum": "553363ce9550cfde0ae1306a0a79bf9afd36ea09e0222b874b6287b44ad9d178"
+    }
+  },
+  "pythonRuntime": {
+    "chiaBlockchainVersion": "2.7.2",
+    "chiaPuzzlesPyVersion": "0.20.3"
+  },
+  "mipsModuleTreeHashes": {
+    "indexWrapper": "847d971ef523417d555ea9854b1612837155d34d453298defcd310774305f657",
+    "mOfN": "de27deb2ebc7f1e1b77e1d38cc2f9d90fbd54d4b13dd4e6fa1f659177e36ed4f",
+    "oneOfN": "bcb9aa74893bebcfa2da87271b0330bf2773b6391144ae72262b6824d9c55939",
+    "restrictions": "a28d59d39f964a93159c986b1914694f6f2f1c9901178f91e8b0ba4045980eef",
+    "delegatedPuzzleFeeder": "9db33d93853179903d4dd272a00345ee6630dc94907dbcdd96368df6931060fd",
+    "blsWithTaprootMember": "35d2ad31aaf0df91c965909e5112294c57a18354ee4a5aae80572080ec3b6842",
+    "singletonMemberWithMode": "a7611d7cf6246399ff07469211d6efed96e47a44fc3be6ac9375aee995b0e010",
+    "forceOneOfTwoWithRestrictedVariable": "4f7bc8f30deb6dad75a1e29ceacb67fd0fe0eda79173e45295ff2cfbb8de53c6",
+    "timelock": "a6f96d8ecf9bd29e8c41822d231408823707b587bc0d372e5db4ac9733cbea3c",
+    "preventConditionOpcode": "046dfa794bb1df14d5dc891b23764a0e31f119546d2c56cdc8df0d31daaa555f",
+    "preventMultipleCreateCoins": "93b8c8abeab8f6bdba4acb49ed49362ecba94b703a48b15c8784f966547b7846"
+  },
+  "browserEip712Signing": {
+    "purpose": "Solslot EIP-712 clear-signing bindings only; this artifact is not recovery authority",
+    "repository": "https://github.com/MattHintz/chia-wallet-sdk",
+    "sourceBranch": "solslot-wasm-crackpack",
+    "sourceBranchHeadAtFreeze": "af8a21a1c9370aa6873ca267bddebd22e500957e",
+    "package": "chia-wallet-sdk-wasm",
+    "version": "0.33.0",
+    "license": "Apache-2.0",
+    "wasmSha256": "89ed323a034df2f074f637314d1b1c727113dc6100568d94d722fcdce45cdf48",
+    "requiredExports": [
+      "eip712TypeHash",
+      "eip712DomainSeparator",
+      "eip712HashToSign",
+      "eip712MemberInnerPuzzleHash",
+      "eip712MemberHash"
+    ],
+    "recoveryAuthority": false
+  }
+}

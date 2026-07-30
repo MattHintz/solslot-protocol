@@ -18,14 +18,17 @@ from chia_rs.sized_bytes import bytes32
 from solslot_puzzles.eip712_helpers import (
     MAINNET_GENESIS_CHALLENGE,
     TESTNET11_GENESIS_CHALLENGE,
+    build_eip712_member_solution,
     compute_eip712_member_leaf_hash,
     compute_eip712_member_v2_leaf_hash,
     eip712_domain_separator,
     eip712_hash_to_sign,
     eip712_prefix_and_domain_separator,
+    eip712_typed_data_for_coin_spend,
     eip712_type_hash,
     genesis_challenge_for_network,
     make_eip712_member_v2_puzzle,
+    normalize_eip712_member_signature,
 )
 
 
@@ -375,6 +378,72 @@ class TestAuthorityV3Eip712Member:
                     ]
                 ),
                 flags=self.RUN_FLAGS,
+            )
+
+    def test_wallet_payload_and_signature_normalization(self):
+        from eth_keys import keys
+
+        private_key = keys.PrivateKey(b"\xc1" * 32)
+        public_key = private_key.public_key.to_compressed_bytes()
+        coin_id = bytes32(b"\xc2" * 32)
+        delegated_puzzle_hash = bytes32(b"\xc3" * 32)
+        typed_data = eip712_typed_data_for_coin_spend(
+            network="testnet11",
+            coin_id=coin_id,
+            delegated_puzzle_hash=delegated_puzzle_hash,
+        )
+        assert typed_data["primaryType"] == "ChiaCoinSpend"
+        assert typed_data["domain"] == {
+            "name": "Chia Coin Spend",
+            "version": "1",
+            "salt": "0x" + TESTNET11_GENESIS_CHALLENGE.hex(),
+        }
+        assert typed_data["message"] == {
+            "coin_id": "0x" + coin_id.hex(),
+            "delegated_puzzle_hash": "0x" + delegated_puzzle_hash.hex(),
+        }
+
+        digest = eip712_hash_to_sign(
+            eip712_prefix_and_domain_separator(
+                TESTNET11_GENESIS_CHALLENGE
+            ),
+            coin_id,
+            delegated_puzzle_hash,
+        )
+        signature = private_key.sign_msg_hash(digest).to_bytes()
+        assert normalize_eip712_member_signature(
+            signature=signature,
+            digest=digest,
+            compressed_pubkey=public_key,
+        ) == signature[:64]
+        assert build_eip712_member_solution(
+            network="testnet11",
+            coin_id=coin_id,
+            delegated_puzzle_hash=delegated_puzzle_hash,
+            compressed_pubkey=public_key,
+            signature=signature,
+        ).as_python() == [coin_id, digest, signature[:64]]
+
+    def test_signature_normalizer_rejects_wrong_key_and_recovery_id(self):
+        from eth_keys import keys
+
+        private_key = keys.PrivateKey(b"\xd1" * 32)
+        public_key = private_key.public_key.to_compressed_bytes()
+        digest = bytes32(b"\xd2" * 32)
+        signature = private_key.sign_msg_hash(digest).to_bytes()
+        with pytest.raises(ValueError, match="committed key"):
+            normalize_eip712_member_signature(
+                signature=signature,
+                digest=digest,
+                compressed_pubkey=keys.PrivateKey(
+                    b"\xd3" * 32
+                ).public_key.to_compressed_bytes(),
+            )
+        with pytest.raises(ValueError, match="recovery id"):
+            normalize_eip712_member_signature(
+                signature=signature[:64] + b"\x05",
+                digest=digest,
+                compressed_pubkey=public_key,
             )
 
 
