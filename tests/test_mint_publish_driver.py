@@ -74,9 +74,10 @@ from solslot_puzzles.mint_publish_driver import (
     make_smart_deed_inner,
     proposal_singleton_launcher_coin_for_parent,
 )
-from solslot_puzzles.primary_purchase_v2_driver import (
-    PrimaryMintTermsV2,
-    make_mint_offer_v4_inner,
+from solslot_puzzles.payment_artifacts_v3 import technology_fee_minor
+from solslot_puzzles.stripe_settlement_v1_driver import (
+    PrimaryMintTermsV3,
+    make_inventory_available_inner,
 )
 
 
@@ -964,8 +965,9 @@ class TestArtifactsCrossDriver:
             p2_pool_mod_hash=P2_POOL_MOD_HASH,
             p2_vault_mod_hash=P2_VAULT_MOD_HASH,
         )
-        expected_inner = make_mint_offer_v4_inner(
-            PrimaryMintTermsV2(
+        fee_minor = technology_fee_minor(125_000, 100)
+        expected_inner = make_inventory_available_inner(
+            PrimaryMintTermsV3(
                 network="testnet11",
                 smart_deed_inner_hash=bytes32(smart.get_tree_hash()),
                 deed_launcher_id=artifacts.deed_launcher_id,
@@ -973,7 +975,11 @@ class TestArtifactsCrossDriver:
                 metadata_root=metadata_root,
                 metadata_anchor_id=artifacts.deed_launcher_id,
                 share_ppm=SHARE_PPM,
-                usd_amount_minor=125_000,
+                base_amount_minor=125_000,
+                technology_fee_bps=100,
+                technology_fee_minor=fee_minor,
+                subtotal_minor=125_000 + fee_minor,
+                protocol_treasury_puzzle_hash=_b(0xD4),
                 protocol_puzhash=_b(0xD4),
                 validator_pubkeys=validators,
                 provider_id=provider_id,

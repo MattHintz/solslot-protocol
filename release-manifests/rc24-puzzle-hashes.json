@@ -1,0 +1,21 @@
+{
+  "schema": "solslot.puzzle-hashes.v1",
+  "release": "RC24",
+  "preservedRelease": "RC23",
+  "preservedCanonicalChecksum": "106ef3357b4f39f21e62b8c903f49c3f5d537cf0dfa2a4348e551eeb5bf07f99",
+  "newPuzzleHashes": {
+    "stripe_settlement_receipt_v1.clsp": "fc5f6671112050018a23abf3a2660982a5d83ce8ff168bf18f3bb56079ed764b",
+    "mint_offer_inventory_available_v1.clsp": "86666fa2b8b4e49efb4e020d0e289270f946e6f6e54c82d58c2b9abb87073775",
+    "mint_offer_delegate_v5.clsp": "6e6eb04a9afdb0b6fa8eaa4ab5a020c3d8554356e0516e9e4f47711a564a91a5",
+    "voucher_nft_inner_v3.clsp": "871110df60084f9ddb699ed481f26dd6cfe2882b92e7e4a3de5366f759d41b24",
+    "voucher_stripe_receipt_v1.clsp": "fa0b83da26c7a05797e203ef7217b3cf03aad37a3aabd3f14d26e8e13616a7e3"
+  },
+  "changeReasons": {
+    "stripe_settlement_receipt_v1.clsp": "authenticate an exact succeeded Stripe PaymentIntent receipt with the configured 2-of-3 validators, a 48-hour expiry, the committed deed and vault, zkPassport root, treasury, and technology fee before exposing one technical offer mojo",
+    "mint_offer_inventory_available_v1.clsp": "mint governed SmartDeeds into a buyer-neutral AVAILABLE state and require a 2-of-3 validator-approved reservation bound to one PurchaseArtifactV3 before any payment rail can proceed",
+    "mint_offer_delegate_v5.clsp": "hold the reserved SmartDeed in a buyer, vault, zkPassport root, rail, amount, and expiry-bound state; permit only exact direct or voucher delivery, bounded extension, authenticated terminal-failure release, or permissionless timeout release",
+    "voucher_nft_inner_v3.clsp": "issue a nontransferable Stripe presale voucher to the exact approved p2_vault and permit only vault-authorized voluntary refund, automatic expired refund, or exact governed SmartDeed redemption",
+    "voucher_stripe_receipt_v1.clsp": "bind the hashed Stripe payment reference, exact total, payer, deed, vault, treasury, and initial succeeded receipt to a 2-of-3-authorized terminal refund or atomic SmartDeed-delivery transition"
+  },
+  "canonicalChecksum": "6a4e0c968febd112bb5acfb6a61890c56ad8ff07d92ac60feba9f256ff3b6f53"
+}
