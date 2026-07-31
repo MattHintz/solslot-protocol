@@ -153,6 +153,37 @@ def test_rc23_manifest_preserves_rc22_and_records_authority_v3():
         rc22_manifest["canonicalChecksum"]
     )
     additions = manifest["newPuzzleHashes"]
+    rc23_end = PUZZLE_FILENAMES.index("eip712_member_v2.clsp") + 1
+    assert tuple(additions) == PUZZLE_FILENAMES[
+        rc23_end - len(additions) : rc23_end
+    ]
+    assert set(manifest["changeReasons"]) == set(additions)
+    for filename, expected_hash in additions.items():
+        assert bytes(load_puzzle(filename).get_tree_hash()).hex() == expected_hash
+    checksum = hashlib.sha256()
+    for filename in PUZZLE_FILENAMES[:rc23_end]:
+        checksum.update(bytes(load_puzzle(filename).get_tree_hash()))
+    assert checksum.hexdigest() == manifest["canonicalChecksum"]
+
+
+def test_rc24_manifest_preserves_rc23_and_records_stripe_settlement():
+    manifest_path = (
+        Path(__file__).resolve().parents[1]
+        / "release-manifests"
+        / "rc24-puzzle-hashes.json"
+    )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    rc23_manifest = json.loads(
+        (
+            Path(__file__).resolve().parents[1]
+            / "release-manifests"
+            / "rc23-puzzle-hashes.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert manifest["preservedCanonicalChecksum"] == (
+        rc23_manifest["canonicalChecksum"]
+    )
+    additions = manifest["newPuzzleHashes"]
     assert tuple(additions) == PUZZLE_FILENAMES[-len(additions) :]
     assert set(manifest["changeReasons"]) == set(additions)
     for filename, expected_hash in additions.items():

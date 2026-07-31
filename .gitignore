@@ -34,3 +34,4 @@ Thumbs.db
 docs/*.md
 !docs/SOLSLOT_V2_GENESIS_RUNBOOK.md
 !docs/SOLSLOT_V2_SECURITY_HANDOFF.md
+.pymon

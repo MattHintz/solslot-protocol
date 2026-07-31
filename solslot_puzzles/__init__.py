@@ -106,6 +106,17 @@ PUZZLE_FILENAMES = (
     "admin_identity_terminal_action_v1.clsp",
     "admin_identity_prepare_announcement_v1.clsp",
     "eip712_member_v2.clsp",
+    # RC24 external-payment settlement. Stripe state is independently
+    # authenticated by the configured 2-of-3 validators before a one-mojo
+    # receipt can atomically deliver the exact governed deed to its vault.
+    "stripe_settlement_receipt_v1.clsp",
+    "mint_offer_inventory_available_v1.clsp",
+    "mint_offer_delegate_v5.clsp",
+    # Stripe presales reuse the frozen RC20 series and launcher. These two
+    # additive puzzles bind the nontransferable voucher and its terminal
+    # validator-authenticated Stripe receipt without exposing a PaymentIntent.
+    "voucher_nft_inner_v3.clsp",
+    "voucher_stripe_receipt_v1.clsp",
 )
 
 # ── Frozen checksum — update after every intentional puzzle change ──
@@ -152,10 +163,10 @@ FROZEN_CHECKSUM: Optional[str] = (
     #   - RC19 native XCH/CAT primary purchases use a dedicated on-demand
     #     offer delegate that binds one exact deed to one canonical vault and
     #     exposes no standalone external-payment escrow branch.
-    # RC23 appends the recovery-aware authority and four exact transition
-    # helpers. The release manifest records each new tree hash and preserves
-    # the complete RC22 checksum.
-    "106ef3357b4f39f21e62b8c903f49c3f5d537cf0dfa2a4348e551eeb5bf07f99"
+    # RC24 appends validator-authenticated direct Stripe settlement, exact deed
+    # reservation, and a refundable Stripe voucher that reuses the frozen RC20
+    # series. RC23 bytes remain frozen in its manifest.
+    "6a4e0c968febd112bb5acfb6a61890c56ad8ff07d92ac60feba9f256ff3b6f53"
 )
 
 # ── Cache ──

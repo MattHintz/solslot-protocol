@@ -79,9 +79,10 @@ from solslot_puzzles.mint_proposal_v2_driver import (
     compute_proposal_data_hash,
     make_inner_puzzle_hash,
 )
-from solslot_puzzles.primary_purchase_v2_driver import (
-    PrimaryMintTermsV2,
-    make_mint_offer_v4_inner,
+from solslot_puzzles.payment_artifacts_v3 import technology_fee_minor
+from solslot_puzzles.stripe_settlement_v1_driver import (
+    PrimaryMintTermsV3,
+    make_inventory_available_inner,
 )
 from solslot_puzzles.sgt_driver import (
     TRK_PROPOSE,
@@ -598,12 +599,19 @@ class PrimaryPurchaseMintConfig:
     protocol_treasury_puzhash: bytes32
     validator_pubkeys: tuple[bytes, bytes, bytes]
     provider_id: bytes32
+    technology_fee_bps: int = 100
 
     def __post_init__(self) -> None:
         if not self.network or len(self.network.encode("ascii")) > 32:
             raise ValueError("primary purchase network must be 1-32 ASCII bytes")
         if self.usd_amount_minor <= 0 or self.usd_amount_minor > 0xFFFFFFFFFFFFFFFF:
             raise ValueError("primary purchase USD amount must be a positive uint64")
+        expected_fee = technology_fee_minor(
+            self.usd_amount_minor,
+            self.technology_fee_bps,
+        )
+        if self.usd_amount_minor + expected_fee > 0xFFFFFFFFFFFFFFFF:
+            raise ValueError("primary purchase subtotal exceeds uint64")
         if len(self.protocol_treasury_puzhash) != 32:
             raise ValueError("protocol treasury puzzle hash must be bytes32")
         if len(self.validator_pubkeys) != 3:
@@ -731,8 +739,12 @@ def build_mint_publish_artifacts(
         if metadata_root is None:
             raise ValueError("primary purchase mints require metadata_root")
         resolved_anchor = metadata_anchor_id or deed_launcher_id
-        eve_mint_offer_inner = make_mint_offer_v4_inner(
-            PrimaryMintTermsV2(
+        fee_minor = technology_fee_minor(
+            primary_purchase.usd_amount_minor,
+            primary_purchase.technology_fee_bps,
+        )
+        eve_mint_offer_inner = make_inventory_available_inner(
+            PrimaryMintTermsV3(
                 network=primary_purchase.network,
                 smart_deed_inner_hash=smart_deed_inner_puzhash,
                 deed_launcher_id=deed_launcher_id,
@@ -740,7 +752,13 @@ def build_mint_publish_artifacts(
                 metadata_root=metadata_root,
                 metadata_anchor_id=resolved_anchor,
                 share_ppm=share_ppm,
-                usd_amount_minor=primary_purchase.usd_amount_minor,
+                base_amount_minor=primary_purchase.usd_amount_minor,
+                technology_fee_bps=primary_purchase.technology_fee_bps,
+                technology_fee_minor=fee_minor,
+                subtotal_minor=primary_purchase.usd_amount_minor + fee_minor,
+                protocol_treasury_puzzle_hash=(
+                    primary_purchase.protocol_treasury_puzhash
+                ),
                 protocol_puzhash=primary_purchase.protocol_treasury_puzhash,
                 validator_pubkeys=primary_purchase.validator_pubkeys,
                 provider_id=primary_purchase.provider_id,
