@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the deterministic nine-repository RC23 source manifest."""
+"""Build the deterministic nine-repository RC24 source manifest."""
 
 from __future__ import annotations
 
@@ -23,8 +23,8 @@ from solslot_puzzles.recovery_dependencies import (
 from solslot_puzzles import FROZEN_CHECKSUM
 
 
-RELEASE_ID = "solslot-v2-alpha-rc23-20260729"
-RELEASE_BRANCH = "release/testnet-alpha-rc23-20260729"
+RELEASE_ID = "solslot-v2-alpha-rc24-20260730"
+RELEASE_BRANCH = "release/testnet-alpha-rc24-20260730"
 SOURCE_MANIFEST_VERSION = 4
 SOURCE_REPOSITORIES = {
     "protocol": "https://github.com/MattHintz/solslot-protocol",
@@ -149,8 +149,8 @@ def build_manifest(
     by_name = {item.name: item for item in states}
     if set(by_name) != set(SOURCE_REPOSITORIES) or len(states) != len(by_name):
         raise ValueError("release source states must contain each repository exactly once")
-    if not release_id.startswith("solslot-v2-alpha-rc23-"):
-        raise ValueError("release_id must identify an RC23 alpha release")
+    if not release_id.startswith("solslot-v2-alpha-rc24-"):
+        raise ValueError("release_id must identify an RC24 alpha release")
     expected_branch = (
         "release/testnet-alpha-"
         + release_id.removeprefix("solslot-v2-alpha-")
@@ -200,7 +200,7 @@ def verify_release_refs(path: Path, commit: str) -> None:
     tag_commit = _git(path, "rev-list", "-n", "1", RELEASE_ID).lower()
     if main_commit != commit or tag_commit != commit:
         raise ValueError(
-            f"{path} must have the exact RC23 commit on origin/main and {RELEASE_ID}"
+            f"{path} must have the exact RC24 commit on origin/main and {RELEASE_ID}"
         )
 
 
@@ -218,17 +218,17 @@ def build_launch_evidence(
         or manifest.get("releaseId") != RELEASE_ID
         or manifest.get("manifestHash") != manifest_hash(manifest)
     ):
-        raise ValueError("RC23 source manifest is invalid")
+        raise ValueError("RC24 source manifest is invalid")
     if release_refs_verified is not True:
         raise ValueError(
-            "launch evidence requires exact origin/main and RC23 tag verification"
+            "launch evidence requires exact origin/main and RC24 tag verification"
         )
     if (
         puzzle_inventory.get("schema") != "solslot.puzzle-hashes.v1"
-        or puzzle_inventory.get("release") != "RC23"
+        or puzzle_inventory.get("release") != "RC24"
         or puzzle_inventory.get("canonicalChecksum") != FROZEN_CHECKSUM
     ):
-        raise ValueError("RC23 puzzle inventory is stale")
+        raise ValueError("RC24 puzzle inventory is stale")
     try:
         parsed_time = datetime.fromisoformat(
             generated_at.replace("Z", "+00:00")
@@ -239,7 +239,7 @@ def build_launch_evidence(
         raise ValueError("generated_at must include a timezone")
     return {
         "schemaVersion": 5,
-        "kind": "solslot-rc23-launch-source-evidence",
+        "kind": "solslot-rc24-launch-source-evidence",
         "releaseTag": RELEASE_ID,
         "releaseId": RELEASE_ID,
         "generatedAt": generated_at,
@@ -284,7 +284,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default=(
             Path(__file__).resolve().parents[1]
             / "release-manifests"
-            / "rc23-puzzle-hashes.json"
+            / "rc24-puzzle-hashes.json"
         ),
     )
     parser.add_argument("--generated-at")
@@ -329,7 +329,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         puzzle_inventory_bytes = puzzle_inventory_path.read_bytes()
         puzzle_inventory = json.loads(puzzle_inventory_bytes)
         if not isinstance(puzzle_inventory, Mapping):
-            raise ValueError("RC23 puzzle inventory must be an object")
+            raise ValueError("RC24 puzzle inventory must be an object")
         generated_at = args.generated_at or (
             datetime.now(timezone.utc)
             .replace(microsecond=0)
