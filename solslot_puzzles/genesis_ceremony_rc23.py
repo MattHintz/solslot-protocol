@@ -358,6 +358,9 @@ def _plan_payload(
                 plan.property_registry.full_puzzle_hash
             ),
             "sgtTail": _hex(protocol.sgt_tail_hash),
+            "sgtReserveInner": _hex(
+                protocol.sgt_reserve_inner_puzzle_hash
+            ),
             "solsTail": _hex(protocol.sols_tail_hash),
             "bridgePolicy": _hex(
                 protocol.trusted_zkpassport_bridge_policy_hash
@@ -523,12 +526,18 @@ def _plan_payload(
             "protocolTreasuryPuzzleHash": _hex(
                 protocol.trusted_protocol_treasury_puzzle_hash
             ),
+            "companySgtSaleTreasuryPuzzleHash": _hex(
+                protocol.company_sgt_sale_treasury_puzzle_hash
+            ),
             "governanceRewardsPuzzleHash": _hex(
                 protocol.trusted_governance_rewards_puzzle_hash
             ),
             "governanceRewardsRoot": _hex(
                 protocol.trusted_governance_rewards_root
             ),
+        },
+        "trustedAssets": {
+            "wusdcBAssetId": _hex(protocol.wusdc_b_asset_id),
         },
         "canonicalVaultParamsHash": _hex(
             plan.canonical_vault_params_hash
@@ -598,6 +607,8 @@ def build_rc23_genesis_ceremony_plan(
     validator_pubkeys: Sequence[bytes],
     trusted_treasury_reserve_puzzle_hash: bytes32,
     trusted_protocol_treasury_puzzle_hash: bytes32,
+    company_sgt_sale_treasury_puzzle_hash: bytes32,
+    wusdc_b_asset_id: bytes32,
     trusted_governance_rewards_puzzle_hash: bytes32,
     trusted_governance_rewards_root: bytes32,
     retired_coordinates: Sequence[bytes32],
@@ -720,6 +731,10 @@ def build_rc23_genesis_ceremony_plan(
         trusted_protocol_treasury_puzzle_hash=(
             trusted_protocol_treasury_puzzle_hash
         ),
+        company_sgt_sale_treasury_puzzle_hash=(
+            company_sgt_sale_treasury_puzzle_hash
+        ),
+        wusdc_b_asset_id=wusdc_b_asset_id,
         trusted_governance_rewards_puzzle_hash=(
             trusted_governance_rewards_puzzle_hash
         ),

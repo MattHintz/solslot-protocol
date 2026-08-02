@@ -40,6 +40,7 @@ from solslot_puzzles.admin_authority_v3_driver import (
     admin_identity_prepare_announcement_v1_mod,
     authority_v3_launcher_ids,
     build_admin_identity_vault,
+    build_authority_operational_mips_spend,
     build_authority_prepare_mips_spend,
     build_cancel_solution,
     build_complete_solution,
@@ -49,6 +50,8 @@ from solslot_puzzles.admin_authority_v3_driver import (
     build_identity_approval_solution,
     build_identity_cancel_solution,
     build_identity_finish_solution,
+    build_identity_operational_action,
+    build_identity_operational_solution,
     build_identity_vault_transition,
     build_lost_recovery_identity_solution,
     build_operational_solution,
@@ -136,6 +139,77 @@ def test_current_identity_constructor_matches_genesis_identity() -> None:
         assert rebuilt.custody_hash == identity.custody_hash
         assert rebuilt.custody_reveal == identity.custody_reveal
         assert rebuilt.full_puzzle_hash == identity.full_puzzle_hash
+
+
+def test_operational_action_requires_owner_plus_one_current_identities() -> None:
+    fixture = _fixture()
+    delegated = Program.to((1, [[60, b"publish exact proposal"]]))
+    mips = build_authority_operational_mips_spend(
+        authority=fixture.authority,
+        current_authority_inner_puzzle=fixture.authority.inner_puzzle,
+        current_identities=fixture.authority.identity_vaults,
+        current_identity_coin_ids=fixture.identity_coin_ids,
+        authority_delegated_puzzle=delegated,
+        coadmin_slot=2,
+    )
+    assert mips.selected_slots == (0, 2)
+    authority_result = fixture.authority.inner_puzzle.run(
+        build_operational_solution(
+            my_amount=AUTHORITY_LAUNCHER_AMOUNT,
+            new_authority_version=2,
+            mips_reveal=mips.reveal,
+            mips_solution=mips.solution,
+            authority_delegated_puzzle=delegated,
+            identity_records=mips.identity_records,
+        ),
+        flags=RUN_FLAGS,
+    )
+
+    identity_results = []
+    for slot in mips.selected_slots:
+        identity = fixture.authority.identity_vaults[slot]
+        action = build_identity_operational_action(
+            identity=identity,
+            current_authority_inner_puzzle=fixture.authority.inner_puzzle,
+            authority_delegated_puzzle=delegated,
+        )
+        identity_results.append(
+            identity.custody_reveal.run(
+                build_identity_operational_solution(
+                    identity=identity,
+                    current_authority_inner_puzzle=fixture.authority.inner_puzzle,
+                    current_identity_coin_id=fixture.identity_coin_ids[slot],
+                    daily_member_solution=_eip_member_solution(
+                        fixture.daily_private_keys[slot],
+                        fixture.identity_coin_ids[slot],
+                        bytes32(action.get_tree_hash()),
+                    ),
+                    authority_delegated_puzzle=delegated,
+                ),
+                flags=RUN_FLAGS,
+            )
+        )
+
+    authority_sends = _condition_values(authority_result, 66)
+    identity_receives = [
+        condition
+        for result in identity_results
+        for condition in _condition_values(result, 67)
+    ]
+    assert len(authority_sends) == 2
+    assert sorted(value[2] for value in authority_sends) == sorted(
+        value[2] for value in identity_receives
+    )
+
+    with pytest.raises(ValueError, match="coadmin slot"):
+        build_authority_operational_mips_spend(
+            authority=fixture.authority,
+            current_authority_inner_puzzle=fixture.authority.inner_puzzle,
+            current_identities=fixture.authority.identity_vaults,
+            current_identity_coin_ids=fixture.identity_coin_ids,
+            authority_delegated_puzzle=delegated,
+            coadmin_slot=0,
+        )
 
 
 def _eip_member_solution(

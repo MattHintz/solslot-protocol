@@ -137,12 +137,12 @@ def test_one_percent_fee_uses_ceiling_and_hard_cap() -> None:
 def test_artifact_commits_fee_treasury_eligibility_and_vault() -> None:
     item = artifact()
     assert item.artifact_hash.hex() == (
-        "2889da8d662bd0dcc27e7197e3a3816d"
-        "bcab7643f642595a5ba27c6054a2c072"
+        "0793c08da148c2f187e4f8b80e297716"
+        "4e008df91a5c1a72e3622876cc7c0421"
     )
     assert item.purchase_id.hex() == (
-        "4075085748452a03a60cd0f37e8eff2a"
-        "aee9496e15a3a505b4b59acfb234a6af"
+        "595b1fbca03e9909ff7647afc9fde7d0"
+        "54af55e6d6381c40abbb1ad98082769d"
     )
     assert item.technology_fee_minor == 229
     assert item.subtotal_minor == 23_129

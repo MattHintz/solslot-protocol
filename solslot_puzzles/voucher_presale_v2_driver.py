@@ -521,6 +521,34 @@ def curry_base_result_authorization(
     )
 
 
+def curry_direct_base_result_authorization(
+    *,
+    purchase_artifact_hash: bytes32,
+    global_payment_id: bytes32,
+    payment_principal: int,
+    return_puzzle_hash: bytes32,
+) -> Program:
+    """Reuse the reviewed one-use Base result handoff for direct delivery."""
+
+    for value, label in (
+        (purchase_artifact_hash, "purchase artifact hash"),
+        (global_payment_id, "global payment ID"),
+        (return_puzzle_hash, "return puzzle hash"),
+    ):
+        if value == bytes32.zeros:
+            raise VoucherV2Error(f"{label} cannot be zero")
+    if payment_principal <= 0 or payment_principal >= 1 << 64:
+        raise VoucherV2Error("payment principal must be a positive uint64")
+    return base_result_authorization_mod().curry(
+        burn_inner_hash(),
+        return_puzzle_hash,
+        purchase_artifact_hash,
+        global_payment_id,
+        payment_principal,
+        1,
+    )
+
+
 def voucher_solution(
     *,
     action: VoucherAction,
@@ -1701,6 +1729,7 @@ __all__ = [
     "curry_series",
     "curry_external_receipt",
     "curry_base_result_authorization",
+    "curry_direct_base_result_authorization",
     "external_receipt_evidence_message",
     "external_receipt_settlement_message",
     "curry_purchase_launcher",

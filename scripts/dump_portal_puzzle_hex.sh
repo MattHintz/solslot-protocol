@@ -65,7 +65,7 @@ write_module sgt_free_inner SGT_FREE_INNER_PUZZLE_HEX \
   src/app/services/sgt-driver/sgt-free-inner.puzzle-hex.ts
 write_module sgt_locked_inner SGT_LOCKED_INNER_PUZZLE_HEX \
   src/app/services/sgt-driver/sgt-locked-inner.puzzle-hex.ts
-write_module governance_singleton_inner GOVERNANCE_TRACKER_INNER_PUZZLE_HEX \
+write_module governance_singleton_inner_v2 GOVERNANCE_TRACKER_INNER_PUZZLE_HEX \
   src/app/services/sgt-driver/governance-singleton-inner.puzzle-hex.ts
 write_module vault_singleton_inner VAULT_CURRENT_INNER_PUZZLE_HEX \
   src/app/services/vault-current-inner.puzzle-hex.ts

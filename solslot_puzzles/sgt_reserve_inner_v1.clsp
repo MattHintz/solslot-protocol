@@ -1,0 +1,265 @@
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; Governed company SGT reserve.
+;;;
+;;; The fixed SGT issuance enters this owner puzzle instead of an ordinary
+;;; wallet. The reserve can sponsor an admin-approved proposal, but SGT can
+;;; leave the reserve only after the canonical governance tracker executes an
+;;; exact SGT_SALE or SGT_GRANT bill.
+;;;
+;;; Spend modes:
+;;;   1 LOCK  - lock the full reserve coin behind an exact proposal hash.
+;;;   2 SALE  - split an executed sale allocation into a sale coin + reserve.
+;;;   3 GRANT - send an executed grant allocation to its committed recipient.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(mod (
+        MOD_HASH
+        SGT_FREE_MOD_HASH
+        SGT_LOCKED_MOD_HASH
+        PROPOSAL_TRACKER_STRUCT
+        ADMIN_AUTHORITY_STRUCT
+        SGT_SALE_MOD_HASH
+        CAT_MOD_HASH
+        SGT_TAIL_HASH
+        OFFER_MOD_HASH
+        P2_VAULT_MOD_HASH
+        SINGLETON_MOD_HASH
+        SINGLETON_LAUNCHER_HASH
+        WUSDC_B_ASSET_ID
+        COMPANY_TREASURY_PUZZLE_HASH
+        ;; solution
+        spend_mode
+        my_amount
+        params
+     )
+
+    (include condition_codes.clib)
+    (include utils.clib)
+    (include utility_macros.clib)
+
+    (defconstant RESERVE_LOCK 1)
+    (defconstant RESERVE_SALE 2)
+    (defconstant RESERVE_GRANT 3)
+
+    (defconstant BILL_SGT_SALE 0x59)  ; "Y"
+    (defconstant BILL_SGT_GRANT 0x47) ; "G"
+    (defconstant ADMIN_PROPOSAL_TAG 0x474f5650) ; "GOVP"
+    (defconstant EXEC_TAG 0x45584543) ; "EXEC"
+    (defconstant SGT_PROTOCOL_TRANSITION_TAG 0x53475450) ; "SGTP"
+    (defconstant ZERO_B32 0x0000000000000000000000000000000000000000000000000000000000000000)
+    (defconstant BASE_SEPOLIA_USDC_ASSET_ID 0x000000000000000000000000036cbd53842c5426634e7929541ec2318f3dcf7e)
+
+    (defun list-length (items)
+        (if items (+ 1 (list-length (r items))) 0)
+    )
+
+    (defun nth-value (index items)
+        (if (= index 0) (f items) (nth-value (- index 1) (r items)))
+    )
+
+    (defun-inline is-nonzero-b32 (value)
+        (and (is-size-b32 value) (not (= value ZERO_B32)))
+    )
+
+    (defun-inline reserve-owner-inner-hash ()
+        (curry_hashes MOD_HASH
+            (sha256 1 MOD_HASH)
+            (sha256 1 SGT_FREE_MOD_HASH)
+            (sha256 1 SGT_LOCKED_MOD_HASH)
+            (sha256tree PROPOSAL_TRACKER_STRUCT)
+            (sha256tree ADMIN_AUTHORITY_STRUCT)
+            (sha256 1 SGT_SALE_MOD_HASH)
+            (sha256 1 CAT_MOD_HASH)
+            (sha256 1 SGT_TAIL_HASH)
+            (sha256 1 OFFER_MOD_HASH)
+            (sha256 1 P2_VAULT_MOD_HASH)
+            (sha256 1 SINGLETON_MOD_HASH)
+            (sha256 1 SINGLETON_LAUNCHER_HASH)
+            (sha256 1 WUSDC_B_ASSET_ID)
+            (sha256 1 COMPANY_TREASURY_PUZZLE_HASH))
+    )
+
+    ;; SGT recipients are identified by their vault launcher. The protocol
+    ;; derives the same p2_vault custody puzzle used for SmartDeeds, so neither
+    ;; an administrator nor a buyer can substitute an arbitrary wallet puzzle.
+    (defun-inline vault-owner-inner-hash (vault_launcher_id)
+        (curry_hashes P2_VAULT_MOD_HASH
+            (sha256 1 SINGLETON_MOD_HASH)
+            (sha256 1 vault_launcher_id)
+            (sha256 1 SINGLETON_LAUNCHER_HASH))
+    )
+
+    (defun-inline locked-owner-inner-hash (proposal_hash deadline)
+        (curry_hashes SGT_LOCKED_MOD_HASH
+            (sha256 1 SGT_LOCKED_MOD_HASH)
+            (sha256 1 SGT_FREE_MOD_HASH)
+            (sha256tree PROPOSAL_TRACKER_STRUCT)
+            (sha256 1 (reserve-owner-inner-hash))
+            (sha256 1 proposal_hash)
+            (sha256 1 deadline))
+    )
+
+    (defun-inline admin-proposal-announcement-id
+            (admin_inner_puzzle_hash proposal_hash)
+        (sha256
+            (calculate_full_puzzle_hash
+                ADMIN_AUTHORITY_STRUCT admin_inner_puzzle_hash)
+            (concat PROTOCOL_PREFIX ADMIN_PROPOSAL_TAG proposal_hash))
+    )
+
+    (defun-inline tracker-exec-announcement-id
+            (tracker_inner_puzzle_hash proposal_hash)
+        (sha256
+            (calculate_full_puzzle_hash
+                PROPOSAL_TRACKER_STRUCT tracker_inner_puzzle_hash)
+            (concat PROTOCOL_PREFIX
+                (sha256tree (list EXEC_TAG proposal_hash))))
+    )
+
+    ;; (Y sale_id amount recipient_vault_launcher_id payment_rail payment_asset_id
+    ;;    payment_amount company_treasury expires_at reserve_owner_inner_hash
+    ;;    purchase_artifact_hash)
+    (defun-inline valid-sale-bill (bill)
+        (and
+            (= (list-length bill) 11)
+            (= (nth-value 0 bill) BILL_SGT_SALE)
+            (is-nonzero-b32 (nth-value 1 bill))
+            (is-uint64 (nth-value 2 bill))
+            (> (nth-value 2 bill) 0)
+            (is-nonzero-b32 (nth-value 3 bill))
+            (or
+                (= (nth-value 4 bill) 1)
+                (= (nth-value 4 bill) 2)
+                (= (nth-value 4 bill) 3)
+                (= (nth-value 4 bill) 4))
+            (is-size-b32 (nth-value 5 bill))
+            (if (or (= (nth-value 4 bill) 1) (= (nth-value 4 bill) 3))
+                (= (nth-value 5 bill) ZERO_B32)
+                (if (= (nth-value 4 bill) 2)
+                    (= (nth-value 5 bill) WUSDC_B_ASSET_ID)
+                    (= (nth-value 5 bill) BASE_SEPOLIA_USDC_ASSET_ID)))
+            (is-uint64 (nth-value 6 bill))
+            (> (nth-value 6 bill) 0)
+            (= (nth-value 7 bill) COMPANY_TREASURY_PUZZLE_HASH)
+            (is-uint64 (nth-value 8 bill))
+            (> (nth-value 8 bill) 0)
+            (= (nth-value 9 bill) (reserve-owner-inner-hash))
+            (is-size-b32 (nth-value 10 bill))
+            (if (or (= (nth-value 4 bill) 1) (= (nth-value 4 bill) 2))
+                (= (nth-value 10 bill) ZERO_B32)
+                (not (= (nth-value 10 bill) ZERO_B32))))
+    )
+
+    ;; (G grant_id amount recipient_vault_launcher_id reason_hash reserve_owner_inner_hash)
+    (defun-inline valid-grant-bill (bill)
+        (and
+            (= (list-length bill) 6)
+            (= (nth-value 0 bill) BILL_SGT_GRANT)
+            (is-nonzero-b32 (nth-value 1 bill))
+            (is-uint64 (nth-value 2 bill))
+            (> (nth-value 2 bill) 0)
+            (is-nonzero-b32 (nth-value 3 bill))
+            (is-nonzero-b32 (nth-value 4 bill))
+            (= (nth-value 5 bill) (reserve-owner-inner-hash)))
+    )
+
+    (defun-inline valid-allocation-bill (bill)
+        (or (valid-sale-bill bill) (valid-grant-bill bill))
+    )
+
+    (defun-inline sale-owner-inner-hash (bill proposal_hash)
+        (curry_hashes SGT_SALE_MOD_HASH
+            (sha256 1 SGT_SALE_MOD_HASH)
+            (sha256 1 (reserve-owner-inner-hash))
+            (sha256 1 CAT_MOD_HASH)
+            (sha256 1 SGT_TAIL_HASH)
+            (sha256 1 OFFER_MOD_HASH)
+            (sha256 1 (nth-value 1 bill))
+            (sha256 1 proposal_hash)
+            (sha256 1 (nth-value 2 bill))
+            (sha256 1 (vault-owner-inner-hash (nth-value 3 bill)))
+            (sha256 1 (nth-value 4 bill))
+            (sha256 1 (nth-value 5 bill))
+            (sha256 1 (nth-value 6 bill))
+            (sha256 1 (nth-value 7 bill))
+            (sha256 1 (nth-value 8 bill))
+            (sha256 1 (nth-value 10 bill)))
+    )
+
+    (defun-inline remainder-conditions (allocated_amount)
+        (if (= allocated_amount my_amount)
+            ()
+            (list
+                (list CREATE_COIN
+                    (reserve-owner-inner-hash)
+                    (- my_amount allocated_amount))))
+    )
+
+    (defun-inline execute-conditions
+            (bill tracker_inner_puzzle_hash allocation_owner_inner_hash)
+        (c
+            (list REMARK PROTOCOL_PREFIX SGT_PROTOCOL_TRANSITION_TAG)
+            (c
+            (list ASSERT_PUZZLE_ANNOUNCEMENT
+                (tracker-exec-announcement-id
+                    tracker_inner_puzzle_hash (sha256tree bill)))
+            (c
+                (list CREATE_COIN
+                    allocation_owner_inner_hash
+                    (nth-value 2 bill))
+                (remainder-conditions (nth-value 2 bill)))))
+    )
+
+    (assert
+        (is-nonzero-b32 P2_VAULT_MOD_HASH)
+        (is-nonzero-b32 SINGLETON_MOD_HASH)
+        (is-nonzero-b32 SINGLETON_LAUNCHER_HASH)
+        (is-nonzero-b32 WUSDC_B_ASSET_ID)
+        (is-size-b32 COMPANY_TREASURY_PUZZLE_HASH)
+        (not (= COMPANY_TREASURY_PUZZLE_HASH ZERO_B32))
+        (is-uint64 my_amount)
+        (> my_amount 0)
+        (c
+            (list ASSERT_MY_AMOUNT my_amount)
+            (if (= spend_mode RESERVE_LOCK)
+                ;; params = (proposal_hash bill deadline admin_inner_ph)
+                (assert
+                    (= (list-length params) 4)
+                    (is-size-b32 (nth-value 0 params))
+                    (= (nth-value 0 params) (sha256tree (nth-value 1 params)))
+                    (valid-allocation-bill (nth-value 1 params))
+                    (is-uint64 (nth-value 2 params))
+                    (is-size-b32 (nth-value 3 params))
+                    (list
+                        (list ASSERT_PUZZLE_ANNOUNCEMENT
+                            (admin-proposal-announcement-id
+                                (nth-value 3 params) (nth-value 0 params)))
+                        (list CREATE_COIN
+                            (locked-owner-inner-hash
+                                (nth-value 0 params) (nth-value 2 params))
+                            my_amount)))
+                (if (= spend_mode RESERVE_SALE)
+                    ;; params = (bill tracker_inner_ph)
+                    (assert
+                        (= (list-length params) 2)
+                        (valid-sale-bill (nth-value 0 params))
+                        (not (> (nth-value 2 (nth-value 0 params)) my_amount))
+                        (is-size-b32 (nth-value 1 params))
+                        (execute-conditions
+                            (nth-value 0 params)
+                            (nth-value 1 params)
+                            (sale-owner-inner-hash
+                                (nth-value 0 params)
+                                (sha256tree (nth-value 0 params)))))
+                    (if (= spend_mode RESERVE_GRANT)
+                        (assert
+                            (= (list-length params) 2)
+                            (valid-grant-bill (nth-value 0 params))
+                            (not (> (nth-value 2 (nth-value 0 params)) my_amount))
+                            (is-size-b32 (nth-value 1 params))
+                            (execute-conditions
+                                (nth-value 0 params)
+                                (nth-value 1 params)
+                                (vault-owner-inner-hash
+                                    (nth-value 3 (nth-value 0 params)))))
+                        (x))))))
+)

@@ -26,21 +26,26 @@ from solslot_puzzles.payment_artifacts_v2 import (
 
 
 PURCHASE_ARTIFACT_SCHEMA = "solslot.purchase-artifact.v3"
+PURCHASE_ARTIFACT_V3_SCHEMA = PURCHASE_ARTIFACT_SCHEMA
 STRIPE_SETTLEMENT_EVIDENCE_SCHEMA = "solslot.stripe-settlement-evidence.v1"
 STRIPE_SETTLEMENT_RECEIPT_SCHEMA = "solslot.stripe-settlement-receipt.v1"
+EXTERNAL_SETTLEMENT_RECEIPT_SCHEMA = "solslot.external-settlement-receipt.v1"
 
 PURCHASE_ARTIFACT_VERSION = 3
+PURCHASE_ARTIFACT_V3_VERSION = PURCHASE_ARTIFACT_VERSION
 STRIPE_SETTLEMENT_EVIDENCE_VERSION = 1
 STRIPE_SETTLEMENT_RECEIPT_VERSION = 1
 
 TECHNOLOGY_FEE_BPS_ALPHA = 100
 TECHNOLOGY_FEE_BPS_HARD_CAP = 1_000
+MAX_TECHNOLOGY_FEE_BPS = TECHNOLOGY_FEE_BPS_HARD_CAP
 STRIPE_RECEIPT_TTL_SECONDS = 48 * 60 * 60
 SHARE_PPM_TOTAL = 1_000_000
 _U64_MAX = (1 << 64) - 1
 _PURCHASE_ID_TAG = b"SOLSLOT_PURCHASE_ID_V3"
 _STRIPE_REFERENCE_TAG = b"SOLSLOT_STRIPE_REFERENCE_V1"
 _STRIPE_PENDING_EVIDENCE_TAG = b"SOLSLOT_STRIPE_PENDING_EVIDENCE_V1"
+_EXTERNAL_PENDING_EVIDENCE_TAG = b"SOLSLOT_EXTERNAL_PENDING_EVIDENCE_V1"
 STRIPE_PAYMENT_PROVIDER_ID = bytes32(
     hashlib.sha256(b"SOLSLOT_STRIPE_PAYMENT_PROVIDER_V1").digest()
 )
@@ -49,6 +54,11 @@ STRIPE_PAYMENT_PROVIDER_ID = bytes32(
 class StripeMethodFamily(IntEnum):
     CARD = 1
     US_BANK_ACCOUNT = 2
+
+
+class StripeMode(IntEnum):
+    TEST = 1
+    LIVE = 2
 
 
 class StripeFundingType(IntEnum):
@@ -82,6 +92,11 @@ class StripeDisputeState(IntEnum):
 class PurchaseKind(IntEnum):
     DIRECT = 1
     PRESALE = 2
+
+
+class PurchaseDeliveryKind(IntEnum):
+    SMARTDEED = 1
+    SGT = 2
 
 
 def technology_fee_minor(base_minor: int, fee_bps: int) -> int:
@@ -125,6 +140,10 @@ class PurchaseArtifactV3:
     source_evidence_root: bytes32 = ZERO_32
     purchase_kind: PurchaseKind = PurchaseKind.DIRECT
     presale_terms_hash: bytes32 = ZERO_32
+    delivery_kind: PurchaseDeliveryKind = PurchaseDeliveryKind.SMARTDEED
+    delivery_asset_id: bytes32 = ZERO_32
+    delivery_amount: int = 1
+    delivery_context_hash: bytes32 = ZERO_32
 
     def __post_init__(self) -> None:
         _require_ascii(self.network, "network", maximum=32)
@@ -142,12 +161,11 @@ class PurchaseArtifactV3:
             "oracle_round_hash",
             "source_evidence_root",
             "presale_terms_hash",
+            "delivery_asset_id",
+            "delivery_context_hash",
         ):
             _require_bytes32(getattr(self, name), name)
         if ZERO_32 in {
-            self.collection_id,
-            self.deed_launcher_id,
-            self.metadata_root,
             self.protocol_treasury_puzzle_hash,
             self.zkpassport_root,
             self.vault_launcher_id,
@@ -155,12 +173,64 @@ class PurchaseArtifactV3:
             self.authorization_nonce,
         }:
             raise PaymentArtifactError(
-                "identity, treasury, zkPassport, vault, and nonce commitments "
-                "must be non-zero"
+                "treasury, zkPassport, vault, and nonce commitments must be non-zero"
             )
-        _require_u64(self.share_ppm, "share_ppm", minimum=1)
-        if self.share_ppm > SHARE_PPM_TOTAL:
-            raise PaymentArtifactError("share_ppm exceeds collection total")
+        try:
+            delivery_kind = PurchaseDeliveryKind(self.delivery_kind)
+        except ValueError as exc:
+            raise PaymentArtifactError(
+                "delivery_kind is unsupported"
+            ) from exc
+        object.__setattr__(self, "delivery_kind", delivery_kind)
+        if delivery_kind == PurchaseDeliveryKind.SMARTDEED:
+            if ZERO_32 in {
+                self.collection_id,
+                self.deed_launcher_id,
+                self.metadata_root,
+            }:
+                raise PaymentArtifactError(
+                    "SmartDeed identity and metadata commitments must be non-zero"
+                )
+            if self.delivery_asset_id == ZERO_32:
+                object.__setattr__(
+                    self, "delivery_asset_id", self.deed_launcher_id
+                )
+            if self.delivery_context_hash == ZERO_32:
+                object.__setattr__(
+                    self, "delivery_context_hash", self.collection_id
+                )
+            _require_u64(self.share_ppm, "share_ppm", minimum=1)
+            if self.share_ppm > SHARE_PPM_TOTAL:
+                raise PaymentArtifactError("share_ppm exceeds collection total")
+            if (
+                self.delivery_asset_id != self.deed_launcher_id
+                or self.delivery_amount != 1
+                or self.delivery_context_hash != self.collection_id
+            ):
+                raise PaymentArtifactError(
+                    "SmartDeed delivery must match its exact deed and collection"
+                )
+        else:
+            if any(
+                value != ZERO_32
+                for value in (
+                    self.collection_id,
+                    self.deed_launcher_id,
+                    self.metadata_root,
+                    self.metadata_anchor_id,
+                )
+            ) or self.share_ppm != 0:
+                raise PaymentArtifactError(
+                    "SGT delivery cannot carry SmartDeed metadata or share fields"
+                )
+            if ZERO_32 in {
+                self.delivery_asset_id,
+                self.delivery_context_hash,
+            }:
+                raise PaymentArtifactError(
+                    "SGT delivery requires exact asset and sale commitments"
+                )
+        _require_u64(self.delivery_amount, "delivery_amount", minimum=1)
         _require_u64(self.base_amount_minor, "base_amount_minor", minimum=1)
         expected_fee = technology_fee_minor(
             self.base_amount_minor, self.technology_fee_bps
@@ -209,11 +279,24 @@ class PurchaseArtifactV3:
             raise PaymentArtifactError(
                 "presale purchase requires its governed terms hash"
             )
+        if (
+            self.purchase_kind == PurchaseKind.PRESALE
+            and self.delivery_kind != PurchaseDeliveryKind.SMARTDEED
+        ):
+            raise PaymentArtifactError("presales can deliver only SmartDeeds")
 
     @property
     def usd_amount_minor(self) -> int:
         """Compatibility name for code that consumes the charged subtotal."""
 
+        return self.subtotal_minor
+
+    @property
+    def base_usd_amount_minor(self) -> int:
+        return self.base_amount_minor
+
+    @property
+    def gross_usd_amount_minor(self) -> int:
         return self.subtotal_minor
 
     def to_program(self) -> Program:
@@ -247,6 +330,10 @@ class PurchaseArtifactV3:
                 bytes(self.source_evidence_root),
                 int(self.purchase_kind),
                 bytes(self.presale_terms_hash),
+                int(self.delivery_kind),
+                bytes(self.delivery_asset_id),
+                self.delivery_amount,
+                bytes(self.delivery_context_hash),
             ]
         )
 
@@ -386,6 +473,7 @@ class StripeSettlementReceiptV1:
     validator_threshold: int
     receipt_nonce: bytes32
     expires_at: int
+    result_authorization_puzzle_hash: bytes32 = ZERO_32
 
     def __post_init__(self) -> None:
         if self.artifact.rail != PaymentRail.STRIPE:
@@ -394,6 +482,14 @@ class StripeSettlementReceiptV1:
             )
         _require_bytes32(self.validator_roster_root, "validator_roster_root")
         _require_bytes32(self.receipt_nonce, "receipt_nonce")
+        _require_bytes32(
+            self.result_authorization_puzzle_hash,
+            "result_authorization_puzzle_hash",
+        )
+        if self.result_authorization_puzzle_hash != ZERO_32:
+            raise PaymentArtifactError(
+                "Stripe settlement cannot carry a Base result authorization"
+            )
         if ZERO_32 in {self.validator_roster_root, self.receipt_nonce}:
             raise PaymentArtifactError(
                 "validator roster and receipt nonce must be non-zero"
@@ -488,6 +584,7 @@ class StripeSettlementReceiptV1:
                 bytes(self.artifact.zkpassport_root),
                 bytes(self.artifact.protocol_treasury_puzzle_hash),
                 self.artifact.technology_fee_minor,
+                bytes(self.result_authorization_puzzle_hash),
             ]
         )
 
@@ -499,6 +596,169 @@ class StripeSettlementReceiptV1:
         _require_u64(now, "now", minimum=1)
         if now >= self.expires_at:
             raise PaymentArtifactError("Stripe settlement receipt has expired")
+
+
+@dataclass(frozen=True)
+class ExternalSettlementReceiptV1:
+    """Provider-neutral receipt for independently verified EVM settlement."""
+
+    artifact: PurchaseArtifactV3
+    attestation: PaymentAttestationV1
+    evidence_hash: bytes32
+    observed_at: int
+    expires_at: int
+    result_authorization_puzzle_hash: bytes32
+
+    def __post_init__(self) -> None:
+        if self.artifact.rail not in {
+            PaymentRail.STRIPE,
+            PaymentRail.EVM_TEST_USD,
+        }:
+            raise PaymentArtifactError(
+                "external settlement requires Stripe or EVM USDC"
+            )
+        _require_bytes32(self.evidence_hash, "evidence_hash")
+        _require_bytes32(
+            self.result_authorization_puzzle_hash,
+            "result_authorization_puzzle_hash",
+        )
+        if self.evidence_hash == ZERO_32:
+            raise PaymentArtifactError("evidence_hash must be non-zero")
+        if (
+            self.attestation.purchase_id != self.artifact.purchase_id
+            or self.attestation.artifact_hash != self.artifact.artifact_hash
+            or self.attestation.evidence_hash != self.evidence_hash
+        ):
+            raise PaymentArtifactError(
+                "external attestation does not match its purchase evidence"
+            )
+        if (
+            self.attestation.transition != PaymentTransition.SUCCEEDED
+            or self.attestation.resolution != PaymentResolution.DELIVER
+        ):
+            raise PaymentArtifactError(
+                "external delivery requires a succeeded delivery attestation"
+            )
+        _require_u64(self.observed_at, "observed_at", minimum=1)
+        _require_u64(self.expires_at, "expires_at", minimum=1)
+        if self.attestation.observed_at != self.observed_at:
+            raise PaymentArtifactError(
+                "external receipt and attestation observation times differ"
+            )
+        if self.expires_at <= self.observed_at:
+            raise PaymentArtifactError(
+                "external receipt must expire after observation"
+            )
+        if self.expires_at - self.observed_at > STRIPE_RECEIPT_TTL_SECONDS:
+            raise PaymentArtifactError(
+                "external receipt exceeds the 48-hour lifetime"
+            )
+        if self.artifact.rail == PaymentRail.EVM_TEST_USD:
+            if self.result_authorization_puzzle_hash == ZERO_32:
+                raise PaymentArtifactError(
+                    "Base settlement requires a result authorization"
+                )
+        elif self.result_authorization_puzzle_hash != ZERO_32:
+            raise PaymentArtifactError(
+                "Stripe settlement cannot carry a Base result authorization"
+            )
+
+    def to_program(self) -> Program:
+        return Program.to(
+            [
+                STRIPE_SETTLEMENT_RECEIPT_VERSION,
+                bytes(self.artifact.artifact_hash),
+                bytes(self.artifact.purchase_id),
+                bytes(self.attestation.attestation_hash),
+                bytes(self.evidence_hash),
+                self.observed_at,
+                self.expires_at,
+                bytes(self.result_authorization_puzzle_hash),
+            ]
+        )
+
+    @property
+    def receipt_hash(self) -> bytes32:
+        return bytes32(self.to_program().get_tree_hash())
+
+
+def build_external_settlement_receipt_v1(
+    *,
+    artifact: PurchaseArtifactV3,
+    provider_id: bytes32,
+    external_reference_hash: bytes32,
+    evidence_hash: bytes32,
+    observed_at: int,
+    result_authorization_puzzle_hash: bytes32,
+    expires_at: int | None = None,
+) -> ExternalSettlementReceiptV1:
+    if artifact.rail not in {
+        PaymentRail.STRIPE,
+        PaymentRail.EVM_TEST_USD,
+    }:
+        raise PaymentArtifactError(
+            "external settlement receipt requires Stripe or EVM USDC"
+        )
+    for value, name in (
+        (provider_id, "provider_id"),
+        (external_reference_hash, "external_reference_hash"),
+        (evidence_hash, "evidence_hash"),
+    ):
+        _require_bytes32(value, name)
+        if value == ZERO_32:
+            raise PaymentArtifactError(f"{name} must be non-zero")
+    _require_bytes32(
+        result_authorization_puzzle_hash,
+        "result_authorization_puzzle_hash",
+    )
+    _require_u64(observed_at, "observed_at", minimum=1)
+    pending_evidence_hash = bytes32(
+        Program.to(
+            [
+                _EXTERNAL_PENDING_EVIDENCE_TAG,
+                bytes(artifact.purchase_id),
+                bytes(artifact.artifact_hash),
+                bytes(provider_id),
+                bytes(external_reference_hash),
+            ]
+        ).get_tree_hash()
+    )
+    pending = PaymentAttestationV1(
+        purchase_id=artifact.purchase_id,
+        artifact_hash=artifact.artifact_hash,
+        transition=PaymentTransition.PENDING,
+        resolution=PaymentResolution.NONE,
+        provider_id=provider_id,
+        external_reference_hash=external_reference_hash,
+        evidence_hash=pending_evidence_hash,
+        previous_attestation_hash=ZERO_32,
+        observed_at=max(1, min(observed_at, artifact.quote_expires_at - 1)),
+    )
+    succeeded = PaymentAttestationV1(
+        purchase_id=artifact.purchase_id,
+        artifact_hash=artifact.artifact_hash,
+        transition=PaymentTransition.SUCCEEDED,
+        resolution=PaymentResolution.DELIVER,
+        provider_id=provider_id,
+        external_reference_hash=external_reference_hash,
+        evidence_hash=evidence_hash,
+        previous_attestation_hash=pending.attestation_hash,
+        observed_at=observed_at,
+    )
+    return ExternalSettlementReceiptV1(
+        artifact=artifact,
+        attestation=succeeded,
+        evidence_hash=evidence_hash,
+        observed_at=observed_at,
+        expires_at=(
+            expires_at
+            if expires_at is not None
+            else observed_at + STRIPE_RECEIPT_TTL_SECONDS
+        ),
+        result_authorization_puzzle_hash=(
+            result_authorization_puzzle_hash
+        ),
+    )
 
 
 def build_stripe_pending_attestation(
@@ -829,6 +1089,105 @@ def _build_chia_purchase_artifact(
     )
 
 
+def build_stripe_purchase_artifact_v3(
+    *, base_usd_amount_minor: int, **kwargs: Any
+) -> PurchaseArtifactV3:
+    return build_stripe_purchase_artifact(
+        base_amount_minor=base_usd_amount_minor,
+        **kwargs,
+    )
+
+
+def build_evm_test_usd_purchase_artifact_v3(
+    *, base_usd_amount_minor: int, **kwargs: Any
+) -> PurchaseArtifactV3:
+    return build_evm_test_usd_purchase_artifact(
+        base_amount_minor=base_usd_amount_minor,
+        **kwargs,
+    )
+
+
+def build_xch_purchase_artifact_v3(
+    *, base_usd_amount_minor: int, **kwargs: Any
+) -> PurchaseArtifactV3:
+    return build_xch_purchase_artifact(
+        base_amount_minor=base_usd_amount_minor,
+        **kwargs,
+    )
+
+
+def build_cat_purchase_artifact_v3(
+    *,
+    base_usd_amount_minor: int,
+    cat_decimals: int,
+    **kwargs: Any,
+) -> PurchaseArtifactV3:
+    return build_cat_purchase_artifact(
+        base_amount_minor=base_usd_amount_minor,
+        cat_asset_decimals=cat_decimals,
+        **kwargs,
+    )
+
+
+def build_sgt_purchase_artifact_v3(
+    *,
+    network: str,
+    sgt_asset_id: bytes32,
+    sale_id: bytes32,
+    sgt_amount: int,
+    base_usd_amount_minor: int,
+    technology_fee_bps: int,
+    protocol_treasury_puzzle_hash: bytes32,
+    zkpassport_root: bytes32,
+    rail: PaymentRail,
+    rail_chain_id: int,
+    rail_asset_id: bytes32,
+    rail_asset_decimals: int,
+    vault_launcher_id: bytes32,
+    vault_p2_puzzle_hash: bytes32,
+    authorization_nonce: bytes32,
+    authorization_expires_at: int,
+    quote_expires_at: int,
+) -> PurchaseArtifactV3:
+    if rail not in {PaymentRail.STRIPE, PaymentRail.EVM_TEST_USD}:
+        raise PaymentArtifactError(
+            "SGT external artifact requires Stripe or Base USDC"
+        )
+    fee = technology_fee_minor(
+        base_usd_amount_minor, technology_fee_bps
+    )
+    subtotal = base_usd_amount_minor + fee
+    rail_amount = subtotal if rail == PaymentRail.STRIPE else subtotal * 10_000
+    return PurchaseArtifactV3(
+        network=network,
+        collection_id=ZERO_32,
+        deed_launcher_id=ZERO_32,
+        metadata_root=ZERO_32,
+        metadata_anchor_id=ZERO_32,
+        share_ppm=0,
+        base_amount_minor=base_usd_amount_minor,
+        technology_fee_bps=technology_fee_bps,
+        technology_fee_minor=fee,
+        subtotal_minor=subtotal,
+        protocol_treasury_puzzle_hash=protocol_treasury_puzzle_hash,
+        zkpassport_root=zkpassport_root,
+        rail=rail,
+        rail_chain_id=rail_chain_id,
+        rail_asset_id=rail_asset_id,
+        rail_asset_decimals=rail_asset_decimals,
+        rail_amount=rail_amount,
+        vault_launcher_id=vault_launcher_id,
+        vault_p2_puzzle_hash=vault_p2_puzzle_hash,
+        authorization_nonce=authorization_nonce,
+        authorization_expires_at=authorization_expires_at,
+        quote_expires_at=quote_expires_at,
+        delivery_kind=PurchaseDeliveryKind.SGT,
+        delivery_asset_id=sgt_asset_id,
+        delivery_amount=sgt_amount,
+        delivery_context_hash=sale_id,
+    )
+
+
 def purchase_artifact_to_json(
     artifact: PurchaseArtifactV3,
 ) -> dict[str, Any]:
@@ -865,6 +1224,10 @@ def purchase_artifact_to_json(
         "sourceEvidenceRoot": _hex32(artifact.source_evidence_root),
         "purchaseKind": int(artifact.purchase_kind),
         "presaleTermsHash": _hex32(artifact.presale_terms_hash),
+        "deliveryKind": int(artifact.delivery_kind),
+        "deliveryAssetId": _hex32(artifact.delivery_asset_id),
+        "deliveryAmount": str(artifact.delivery_amount),
+        "deliveryContextHash": _hex32(artifact.delivery_context_hash),
     }
     value.update(
         {
@@ -892,6 +1255,14 @@ def purchase_artifact_from_json(
     except ValueError as exc:
         raise PaymentArtifactError(
             "purchase artifact kind is unsupported"
+        ) from exc
+    try:
+        delivery_kind = PurchaseDeliveryKind(
+            _json_int(value, "deliveryKind")
+        )
+    except ValueError as exc:
+        raise PaymentArtifactError(
+            "purchase artifact delivery kind is unsupported"
         ) from exc
     artifact = PurchaseArtifactV3(
         network=_json_string(value, "network"),
@@ -927,6 +1298,12 @@ def purchase_artifact_from_json(
         source_evidence_root=_json_bytes32(value, "sourceEvidenceRoot"),
         purchase_kind=purchase_kind,
         presale_terms_hash=_json_bytes32(value, "presaleTermsHash"),
+        delivery_kind=delivery_kind,
+        delivery_asset_id=_json_bytes32(value, "deliveryAssetId"),
+        delivery_amount=_json_decimal(value, "deliveryAmount"),
+        delivery_context_hash=_json_bytes32(
+            value, "deliveryContextHash"
+        ),
     )
     canonical = purchase_artifact_to_json(artifact)
     for field in ("programHex", "artifactHash", "purchaseId"):
@@ -1107,6 +1484,9 @@ def stripe_receipt_to_json(
         "validatorThreshold": receipt.validator_threshold,
         "receiptNonce": _hex32(receipt.receipt_nonce),
         "expiresAt": str(receipt.expires_at),
+        "resultAuthorizationPuzzleHash": _hex32(
+            receipt.result_authorization_puzzle_hash
+        ),
         "programHex": "0x" + bytes(receipt.to_program()).hex(),
         "receiptHash": _hex32(receipt.receipt_hash),
     }
@@ -1124,6 +1504,7 @@ def stripe_receipt_from_json(
         "validatorThreshold",
         "receiptNonce",
         "expiresAt",
+        "resultAuthorizationPuzzleHash",
         "programHex",
         "receiptHash",
     }
@@ -1141,6 +1522,9 @@ def stripe_receipt_from_json(
         validator_threshold=_json_int(value, "validatorThreshold"),
         receipt_nonce=_json_bytes32(value, "receiptNonce"),
         expires_at=_json_decimal(value, "expiresAt"),
+        result_authorization_puzzle_hash=_json_bytes32(
+            value, "resultAuthorizationPuzzleHash"
+        ),
     )
     canonical = stripe_receipt_to_json(receipt)
     for field in ("programHex", "receiptHash"):
@@ -1338,8 +1722,76 @@ def _json_bytes32(value: Mapping[str, Any], field: str) -> bytes32:
         raise PaymentArtifactError(f"{field} must be valid bytes32") from exc
 
 
+def build_stripe_settlement_receipt_v1(
+    *,
+    artifact: PurchaseArtifactV3,
+    evidence: StripeSettlementEvidenceV1,
+    validator_pubkeys: tuple[bytes, bytes, bytes],
+    receipt_nonce: bytes32 | None = None,
+    expires_at: int | None = None,
+) -> StripeSettlementReceiptV1:
+    if len(validator_pubkeys) != 3 or len(set(validator_pubkeys)) != 3:
+        raise PaymentArtifactError(
+            "Stripe settlement requires three distinct validator public keys"
+        )
+    if any(len(value) != 48 for value in validator_pubkeys):
+        raise PaymentArtifactError(
+            "Stripe validator public keys must be 48 bytes"
+        )
+    pending = build_stripe_pending_attestation(
+        artifact=artifact,
+        evidence=evidence,
+        observed_at=max(1, min(evidence.observed_at, artifact.quote_expires_at - 1)),
+    )
+    succeeded = PaymentAttestationV1(
+        purchase_id=artifact.purchase_id,
+        artifact_hash=artifact.artifact_hash,
+        transition=PaymentTransition.SUCCEEDED,
+        resolution=PaymentResolution.DELIVER,
+        provider_id=STRIPE_PAYMENT_PROVIDER_ID,
+        external_reference_hash=evidence.payment_reference_hash,
+        evidence_hash=evidence.evidence_hash,
+        previous_attestation_hash=pending.attestation_hash,
+        observed_at=evidence.observed_at,
+    )
+    roster_root = bytes32(
+        Program.to(list(validator_pubkeys)).get_tree_hash()
+    )
+    resolved_nonce = receipt_nonce or bytes32(
+        Program.to(
+            [
+                b"SOLSLOT_STRIPE_RECEIPT_NONCE_V1",
+                bytes(artifact.purchase_id),
+                bytes(evidence.evidence_hash),
+                bytes(roster_root),
+            ]
+        ).get_tree_hash()
+    )
+    resolved_expiry = expires_at or (
+        evidence.observed_at + STRIPE_RECEIPT_TTL_SECONDS
+    )
+    return StripeSettlementReceiptV1(
+        artifact=artifact,
+        evidence=evidence,
+        attestation=succeeded,
+        validator_roster_root=roster_root,
+        validator_threshold=2,
+        receipt_nonce=resolved_nonce,
+        expires_at=resolved_expiry,
+    )
+
+
+purchase_artifact_v3_to_json = purchase_artifact_to_json
+purchase_artifact_v3_from_json = purchase_artifact_from_json
+stripe_settlement_evidence_to_json = stripe_evidence_to_json
+stripe_settlement_evidence_from_json = stripe_evidence_from_json
+
+
 __all__ = [
+    "EXTERNAL_SETTLEMENT_RECEIPT_SCHEMA",
+    "MAX_TECHNOLOGY_FEE_BPS",
     "PURCHASE_ARTIFACT_SCHEMA",
+    "PURCHASE_ARTIFACT_V3_SCHEMA",
     "STRIPE_RECEIPT_TTL_SECONDS",
     "STRIPE_PAYMENT_PROVIDER_ID",
     "STRIPE_SETTLEMENT_EVIDENCE_SCHEMA",
@@ -1347,25 +1799,39 @@ __all__ = [
     "TECHNOLOGY_FEE_BPS_ALPHA",
     "TECHNOLOGY_FEE_BPS_HARD_CAP",
     "PurchaseArtifactV3",
+    "PurchaseDeliveryKind",
     "PurchaseKind",
     "StripeDisputeState",
     "StripeFundingType",
     "StripeMethodFamily",
+    "StripeMode",
     "StripePaymentStatus",
     "StripeRefundState",
     "StripeSettlementEvidenceV1",
     "StripeSettlementReceiptV1",
+    "ExternalSettlementReceiptV1",
     "build_cat_purchase_artifact",
+    "build_cat_purchase_artifact_v3",
     "build_evm_test_usd_purchase_artifact",
+    "build_evm_test_usd_purchase_artifact_v3",
+    "build_external_settlement_receipt_v1",
+    "build_sgt_purchase_artifact_v3",
     "build_stripe_purchase_artifact",
+    "build_stripe_purchase_artifact_v3",
     "build_stripe_pending_attestation",
+    "build_stripe_settlement_receipt_v1",
     "build_xch_purchase_artifact",
+    "build_xch_purchase_artifact_v3",
     "payment_attestation_from_json",
     "payment_attestation_to_json",
     "purchase_artifact_from_json",
+    "purchase_artifact_v3_from_json",
     "purchase_artifact_to_json",
+    "purchase_artifact_v3_to_json",
     "stripe_evidence_from_json",
     "stripe_evidence_to_json",
+    "stripe_settlement_evidence_from_json",
+    "stripe_settlement_evidence_to_json",
     "stripe_receipt_from_json",
     "stripe_receipt_to_json",
     "technology_fee_minor",

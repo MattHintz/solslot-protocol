@@ -1,6 +1,7 @@
 """RC22 vault helpers for reviewed SmartDeed/Sols operations."""
 from __future__ import annotations
 
+import hashlib
 from typing import Optional
 
 from chia.types.blockchain_format.coin import Coin
@@ -31,8 +32,10 @@ from solslot_puzzles.vault_driver import (
 
 SPEND_AUTHORIZE_SOLS_SWAP = 0x73  # "s"
 SPEND_ACCEPT_REDEMPTION = 0x64  # "d"
+SPEND_AUTHORIZE_SGT_LOCK = 0x76  # "v"
 VAULT_SOLS_SWAP_TAG = b"VSOL"
 VAULT_REDEMPTION_ACCEPT_TAG = b"RDA1"
+VAULT_SGT_LOCK_TAG = b"VSGT"
 
 _VAULT_V2_MOD: Program | None = None
 
@@ -122,6 +125,201 @@ def signing_digest_for_sols_swap(
             operation_hash,
             vault_coin_id,
         )
+    )
+
+
+def sgt_lock_operation_hash(
+    *,
+    vault_coin_id: bytes32,
+    sgt_coin_id: bytes32,
+    proposal_hash: bytes32,
+    lock_deadline: int,
+    locked_inner_puzzle_hash: bytes32,
+) -> bytes32:
+    if vault_coin_id == bytes32.zeros:
+        raise ValueError("vault_coin_id must be non-zero")
+    if sgt_coin_id == bytes32.zeros or sgt_coin_id == vault_coin_id:
+        raise ValueError("sgt_coin_id must be non-zero and differ from the vault coin")
+    if proposal_hash == bytes32.zeros:
+        raise ValueError("proposal_hash must be non-zero")
+    if not 0 < lock_deadline < 2**64:
+        raise ValueError("lock_deadline must be a positive uint64")
+    if locked_inner_puzzle_hash == bytes32.zeros:
+        raise ValueError("locked_inner_puzzle_hash must be non-zero")
+    return bytes32(
+        Program.to(
+            [
+                VAULT_SGT_LOCK_TAG,
+                vault_coin_id,
+                sgt_coin_id,
+                proposal_hash,
+                lock_deadline,
+                locked_inner_puzzle_hash,
+            ]
+        ).get_tree_hash()
+    )
+
+
+def eip712_typed_data_for_sgt_lock(
+    operation_hash: bytes32,
+    vault_coin_id: bytes32,
+) -> dict:
+    return eip712_typed_data_for_vault_spend(
+        bytes([SPEND_AUTHORIZE_SGT_LOCK]),
+        operation_hash,
+        vault_coin_id,
+    )
+
+
+def signing_digest_for_sgt_lock(
+    operation_hash: bytes32,
+    vault_coin_id: bytes32,
+) -> bytes32:
+    return bytes32(
+        signing_message_for_vault_spend(
+            bytes([SPEND_AUTHORIZE_SGT_LOCK]),
+            operation_hash,
+            vault_coin_id,
+        )
+    )
+
+
+def vault_sgt_lock_puzzle_announcement(
+    *,
+    vault_coin_id: bytes32,
+    sgt_coin_id: bytes32,
+    locked_inner_puzzle_hash: bytes32,
+) -> bytes:
+    return b"S" + bytes(
+        Program.to(
+            [vault_coin_id, sgt_coin_id, locked_inner_puzzle_hash]
+        ).get_tree_hash()
+    )
+
+
+def vault_sgt_lock_coin_announcement_id(
+    *,
+    vault_coin_id: bytes32,
+    sgt_coin_id: bytes32,
+    locked_inner_puzzle_hash: bytes32,
+) -> bytes32:
+    message = b"S" + hashlib.sha256(
+        bytes(vault_coin_id)
+        + bytes(sgt_coin_id)
+        + bytes(locked_inner_puzzle_hash)
+    ).digest()
+    return bytes32(hashlib.sha256(bytes(sgt_coin_id) + message).digest())
+
+
+def inner_solution_for_p2_vault_sgt_lock(
+    *,
+    vault_coin_id: bytes32,
+    vault_inner_puzzle_hash: bytes32,
+    sgt_coin_id: bytes32,
+    sgt_free_inner_puzzle_hash: bytes32,
+    sgt_amount: int,
+    locked_inner_puzzle_hash: bytes32,
+) -> Program:
+    if not 0 < sgt_amount < 2**64:
+        raise ValueError("sgt_amount must be a positive uint64")
+    if sgt_coin_id == bytes32.zeros or sgt_coin_id == vault_coin_id:
+        raise ValueError("sgt_coin_id must be non-zero and differ from the vault coin")
+    return Program.to(
+        [
+            vault_inner_puzzle_hash,
+            vault_coin_id,
+            sgt_coin_id,
+            sgt_free_inner_puzzle_hash,
+            sgt_amount,
+            locked_inner_puzzle_hash,
+        ]
+    )
+
+
+def inner_solution_for_sgt_lock(
+    *,
+    vault_coin_id: bytes32,
+    vault_inner_puzzle_hash: bytes32,
+    vault_amount: int,
+    sgt_coin_id: bytes32,
+    proposal_hash: bytes32,
+    lock_deadline: int,
+    locked_inner_puzzle_hash: bytes32,
+    signature_data: Optional[bytes] = None,
+) -> Program:
+    if vault_amount <= 0:
+        raise ValueError("vault_amount must be positive")
+    sgt_lock_operation_hash(
+        vault_coin_id=vault_coin_id,
+        sgt_coin_id=sgt_coin_id,
+        proposal_hash=proposal_hash,
+        lock_deadline=lock_deadline,
+        locked_inner_puzzle_hash=locked_inner_puzzle_hash,
+    )
+    return Program.to(
+        [
+            vault_coin_id,
+            vault_inner_puzzle_hash,
+            vault_amount,
+            SPEND_AUTHORIZE_SGT_LOCK,
+            [
+                sgt_coin_id,
+                proposal_hash,
+                lock_deadline,
+                locked_inner_puzzle_hash,
+                signature_data or b"",
+            ],
+        ]
+    )
+
+
+def build_vault_sgt_lock_spend(
+    *,
+    vault_coin: Coin,
+    vault_launcher_id: bytes32,
+    owner_pubkey: bytes,
+    auth_type: int,
+    members_merkle_root: bytes32,
+    pool_launcher_id: bytes32,
+    identity_attest_root: bytes32,
+    zkpassport_bridge_policy_hash: bytes32,
+    sgt_coin_id: bytes32,
+    proposal_hash: bytes32,
+    lock_deadline: int,
+    locked_inner_puzzle_hash: bytes32,
+    lineage_proof: LineageProof,
+    signature_data: Optional[bytes] = None,
+) -> CoinSpend:
+    inner = puzzle_for_vault_v2_inner(
+        vault_launcher_id=vault_launcher_id,
+        owner_pubkey=owner_pubkey,
+        auth_type=auth_type,
+        members_merkle_root=members_merkle_root,
+        pool_launcher_id=pool_launcher_id,
+        identity_attest_root=identity_attest_root,
+        zkpassport_bridge_policy_hash=zkpassport_bridge_policy_hash,
+    )
+    full = puzzle_for_singleton(vault_launcher_id, inner)
+    if vault_coin.puzzle_hash != full.get_tree_hash():
+        raise ValueError("vault coin does not match the reviewed vault")
+    inner_solution = inner_solution_for_sgt_lock(
+        vault_coin_id=vault_coin.name(),
+        vault_inner_puzzle_hash=bytes32(inner.get_tree_hash()),
+        vault_amount=int(vault_coin.amount),
+        sgt_coin_id=sgt_coin_id,
+        proposal_hash=proposal_hash,
+        lock_deadline=lock_deadline,
+        locked_inner_puzzle_hash=locked_inner_puzzle_hash,
+        signature_data=signature_data,
+    )
+    return make_spend(
+        vault_coin,
+        full,
+        solution_for_singleton(
+            lineage_proof,
+            uint64(vault_coin.amount),
+            inner_solution,
+        ),
     )
 
 
@@ -405,8 +603,10 @@ def build_vault_sols_swap_spend(
 __all__ = [
     "SPEND_AUTHORIZE_SOLS_SWAP",
     "SPEND_ACCEPT_REDEMPTION",
+    "SPEND_AUTHORIZE_SGT_LOCK",
     "VAULT_SOLS_SWAP_TAG",
     "VAULT_REDEMPTION_ACCEPT_TAG",
+    "VAULT_SGT_LOCK_TAG",
     "vault_v2_inner_mod",
     "vault_v2_inner_mod_hash",
     "puzzle_for_vault_v2_inner",
@@ -414,6 +614,14 @@ __all__ = [
     "vault_sols_operation_announcement",
     "eip712_typed_data_for_sols_swap",
     "signing_digest_for_sols_swap",
+    "sgt_lock_operation_hash",
+    "eip712_typed_data_for_sgt_lock",
+    "signing_digest_for_sgt_lock",
+    "vault_sgt_lock_puzzle_announcement",
+    "vault_sgt_lock_coin_announcement_id",
+    "inner_solution_for_p2_vault_sgt_lock",
+    "inner_solution_for_sgt_lock",
+    "build_vault_sgt_lock_spend",
     "redemption_accept_operation_hash",
     "eip712_typed_data_for_redemption_accept",
     "signing_digest_for_redemption_accept",

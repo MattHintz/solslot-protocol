@@ -35,7 +35,9 @@ from chia_rs.sized_ints import uint64
 from solslot_puzzles import load_puzzle
 from solslot_puzzles.payment_artifacts_v2 import PaymentArtifactError, PaymentRail
 from solslot_puzzles.payment_artifacts_v3 import (
+    ExternalSettlementReceiptV1,
     PurchaseArtifactV3,
+    PurchaseDeliveryKind,
     StripeSettlementReceiptV1,
 )
 from solslot_puzzles.primary_purchase_v2_driver import (
@@ -162,6 +164,36 @@ class InventoryTransitionSpendV1:
     validator_message: bytes32 | None
 
 
+ExternalReceiptV1 = StripeSettlementReceiptV1 | ExternalSettlementReceiptV1
+
+
+@dataclass(frozen=True)
+class StripeSettlementTermsV1:
+    """Exact validator receipt terms for Stripe or Base Sepolia USDC."""
+
+    receipt: ExternalReceiptV1
+    validator_pubkeys: tuple[bytes, bytes, bytes]
+
+    def __post_init__(self) -> None:
+        validator_roster_root(self.validator_pubkeys)
+        artifact = self.receipt.artifact
+        result_hash = self.receipt.result_authorization_puzzle_hash
+        if artifact.rail == PaymentRail.EVM_TEST_USD:
+            if result_hash == bytes32.zeros:
+                raise PaymentArtifactError(
+                    "Base settlement requires a result authorization puzzle"
+                )
+        elif artifact.rail == PaymentRail.STRIPE:
+            if result_hash != bytes32.zeros:
+                raise PaymentArtifactError(
+                    "Stripe settlement cannot carry a Base result puzzle"
+                )
+        else:
+            raise PaymentArtifactError(
+                "external receipt requires Stripe or Base Sepolia USDC"
+            )
+
+
 def mint_offer_delegate_v5_mod() -> Program:
     global _MINT_OFFER_V5_MOD
     if _MINT_OFFER_V5_MOD is None:
@@ -210,34 +242,65 @@ def validator_roster_root(pubkeys: Sequence[bytes]) -> bytes32:
     return bytes32(Program.to(list(values)).get_tree_hash())
 
 
+def _receipt_evidence_hash(receipt: ExternalReceiptV1) -> bytes32:
+    if isinstance(receipt, StripeSettlementReceiptV1):
+        return receipt.evidence.evidence_hash
+    return receipt.evidence_hash
+
+
+def _receipt_observed_at(receipt: ExternalReceiptV1) -> int:
+    if isinstance(receipt, StripeSettlementReceiptV1):
+        return receipt.evidence.observed_at
+    return receipt.observed_at
+
+
+def curry_stripe_settlement_receipt(
+    terms: StripeSettlementTermsV1,
+) -> Program:
+    receipt = terms.receipt
+    artifact = receipt.artifact
+    if isinstance(receipt, StripeSettlementReceiptV1):
+        if receipt.validator_roster_root != validator_roster_root(
+            terms.validator_pubkeys
+        ):
+            raise PaymentArtifactError(
+                "receipt validator roster does not match configured validators"
+            )
+    return stripe_settlement_receipt_v1_mod().curry(
+        artifact.artifact_hash,
+        artifact.purchase_id,
+        receipt.receipt_hash,
+        _receipt_evidence_hash(receipt),
+        receipt.attestation.attestation_hash,
+        int(artifact.rail),
+        int(artifact.delivery_kind),
+        artifact.delivery_asset_id,
+        artifact.delivery_amount,
+        artifact.delivery_context_hash,
+        artifact.vault_launcher_id,
+        artifact.vault_p2_puzzle_hash,
+        artifact.zkpassport_root,
+        artifact.technology_fee_minor,
+        artifact.rail_amount,
+        artifact.protocol_treasury_puzzle_hash,
+        _receipt_observed_at(receipt),
+        receipt.expires_at,
+        receipt.result_authorization_puzzle_hash,
+        list(terms.validator_pubkeys),
+        OFFER_MOD_HASH,
+    )
+
+
 def make_stripe_receipt_puzzle(
     *,
     receipt: StripeSettlementReceiptV1,
     validator_pubkeys: tuple[bytes, bytes, bytes],
 ) -> Program:
-    if receipt.validator_roster_root != validator_roster_root(
-        validator_pubkeys
-    ):
-        raise PaymentArtifactError(
-            "receipt validator roster does not match configured validators"
+    return curry_stripe_settlement_receipt(
+        StripeSettlementTermsV1(
+            receipt=receipt,
+            validator_pubkeys=validator_pubkeys,
         )
-    return stripe_settlement_receipt_v1_mod().curry(
-        receipt.artifact.artifact_hash,
-        receipt.artifact.purchase_id,
-        receipt.evidence.evidence_hash,
-        receipt.attestation.attestation_hash,
-        receipt.validator_roster_root,
-        receipt.receipt_nonce,
-        receipt.evidence.observed_at,
-        receipt.expires_at,
-        receipt.artifact.deed_launcher_id,
-        receipt.artifact.vault_launcher_id,
-        receipt.artifact.vault_p2_puzzle_hash,
-        receipt.artifact.zkpassport_root,
-        receipt.artifact.protocol_treasury_puzzle_hash,
-        receipt.artifact.technology_fee_minor,
-        list(validator_pubkeys),
-        OFFER_MOD_HASH,
     )
 
 
@@ -249,16 +312,33 @@ def build_stripe_receipt_spend(
     signer_indices: Sequence[int],
 ) -> CoinSpend:
     receipt.assert_live(receipt.evidence.observed_at)
-    indices = _validate_signer_indices(signer_indices)
-    puzzle = make_stripe_receipt_puzzle(
-        receipt=receipt,
-        validator_pubkeys=validator_pubkeys,
+    return build_external_receipt_spend(
+        receipt_coin=receipt_coin,
+        terms=StripeSettlementTermsV1(
+            receipt=receipt,
+            validator_pubkeys=validator_pubkeys,
+        ),
+        signer_indices=signer_indices,
     )
+
+
+def build_external_receipt_spend(
+    *,
+    receipt_coin: Coin,
+    terms: StripeSettlementTermsV1,
+    signer_indices: Sequence[int],
+) -> CoinSpend:
+    """Spend one exact Stripe or Base receipt with two validators."""
+
+    indices = _validate_signer_indices(signer_indices)
+    puzzle = curry_stripe_settlement_receipt(terms)
     if receipt_coin.amount != 1:
-        raise PaymentArtifactError("Stripe receipt coin must be one mojo")
+        raise PaymentArtifactError(
+            "external settlement receipt coin must be one mojo"
+        )
     if receipt_coin.puzzle_hash != puzzle.get_tree_hash():
         raise PaymentArtifactError(
-            "Stripe receipt coin does not match the authenticated receipt"
+            "receipt coin does not match the authenticated settlement"
         )
     return make_spend(
         receipt_coin,
@@ -272,6 +352,26 @@ def build_stripe_receipt_spend(
                 list(indices),
             ]
         ),
+    )
+
+
+def stripe_settlement_receipt_solution(
+    *,
+    receipt_coin: Coin,
+    signer_indices: Sequence[int],
+) -> Program:
+    if receipt_coin.amount != 1:
+        raise PaymentArtifactError(
+            "external settlement receipt coin must be one mojo"
+        )
+    return Program.to(
+        [
+            receipt_coin.name(),
+            receipt_coin.parent_coin_info,
+            receipt_coin.puzzle_hash,
+            receipt_coin.amount,
+            list(_validate_signer_indices(signer_indices)),
+        ]
     )
 
 
@@ -567,6 +667,7 @@ def _inventory_control_solution(
             bytes32.zeros,
             bytes32.zeros,
             0,
+            bytes32.zeros,
             next_expires_at,
             list(signer_indices),
         ]
@@ -960,6 +1061,7 @@ def native_offer_v5_solution(
             bytes32.zeros,
             bytes32.zeros,
             0,
+            bytes32.zeros,
             0,
             list(indices),
         ]
@@ -1076,7 +1178,7 @@ def stripe_offer_v5_solution(
     *,
     deed_coin: Coin,
     receipt_coin: Coin,
-    receipt: StripeSettlementReceiptV1,
+    receipt: ExternalReceiptV1,
     buyer_offer_nonce: bytes32,
     terms: PrimaryMintTermsV3,
     reservation: InventoryReservationV1,
@@ -1087,8 +1189,17 @@ def stripe_offer_v5_solution(
         raise PaymentArtifactError(
             "Stripe receipt differs from the active deed reservation"
         )
-    if artifact.rail != PaymentRail.STRIPE:
-        raise PaymentArtifactError("external primary purchase requires Stripe")
+    if artifact.rail not in {
+        PaymentRail.STRIPE,
+        PaymentRail.EVM_TEST_USD,
+    }:
+        raise PaymentArtifactError(
+            "external primary purchase requires Stripe or Base USDC"
+        )
+    if artifact.delivery_kind != PurchaseDeliveryKind.SMARTDEED:
+        raise PaymentArtifactError(
+            "SmartDeed inventory cannot settle an SGT artifact"
+        )
     _require_bytes32(buyer_offer_nonce, "buyer_offer_nonce")
     return Program.to(
         [
@@ -1117,10 +1228,11 @@ def stripe_offer_v5_solution(
             bytes32.zeros,
             bytes32.zeros,
             receipt_coin.name(),
-            receipt.evidence.evidence_hash,
+            _receipt_evidence_hash(receipt),
             receipt.attestation.attestation_hash,
             receipt.receipt_hash,
             receipt.expires_at,
+            receipt.result_authorization_puzzle_hash,
             0,
             [],
         ]
@@ -1133,7 +1245,7 @@ def build_stripe_mint_offer_v5_spend(
     deed_singleton_struct: Program,
     lineage_proof: LineageProof,
     receipt_coin: Coin,
-    receipt: StripeSettlementReceiptV1,
+    receipt: ExternalReceiptV1,
     buyer_offer_nonce: bytes32,
     terms: PrimaryMintTermsV3,
     reservation: InventoryReservationV1,
@@ -1165,14 +1277,16 @@ def build_stripe_mint_offer_v5_spend(
 def prepare_stripe_receipt_offer(
     *,
     receipt_spend: CoinSpend,
-    receipt: StripeSettlementReceiptV1,
+    receipt: ExternalReceiptV1,
     terms: PrimaryMintTermsV3,
 ) -> Offer:
     artifact = receipt.artifact
     assert_artifact_matches_terms(artifact, terms)
-    if receipt_spend.coin.puzzle_hash != make_stripe_receipt_puzzle(
-        receipt=receipt,
-        validator_pubkeys=terms.validator_pubkeys,
+    if receipt_spend.coin.puzzle_hash != curry_stripe_settlement_receipt(
+        StripeSettlementTermsV1(
+            receipt=receipt,
+            validator_pubkeys=terms.validator_pubkeys,
+        )
     ).get_tree_hash():
         raise PaymentArtifactError("receipt spend uses the wrong puzzle")
     requested = {
@@ -1201,10 +1315,10 @@ def prepare_stripe_receipt_offer(
     )
     if offer.get_offered_amounts() != {None: 1}:
         raise PaymentArtifactError(
-            "Stripe receipt offer must expose one technical mojo"
+            "external receipt offer must expose one technical mojo"
         )
     if offer.fees() != 0:
-        raise PaymentArtifactError("Stripe receipt offer must be zero fee")
+        raise PaymentArtifactError("external receipt offer must be zero fee")
     return offer
 
 
@@ -1212,7 +1326,7 @@ def build_stripe_primary_offer_v5(
     *,
     receipt_offer: Offer,
     receipt_coin: Coin,
-    receipt: StripeSettlementReceiptV1,
+    receipt: ExternalReceiptV1,
     deed_coin: Coin,
     deed_singleton_struct: Program,
     lineage_proof: LineageProof,
@@ -1241,7 +1355,11 @@ def build_stripe_primary_offer_v5(
             {
                 None: [
                     CreateCoin(
-                        terms.protocol_puzhash,
+                        (
+                            receipt.result_authorization_puzzle_hash
+                            if artifact.rail == PaymentRail.EVM_TEST_USD
+                            else terms.protocol_puzhash
+                        ),
                         uint64(1),
                         [artifact.purchase_id, artifact.artifact_hash],
                     )
@@ -1270,19 +1388,62 @@ def build_stripe_primary_offer_v5(
 
 
 def stripe_receipt_settlement_message(
-    receipt: StripeSettlementReceiptV1,
+    receipt: ExternalReceiptV1,
 ) -> bytes32:
+    artifact = receipt.artifact
+    values: list[object] = [
+        b"SOLSLOT_EXTERNAL_RECEIPT_SETTLEMENT_V1",
+        artifact.artifact_hash,
+        artifact.purchase_id,
+        receipt.receipt_hash,
+        int(artifact.rail),
+        int(artifact.delivery_kind),
+        artifact.delivery_asset_id,
+        artifact.delivery_amount,
+        artifact.delivery_context_hash,
+        artifact.vault_p2_puzzle_hash,
+    ]
+    if artifact.delivery_kind == PurchaseDeliveryKind.SMARTDEED:
+        values.extend(
+            [
+                receipt.result_authorization_puzzle_hash,
+                _receipt_evidence_hash(receipt),
+                receipt.attestation.attestation_hash,
+            ]
+        )
+    return bytes32(
+        Program.to(values).get_tree_hash()
+    )
+
+
+def stripe_settlement_authorization_message(
+    terms: StripeSettlementTermsV1,
+) -> bytes32:
+    receipt = terms.receipt
+    artifact = receipt.artifact
     return bytes32(
         Program.to(
             [
-                _STRIPE_SETTLEMENT_DOMAIN,
+                b"SOLSLOT_EXTERNAL_RECEIPT_AUTH_V1",
+                artifact.artifact_hash,
+                artifact.purchase_id,
                 receipt.receipt_hash,
-                receipt.artifact.artifact_hash,
-                receipt.artifact.purchase_id,
-                receipt.evidence.evidence_hash,
+                _receipt_evidence_hash(receipt),
                 receipt.attestation.attestation_hash,
-                receipt.artifact.deed_launcher_id,
-                receipt.artifact.vault_p2_puzzle_hash,
+                int(artifact.rail),
+                int(artifact.delivery_kind),
+                artifact.delivery_asset_id,
+                artifact.delivery_amount,
+                artifact.delivery_context_hash,
+                artifact.vault_launcher_id,
+                artifact.vault_p2_puzzle_hash,
+                artifact.zkpassport_root,
+                artifact.technology_fee_minor,
+                artifact.rail_amount,
+                artifact.protocol_treasury_puzzle_hash,
+                _receipt_observed_at(receipt),
+                receipt.expires_at,
+                receipt.result_authorization_puzzle_hash,
             ]
         ).get_tree_hash()
     )
@@ -1362,6 +1523,7 @@ __all__ = [
     "build_inventory_reservation_spend",
     "build_inventory_extension_spend",
     "build_inventory_release_spend",
+    "build_external_receipt_spend",
     "build_native_mint_offer_v5_spend",
     "build_native_primary_offer_v5",
     "build_stripe_mint_offer_v5_spend",

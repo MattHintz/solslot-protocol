@@ -106,9 +106,9 @@ PUZZLE_FILENAMES = (
     "admin_identity_terminal_action_v1.clsp",
     "admin_identity_prepare_announcement_v1.clsp",
     "eip712_member_v2.clsp",
-    # RC24 external-payment settlement. Stripe state is independently
-    # authenticated by the configured 2-of-3 validators before a one-mojo
-    # receipt can atomically deliver the exact governed deed to its vault.
+    # RC25 external-payment settlement. Stripe or Base USDC state is
+    # independently authenticated by the configured 2-of-3 validators before
+    # a one-mojo receipt can atomically deliver the exact governed asset.
     "stripe_settlement_receipt_v1.clsp",
     "mint_offer_inventory_available_v1.clsp",
     "mint_offer_delegate_v5.clsp",
@@ -117,6 +117,10 @@ PUZZLE_FILENAMES = (
     # validator-authenticated Stripe receipt without exposing a PaymentIntent.
     "voucher_nft_inner_v3.clsp",
     "voucher_stripe_receipt_v1.clsp",
+    # RC25 governed SGT distribution. The fixed issuance enters a reserve puzzle;
+    # sale/grant allocations require an exact executed governance bill.
+    "sgt_reserve_inner_v1.clsp",
+    "sgt_sale_inner_v1.clsp",
 )
 
 # ── Frozen checksum — update after every intentional puzzle change ──
@@ -163,10 +167,10 @@ FROZEN_CHECKSUM: Optional[str] = (
     #   - RC19 native XCH/CAT primary purchases use a dedicated on-demand
     #     offer delegate that binds one exact deed to one canonical vault and
     #     exposes no standalone external-payment escrow branch.
-    # RC24 appends validator-authenticated direct Stripe settlement, exact deed
-    # reservation, and a refundable Stripe voucher that reuses the frozen RC20
-    # series. RC23 bytes remain frozen in its manifest.
-    "6a4e0c968febd112bb5acfb6a61890c56ad8ff07d92ac60feba9f256ff3b6f53"
+    # RC25 preserves RC24's reservation and refundable voucher modules, then
+    # adds governed SGT custody and sale while binding direct Base settlement
+    # to a one-use Chia result authorization.
+    "37936deff8f2c25f606f9a041c17e6770414d5d591c0c40c09e7f92d1810f714"
 )
 
 # ── Cache ──

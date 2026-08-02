@@ -45,6 +45,9 @@ from solslot_puzzles.sgt_driver import (
     sgt_locked_inner_mod,
     sgt_tail_hash,
 )
+from solslot_puzzles.sgt_reserve_driver import (
+    sgt_reserve_inner_puzzle,
+)
 from solslot_puzzles.sols_economics_v3 import SolsEconomicState
 from solslot_puzzles.sols_pool_v4 import SolsPoolStateV4, inventory_root
 
@@ -89,6 +92,8 @@ class RC22ProtocolDeploymentPlan:
     kos_mint_execute_pubkey: bytes
     trusted_treasury_reserve_puzzle_hash: bytes32
     trusted_protocol_treasury_puzzle_hash: bytes32
+    company_sgt_sale_treasury_puzzle_hash: bytes32
+    wusdc_b_asset_id: bytes32
     trusted_governance_rewards_puzzle_hash: bytes32
     trusted_governance_rewards_root: bytes32
     trusted_zkpassport_bridge_policy_hash: bytes32
@@ -100,6 +105,7 @@ class RC22ProtocolDeploymentPlan:
     sgt_tail_hash: bytes32
     sols_tail_hash: bytes32
     sgt_full_puzzle_hash: bytes32
+    sgt_reserve_inner_puzzle_hash: bytes32
     did_inner_puzzle_hash: bytes32
     did_full_puzzle_hash: bytes32
     statutes_inner_mod_hash: bytes32
@@ -144,6 +150,8 @@ def build_rc22_protocol_deployment_plan(
     kos_mint_execute_pubkey: bytes,
     trusted_treasury_reserve_puzzle_hash: bytes32,
     trusted_protocol_treasury_puzzle_hash: bytes32,
+    company_sgt_sale_treasury_puzzle_hash: bytes32,
+    wusdc_b_asset_id: bytes32,
     trusted_governance_rewards_puzzle_hash: bytes32,
     trusted_governance_rewards_root: bytes32,
     trusted_zkpassport_bridge_policy_hash: bytes32,
@@ -180,6 +188,11 @@ def build_rc22_protocol_deployment_plan(
             "trusted_protocol_treasury_puzzle_hash",
             trusted_protocol_treasury_puzzle_hash,
         ),
+        (
+            "company_sgt_sale_treasury_puzzle_hash",
+            company_sgt_sale_treasury_puzzle_hash,
+        ),
+        ("wusdc_b_asset_id", wusdc_b_asset_id),
         (
             "trusted_governance_rewards_puzzle_hash",
             trusted_governance_rewards_puzzle_hash,
@@ -308,6 +321,18 @@ def build_rc22_protocol_deployment_plan(
         governance_launcher_id,
         governance_inner_hash,
     )
+    sgt_reserve_inner = sgt_reserve_inner_puzzle(
+        proposal_tracker_struct=governance_struct,
+        admin_authority_struct=singleton_struct(admin_launcher_id),
+        sgt_tail_hash=fixed_sgt_tail,
+        wusdc_b_asset_id=wusdc_b_asset_id,
+        company_treasury_puzzle_hash=(
+            company_sgt_sale_treasury_puzzle_hash
+        ),
+    )
+    sgt_reserve_inner_hash = bytes32(
+        sgt_reserve_inner.get_tree_hash()
+    )
 
     return RC22ProtocolDeploymentPlan(
         network=network,
@@ -327,6 +352,10 @@ def build_rc22_protocol_deployment_plan(
         trusted_protocol_treasury_puzzle_hash=(
             trusted_protocol_treasury_puzzle_hash
         ),
+        company_sgt_sale_treasury_puzzle_hash=(
+            company_sgt_sale_treasury_puzzle_hash
+        ),
+        wusdc_b_asset_id=wusdc_b_asset_id,
         trusted_governance_rewards_puzzle_hash=(
             trusted_governance_rewards_puzzle_hash
         ),
@@ -344,8 +373,9 @@ def build_rc22_protocol_deployment_plan(
         sgt_full_puzzle_hash=cat2_puzzle_hash_for_sgt(
             governance_launcher_id,
             sgt_genesis_coin_id,
-            faucet_inner_puzzle_hash,
+            sgt_reserve_inner_hash,
         ),
+        sgt_reserve_inner_puzzle_hash=sgt_reserve_inner_hash,
         did_inner_puzzle_hash=did_inner_hash,
         did_full_puzzle_hash=did_full_hash,
         statutes_inner_mod_hash=protocol_statutes_inner_mod_hash(),

@@ -1936,6 +1936,174 @@ def build_authority_prepare_mips_spend(
     )
 
 
+def build_authority_operational_mips_spend(
+    *,
+    authority: GenesisAdminAuthorityV3,
+    current_authority_inner_puzzle: Program,
+    current_identities: Sequence[IdentityVaultGenesis],
+    current_identity_coin_ids: Sequence[bytes32],
+    authority_delegated_puzzle: Program,
+    coadmin_slot: int,
+) -> AuthorityMipsSpend:
+    """Build the fixed owner-plus-one proof for one operational action."""
+
+    if len(current_identities) != 3 or len(current_identity_coin_ids) != 3:
+        raise ValueError("Authority V3 requires exactly three current identities")
+    if coadmin_slot not in (1, 2):
+        raise ValueError("operational approval requires coadmin slot 1 or 2")
+    identities = tuple(current_identities)
+    coin_ids = tuple(bytes32(value) for value in current_identity_coin_ids)
+    if tuple(identity.slot for identity in identities) != (0, 1, 2):
+        raise ValueError("current identities must be ordered by slot")
+    if any(value == ZERO_32 for value in coin_ids):
+        raise ValueError("current identity coin ids must be nonzero")
+
+    parsed = parse_inner_puzzle(current_authority_inner_puzzle)
+    if parsed.state.pending_kind != PENDING_NONE:
+        raise ValueError("Authority V3 is frozen by a pending key change")
+    if parsed.authority_launcher_id != authority.authority_launcher_id:
+        raise ValueError("authority launcher does not match policy")
+    if parsed.operational_root_hash != authority.operational_root_hash:
+        raise ValueError("operational root does not match policy")
+    if tuple(identity.launcher_id for identity in identities) != (
+        parsed.identity_launcher_ids
+    ):
+        raise ValueError("current identity launchers do not match authority")
+    if tuple(identity.custody_hash for identity in identities) != (
+        parsed.state.current_identity_custody_hashes
+    ):
+        raise ValueError("current identity custody hashes do not match authority")
+
+    policy = authority.operational_policy
+    root = authority.operational_root
+    owner_branch = policy.members[0]
+    coadmin_container = policy.members[1]
+    coadmin_policy = coadmin_container.puzzle
+    if not isinstance(coadmin_policy, MofN):
+        raise ValueError("operational coadmin branch is not a MIPS policy")
+    coadmin_branch = coadmin_policy.members[coadmin_slot - 1]
+    owner_solution = _solve_singleton_identity_branch(
+        branch=owner_branch,
+        identity=identities[0],
+    )
+    coadmin_solution = _solve_singleton_identity_branch(
+        branch=coadmin_branch,
+        identity=identities[coadmin_slot],
+    )
+    coadmin_policy_solution = coadmin_policy.solve(
+        {
+            coadmin_branch.puzzle_hash(_top_level=False): ProvenSpend(
+                puzzle_reveal=coadmin_branch.puzzle_reveal(_top_level=False),
+                solution=coadmin_solution,
+            )
+        }
+    )
+    coadmin_container_solution = coadmin_container.solve(
+        [],
+        [],
+        coadmin_policy_solution,
+    )
+    policy_solution = policy.solve(
+        {
+            owner_branch.puzzle_hash(_top_level=False): ProvenSpend(
+                puzzle_reveal=owner_branch.puzzle_reveal(_top_level=False),
+                solution=owner_solution,
+            ),
+            coadmin_container.puzzle_hash(_top_level=False): ProvenSpend(
+                puzzle_reveal=coadmin_container.puzzle_reveal(_top_level=False),
+                solution=coadmin_container_solution,
+            ),
+        }
+    )
+    root_solution = root.solve(
+        [],
+        [],
+        policy_solution,
+        DelegatedPuzzleAndSolution(
+            puzzle=authority_delegated_puzzle,
+            solution=Program.to(None),
+        ),
+    )
+    selected_slots = (0, coadmin_slot)
+    return AuthorityMipsSpend(
+        reveal=root.puzzle_reveal(),
+        solution=root_solution,
+        identity_records=tuple(
+            (slot, coin_ids[slot]) for slot in selected_slots
+        ),
+        selected_slots=selected_slots,
+    )
+
+
+def build_identity_operational_action(
+    *,
+    identity: IdentityVaultGenesis,
+    current_authority_inner_puzzle: Program,
+    authority_delegated_puzzle: Program,
+) -> Program:
+    """Build one unchanged identity continuation for an operational action."""
+
+    parsed = parse_inner_puzzle(current_authority_inner_puzzle)
+    if parsed.state.pending_kind != PENDING_NONE:
+        raise ValueError("Authority V3 is frozen by a pending key change")
+    if parsed.state.current_identity_custody_hashes[identity.slot] != (
+        identity.custody_hash
+    ):
+        raise ValueError("identity is not current in Authority V3")
+    authority_full_puzzle_hash = singleton_full_puzzle_hash(
+        parsed.authority_launcher_id,
+        bytes32(current_authority_inner_puzzle.get_tree_hash()),
+    )
+    return build_identity_action_puzzle(
+        # The authority uses its non-target approval branch for both selected
+        # identities. ID_ACTION_OPERATIONAL identifies the authority action;
+        # the paired identity continuations are deliberately approvals.
+        action_tag=ID_ACTION_APPROVE,
+        output_custody_hash=identity.custody_hash,
+        authority_full_puzzle_hash=authority_full_puzzle_hash,
+        authority_delegated_puzzle_hash=bytes32(
+            authority_delegated_puzzle.get_tree_hash()
+        ),
+        authority_announcement_message=None,
+        coin_announcement_message=None,
+        identity_full_puzzle_hash=identity.full_puzzle_hash,
+        amount=identity.launcher_amount,
+    )
+
+
+def build_identity_operational_solution(
+    *,
+    identity: IdentityVaultGenesis,
+    current_authority_inner_puzzle: Program,
+    current_identity_coin_id: bytes32,
+    daily_member_solution: Program,
+    authority_delegated_puzzle: Program,
+    authority_amount: int = AUTHORITY_LAUNCHER_AMOUNT,
+) -> Program:
+    """Solve a daily-key identity spend paired to one operational action."""
+
+    if current_identity_coin_id == ZERO_32:
+        raise ValueError("identity coin id must be nonzero")
+    action = build_identity_operational_action(
+        identity=identity,
+        current_authority_inner_puzzle=current_authority_inner_puzzle,
+        authority_delegated_puzzle=authority_delegated_puzzle,
+    )
+    return _build_daily_path_identity_solution(
+        daily_path=identity.daily_path,
+        daily_path_branch=identity.daily_path_branch,
+        custody_policy=identity.custody_policy,
+        custody_root=identity.custody_root,
+        daily_member_solution=daily_member_solution,
+        authority_inner_puzzle_hash=bytes32(
+            current_authority_inner_puzzle.get_tree_hash()
+        ),
+        authority_amount=authority_amount,
+        delegated_puzzle=action,
+        delegated_solution=Program.to([current_identity_coin_id]),
+    )
+
+
 def build_identity_cancel_solution(
     *,
     identity: IdentityVaultGenesis,
@@ -2105,6 +2273,7 @@ __all__ = [
     "admin_identity_terminal_action_v1_mod",
     "authority_v3_launcher_ids",
     "build_authority_action_puzzle",
+    "build_authority_operational_mips_spend",
     "build_authority_prepare_mips_spend",
     "build_cancel_solution",
     "build_complete_solution",
@@ -2115,6 +2284,8 @@ __all__ = [
     "build_identity_approval_solution",
     "build_identity_cancel_solution",
     "build_identity_finish_solution",
+    "build_identity_operational_action",
+    "build_identity_operational_solution",
     "build_identity_vault_transition",
     "build_lost_recovery_identity_solution",
     "build_operational_solution",

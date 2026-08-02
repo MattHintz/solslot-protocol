@@ -113,6 +113,8 @@ BILL_COLLECTION = b"N"
 BILL_ORACLE = b"O"
 BILL_ROUTE = b"R"
 BILL_PAUSE = b"U"
+BILL_SGT_SALE = b"Y"
+BILL_SGT_GRANT = b"G"
 REDEMPTION_FUND_TAG = b"RDF1"
 
 # Solslot announcement namespace prefix (utility_macros.clib PROTOCOL_PREFIX).
@@ -506,6 +508,108 @@ def bill_funded_redemption(
             total_payment_amount,
             deed_count,
             allocations_root,
+        ]
+    )
+
+
+def bill_sgt_sale(
+    *,
+    sale_id: bytes32,
+    sgt_amount: int,
+    recipient_vault_launcher_id: bytes32,
+    payment_rail: int,
+    payment_asset_id: bytes32,
+    payment_amount: int,
+    company_treasury_puzzle_hash: bytes32,
+    expires_at: int,
+    reserve_owner_inner_puzzle_hash: bytes32,
+    purchase_artifact_hash: bytes32 = bytes32.zeros,
+) -> Program:
+    """Approve one exact sale from the company SGT reserve.
+
+    Rails 1/2 are native XCH/wUSDC.b offers. Rails 3/4 are Stripe/Base USDC
+    settlements and must commit their exact PurchaseArtifactV3 hash. The bill
+    commits to the complete sale; no delivery field is supplied by the buyer.
+    """
+    for label, value in (
+        ("sale_id", sale_id),
+        ("recipient_vault_launcher_id", recipient_vault_launcher_id),
+        ("payment_asset_id", payment_asset_id),
+        ("company_treasury_puzzle_hash", company_treasury_puzzle_hash),
+        ("reserve_owner_inner_puzzle_hash", reserve_owner_inner_puzzle_hash),
+        ("purchase_artifact_hash", purchase_artifact_hash),
+    ):
+        _require_b32(value, label)
+    if sale_id == bytes32.zeros:
+        raise ValueError("sale_id must be non-zero")
+    if recipient_vault_launcher_id == bytes32.zeros:
+        raise ValueError("recipient_vault_launcher_id must be non-zero")
+    if company_treasury_puzzle_hash == bytes32.zeros:
+        raise ValueError("company_treasury_puzzle_hash must be non-zero")
+    if reserve_owner_inner_puzzle_hash == bytes32.zeros:
+        raise ValueError("reserve_owner_inner_puzzle_hash must be non-zero")
+    if payment_rail not in (1, 2, 3, 4):
+        raise ValueError("payment_rail must be XCH, CAT, Stripe, or Base USDC")
+    if payment_rail in (1, 3) and payment_asset_id != bytes32.zeros:
+        raise ValueError("XCH/Stripe sale payment_asset_id must be zero")
+    if payment_rail in (2, 4) and payment_asset_id == bytes32.zeros:
+        raise ValueError("CAT/Base sale payment_asset_id must be non-zero")
+    if payment_rail in (1, 2) and purchase_artifact_hash != bytes32.zeros:
+        raise ValueError("native SGT sales cannot carry an external artifact")
+    if payment_rail in (3, 4) and purchase_artifact_hash == bytes32.zeros:
+        raise ValueError("external SGT sales require a purchase artifact hash")
+    for label, value in (
+        ("sgt_amount", sgt_amount),
+        ("payment_amount", payment_amount),
+        ("expires_at", expires_at),
+    ):
+        if not isinstance(value, int) or not 0 < value < 2**64:
+            raise ValueError(f"{label} must be a positive uint64")
+    return Program.to(
+        [
+            BILL_SGT_SALE,
+            sale_id,
+            sgt_amount,
+            recipient_vault_launcher_id,
+            payment_rail,
+            payment_asset_id,
+            payment_amount,
+            company_treasury_puzzle_hash,
+            expires_at,
+            reserve_owner_inner_puzzle_hash,
+            purchase_artifact_hash,
+        ]
+    )
+
+
+def bill_sgt_grant(
+    *,
+    grant_id: bytes32,
+    sgt_amount: int,
+    recipient_vault_launcher_id: bytes32,
+    reason_hash: bytes32,
+    reserve_owner_inner_puzzle_hash: bytes32,
+) -> Program:
+    """Approve an exact SGT grant from the company reserve."""
+    for label, value in (
+        ("grant_id", grant_id),
+        ("recipient_vault_launcher_id", recipient_vault_launcher_id),
+        ("reason_hash", reason_hash),
+        ("reserve_owner_inner_puzzle_hash", reserve_owner_inner_puzzle_hash),
+    ):
+        _require_b32(value, label)
+        if value == bytes32.zeros:
+            raise ValueError(f"{label} must be non-zero")
+    if not isinstance(sgt_amount, int) or not 0 < sgt_amount < 2**64:
+        raise ValueError("sgt_amount must be a positive uint64")
+    return Program.to(
+        [
+            BILL_SGT_GRANT,
+            grant_id,
+            sgt_amount,
+            recipient_vault_launcher_id,
+            reason_hash,
+            reserve_owner_inner_puzzle_hash,
         ]
     )
 

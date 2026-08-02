@@ -587,11 +587,11 @@ class MintPublishArtifacts:
 
 @dataclass(frozen=True)
 class PrimaryPurchaseMintConfig:
-    """Native purchase terms sealed into a collection deed at mint.
+    """Universal direct-purchase terms sealed into a collection deed at mint.
 
     The deed launcher and collection commitments are derived by
-    :func:`build_mint_publish_artifacts`. External rails do not spend this
-    delegate; their delivery is coordinated by Omnichain/KoS/Samuel.
+    :func:`build_mint_publish_artifacts`. ``usd_amount_minor`` is the governed
+    base price; V5 computes and seals the technology fee and gross price.
     """
 
     network: str

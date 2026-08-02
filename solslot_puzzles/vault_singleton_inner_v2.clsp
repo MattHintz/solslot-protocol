@@ -9,6 +9,7 @@
 ;; 'a' - accept pool offer: secondary purchase via atomic swap
 ;; 's' - authorize one fully committed SmartDeed/Sols pool swap
 ;; 'd' - accept one governed, fully funded SmartDeed redemption offer
+;; 'v' - authorize one exact SGT governance lock from this vault
 ;; 'k' - update keys: rotate OWNER_PUBKEY and/or MEMBERS_MERKLE_ROOT without
 ;;        redeploying the launcher; requires current key membership proof
 ;; 'm' - migrate a deed to a new vault: re-bind a deed NFT (held at p2_vault)
@@ -56,6 +57,7 @@
   (defconst SPEND_ACCEPT_OFFER 'a')
   (defconst SPEND_AUTHORIZE_SOLS_SWAP 's')
   (defconst SPEND_ACCEPT_REDEMPTION 'd')
+  (defconst SPEND_AUTHORIZE_SGT_LOCK 'v')
   (defconst SPEND_UPDATE_KEYS 'k')
   (defconst SPEND_UPDATE_IDENTITY 'z')
   (defconst SPEND_MIGRATE 'm')
@@ -99,6 +101,7 @@
   (defconst POOL_SPEND_V2_SPECIFIC_DEED_SWAP 6)
   (defconstant VAULT_SOLS_SWAP_TAG 0x56534f4c) ;; "VSOL"
   (defconstant VAULT_REDEMPTION_ACCEPT_TAG 0x52444131) ;; "RDA1"
+  (defconstant VAULT_SGT_LOCK_TAG 0x56534754) ;; "VSGT"
   (defconstant OFFER_MOD_HASH 0xcfbfdeed5c4ca2de3d0bf520b9cb4bb7743a359bd2e6a188d19ce7dffc21d3e7)
 
   (defun base_conditions (SINGLETON_STRUCT my_id my_amount my_inner_puzzlehash)
@@ -107,6 +110,10 @@
       (list ASSERT_MY_AMOUNT my_amount)
       (list ASSERT_MY_PUZZLEHASH (calculate_full_puzzle_hash SINGLETON_STRUCT my_inner_puzzlehash))
     )
+  )
+
+  (defun list-length (items)
+    (if items (+ 1 (list-length (r items))) 0)
   )
 
   ;; Time-bound a spend: require block timestamp to be within [now - MAX_TX_BLOCK_TIME, now + MAX_TX_BLOCK_TIME].
@@ -771,6 +778,71 @@
                   SINGLETON_STRUCT my_id my_amount
                   my_inner_puzzlehash))))))))
 
+  ;; SPEND CASE 'v' — AUTHORIZE ONE SGT GOVERNANCE LOCK
+  ;;
+  ;; p = (sgt_coin_id proposal_hash lock_deadline
+  ;;      locked_inner_puzzle_hash signature_data)
+  ;;
+  ;; The SGT coin remains owned by this vault's p2_vault while it is locked.
+  ;; sgt_free_inner independently proves that locked_inner_puzzle_hash is the
+  ;; canonical lock for this proposal and deadline. The two announcements
+  ;; require the exact SGT coin and this vault singleton to be co-spent.
+  (defun spend_authorize_sgt_lock_values
+      (SINGLETON_STRUCT OWNER_PUBKEY AUTH_TYPE
+       my_id my_inner_puzzlehash my_amount
+       sgt_coin_id proposal_hash lock_deadline
+       locked_inner_puzzle_hash signature_data)
+    (assert
+      (is-size-b32 sgt_coin_id)
+      (not (= sgt_coin_id ZERO_B32))
+      (not (= sgt_coin_id my_id))
+      (is-size-b32 proposal_hash)
+      (not (= proposal_hash ZERO_B32))
+      (is-uint64 lock_deadline)
+      (> lock_deadline 0)
+      (is-size-b32 locked_inner_puzzle_hash)
+      (not (= locked_inner_puzzle_hash ZERO_B32))
+      (c
+        (authenticate_operation
+          AUTH_TYPE OWNER_PUBKEY SPEND_AUTHORIZE_SGT_LOCK
+          (sha256tree
+            (list VAULT_SGT_LOCK_TAG my_id sgt_coin_id proposal_hash
+              lock_deadline locked_inner_puzzle_hash))
+          my_id signature_data)
+        (c
+          (list CREATE_PUZZLE_ANNOUNCEMENT
+            (concat PROTOCOL_PREFIX
+              (sha256tree
+                (list my_id sgt_coin_id locked_inner_puzzle_hash))))
+          (c
+            (list ASSERT_COIN_ANNOUNCEMENT
+              (sha256 sgt_coin_id
+                (concat PROTOCOL_PREFIX
+                  (sha256 my_id sgt_coin_id locked_inner_puzzle_hash))))
+            (c
+              (list CREATE_COIN
+                my_inner_puzzlehash my_amount (list my_inner_puzzlehash))
+              (c
+                (list ASSERT_BEFORE_SECONDS_ABSOLUTE lock_deadline)
+                (c
+                  (list REMARK PROTOCOL_PREFIX SPEND_AUTHORIZE_SGT_LOCK
+                    sgt_coin_id proposal_hash lock_deadline)
+                  (base_conditions SINGLETON_STRUCT my_id my_amount
+                    my_inner_puzzlehash)))))))))
+
+  (defun spend_authorize_sgt_lock
+      (SINGLETON_STRUCT OWNER_PUBKEY AUTH_TYPE
+       my_id my_inner_puzzlehash my_amount p)
+    (assert
+      (= (list-length p) 5)
+      (spend_authorize_sgt_lock_values
+        SINGLETON_STRUCT OWNER_PUBKEY AUTH_TYPE
+        my_id my_inner_puzzlehash my_amount
+        (f p) (f (r p)) (f (r (r p)))
+        (f (r (r (r p))))
+        (f (r (r (r (r p)))))))
+  )
+
   ;; Main dispatch — validate common inputs, then route.
   ;; p layout per spend case:
   ;;   'o'  (deed_launcher_id current_timestamp signature_data)                                  — LOW-13: dropped dead pool_inner_puzhash
@@ -780,6 +852,8 @@
   ;;   'd'  ((deed_launcher_id deed_commitment collection_id settlement_id)
   ;;         (payment_asset_id payment_amount payment_recipient_inner_puzzlehash
   ;;          payment_nonce payment_announcement_id) signature_data)
+  ;;   'v'  (sgt_coin_id proposal_hash lock_deadline
+  ;;         locked_inner_puzzle_hash signature_data)
   ;;   'k'  (vault_inner_mod_hash new_owner_pubkey new_auth_type new_merkle_root member_proof current_timestamp signature_data)
   ;;        — LOW-11 fix added new_auth_type to allow BLS↔secp migration on rotation.
   ;;   'm'  (deed_launcher_id new_p2_vault_puzzlehash current_timestamp signature_data)  — BLS-only deed migration to a new vault.
@@ -843,7 +917,12 @@
                       IDENTITY_ATTEST_ROOT ZKPASSPORT_BRIDGE_POLICY_HASH
                       my_id my_inner_puzzlehash my_amount
                       (f p) (f (r p)) (f (r (r p))))
-                    (x)) ;; unknown spend case
+                    (if (= spend_case SPEND_AUTHORIZE_SGT_LOCK)
+                      (spend_authorize_sgt_lock
+                        SINGLETON_STRUCT OWNER_PUBKEY AUTH_TYPE
+                        my_id my_inner_puzzlehash my_amount p)
+                      (x)) ;; unknown spend case
+                    )
                   )
               )
             )

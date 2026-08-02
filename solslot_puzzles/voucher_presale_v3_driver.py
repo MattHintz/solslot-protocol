@@ -702,6 +702,7 @@ def stripe_voucher_offer_v5_solution(
             receipt.attestation.attestation_hash,
             receipt.receipt_hash,
             0,
+            bytes32.zeros,
             0,
             list(_signer_indices(signer_indices)),
         ]

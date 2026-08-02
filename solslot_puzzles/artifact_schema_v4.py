@@ -200,6 +200,7 @@ def _rebuild_plan(
     addresses = plan.get("evmAddresses")
     funding = plan.get("fundingCoinIds")
     params = plan.get("protocolParameters")
+    trusted_assets = plan.get("trustedAssets")
     admin = plan.get("adminAuthority")
     recovery_kits = plan.get("adminRecoveryKits")
     validators = plan.get("validatorSet")
@@ -212,6 +213,7 @@ def _rebuild_plan(
             addresses,
             funding,
             params,
+            trusted_assets,
             admin,
             validators,
             trusted,
@@ -312,6 +314,14 @@ def _rebuild_plan(
         trusted_protocol_treasury_puzzle_hash=_bytes32(
             trusted["protocolTreasuryPuzzleHash"],
             "protocolTreasuryPuzzleHash",
+        ),
+        company_sgt_sale_treasury_puzzle_hash=_bytes32(
+            trusted["companySgtSaleTreasuryPuzzleHash"],
+            "companySgtSaleTreasuryPuzzleHash",
+        ),
+        wusdc_b_asset_id=_bytes32(
+            trusted_assets["wusdcBAssetId"],
+            "trustedAssets.wusdcBAssetId",
         ),
         trusted_governance_rewards_puzzle_hash=_bytes32(
             trusted["governanceRewardsPuzzleHash"],

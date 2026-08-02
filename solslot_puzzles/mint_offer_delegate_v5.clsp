@@ -1,13 +1,14 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;; RC24 universal primary SmartDeed offer.
+;;; RC25 universal primary SmartDeed offer.
 ;;;
 ;;; DIRECT preserves the short-lived H-system quote for native XCH/CAT.
 ;;; VOUCHER_CHIA consumes an exact paid XCH voucher. VOUCHER_BASE consumes an
 ;;; exact authenticated Base Sepolia USDC receipt. Both voucher branches
 ;;; deliver the already-minted governed deed to its committed approved vault
 ;;; without another buyer action.
-;;; EXTERNAL consumes a validator-authenticated Stripe receipt offer after the
-;;; validators independently retrieve a succeeded PaymentIntent.
+;;; EXTERNAL consumes a validator-authenticated Stripe or Base USDC receipt.
+;;; Validators independently verify final provider evidence, while Base also
+;;; binds the exact one-use result authorization that funded the purchase.
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (mod
@@ -71,6 +72,7 @@
     payment_attestation_hash
     stripe_receipt_hash
     stripe_receipt_expires_at
+    external_result_puzzle_hash
     next_reservation_expires_at
     signer_indices
   )
@@ -92,13 +94,14 @@
   (defconstant RAIL_CHIA_CAT 4)
   (defconstant PURCHASE_KIND_DIRECT 1)
   (defconstant PURCHASE_KIND_PRESALE 2)
+  (defconstant DELIVERY_SMARTDEED 1)
   (defconstant ACTION_REDEEM 3)
   (defconstant BASE_SEPOLIA_CHAIN_ID 84532)
   (defconstant BASE_SEPOLIA_USDC_ASSET_ID 0x000000000000000000000000036cbd53842c5426634e7929541ec2318f3dcf7e)
   (defconstant ZERO_B32 0x0000000000000000000000000000000000000000000000000000000000000000)
   (defconstant PURCHASE_ID_TAG 0x534f4c534c4f545f50555243484153455f49445f5633)
   (defconstant RECEIPT_SETTLEMENT_DOMAIN "SOLSLOT_BASE_RECEIPT_SETTLEMENT_V2")
-  (defconstant STRIPE_RECEIPT_SETTLEMENT_DOMAIN "SOLSLOT_STRIPE_RECEIPT_SETTLEMENT_V1")
+  (defconstant STRIPE_RECEIPT_SETTLEMENT_DOMAIN "SOLSLOT_EXTERNAL_RECEIPT_SETTLEMENT_V1")
   (defconstant STRIPE_VOUCHER_SETTLEMENT_DOMAIN "SOLSLOT_STRIPE_VOUCHER_SETTLEMENT_V1")
   (defconstant RESERVATION_RELEASE_DOMAIN "SOLSLOT_DEED_RESERVATION_RELEASE_V1")
   (defconstant RESERVATION_EXTEND_DOMAIN "SOLSLOT_DEED_RESERVATION_EXTEND_V1")
@@ -182,7 +185,11 @@
         oracle_price_usd_minor_per_asset
         source_evidence_root
         purchase_kind
-        presale_terms_hash))
+        presale_terms_hash
+        DELIVERY_SMARTDEED
+        DEED_LAUNCHER_ID
+        1
+        COLLECTION_ID))
   )
 
   (defun-inline purchase-id (artifact_hash)
@@ -266,12 +273,14 @@
 
   (defun-inline stripe-receipt-settlement-message
       (stripe_receipt_hash artifact_hash purchase_id evidence_hash
-       attestation_hash deed_launcher_id approved_vault_p2_puzzle_hash)
+       attestation_hash rail deed_launcher_id collection_id
+       approved_vault_p2_puzzle_hash external_result_puzzle_hash)
     (sha256tree
       (list
-        STRIPE_RECEIPT_SETTLEMENT_DOMAIN stripe_receipt_hash artifact_hash
-        purchase_id evidence_hash attestation_hash deed_launcher_id
-        approved_vault_p2_puzzle_hash))
+        STRIPE_RECEIPT_SETTLEMENT_DOMAIN artifact_hash purchase_id
+        stripe_receipt_hash rail DELIVERY_SMARTDEED deed_launcher_id 1
+        collection_id approved_vault_p2_puzzle_hash
+        external_result_puzzle_hash evidence_hash attestation_hash))
   )
 
   (defun-inline stripe-voucher-settlement-message
@@ -406,7 +415,8 @@
       (purchase_mode purchase_kind rail voucher_coin_id voucher_transition_message
        external_receipt_coin_id external_settlement_evidence_hash
        payment_attestation_hash stripe_receipt_hash
-       stripe_receipt_expires_at next_reservation_expires_at)
+       stripe_receipt_expires_at external_result_puzzle_hash
+       next_reservation_expires_at)
     (or
       (and
         (= purchase_mode MODE_DIRECT)
@@ -419,6 +429,7 @@
         (= payment_attestation_hash ZERO_B32)
         (= stripe_receipt_hash ZERO_B32)
         (= stripe_receipt_expires_at 0)
+        (= external_result_puzzle_hash ZERO_B32)
         (= next_reservation_expires_at 0))
       (and
         (= purchase_mode MODE_VOUCHER)
@@ -431,6 +442,7 @@
         (= payment_attestation_hash ZERO_B32)
         (= stripe_receipt_hash ZERO_B32)
         (= stripe_receipt_expires_at 0)
+        (= external_result_puzzle_hash ZERO_B32)
         (= next_reservation_expires_at 0))
       (and
         (= purchase_mode MODE_VOUCHER)
@@ -443,11 +455,12 @@
         (= payment_attestation_hash ZERO_B32)
         (= stripe_receipt_hash ZERO_B32)
         (= stripe_receipt_expires_at 0)
+        (= external_result_puzzle_hash ZERO_B32)
         (= next_reservation_expires_at 0))
       (and
         (= purchase_mode MODE_EXTERNAL)
         (= purchase_kind PURCHASE_KIND_DIRECT)
-        (= rail RAIL_STRIPE)
+        (or (= rail RAIL_STRIPE) (= rail RAIL_EVM_TEST_USD))
         (= voucher_coin_id ZERO_B32)
         (= voucher_transition_message ZERO_B32)
         (not (= external_receipt_coin_id ZERO_B32))
@@ -455,6 +468,9 @@
         (not (= payment_attestation_hash ZERO_B32))
         (not (= stripe_receipt_hash ZERO_B32))
         (> stripe_receipt_expires_at 0)
+        (if (= rail RAIL_EVM_TEST_USD)
+          (not (= external_result_puzzle_hash ZERO_B32))
+          (= external_result_puzzle_hash ZERO_B32))
         (= next_reservation_expires_at 0))
       (and
         (= purchase_mode MODE_VOUCHER)
@@ -467,6 +483,7 @@
         (not (= payment_attestation_hash ZERO_B32))
         (not (= stripe_receipt_hash ZERO_B32))
         (= stripe_receipt_expires_at 0)
+        (= external_result_puzzle_hash ZERO_B32)
         (= next_reservation_expires_at 0))
       (and
         (or
@@ -479,6 +496,7 @@
         (= payment_attestation_hash ZERO_B32)
         (= stripe_receipt_hash ZERO_B32)
         (= stripe_receipt_expires_at 0)
+        (= external_result_puzzle_hash ZERO_B32)
         (= next_reservation_expires_at 0))
       (and
         (= purchase_mode MODE_EXTEND)
@@ -489,6 +507,7 @@
         (= payment_attestation_hash ZERO_B32)
         (= stripe_receipt_hash ZERO_B32)
         (= stripe_receipt_expires_at 0)
+        (= external_result_puzzle_hash ZERO_B32)
         (> next_reservation_expires_at RESERVATION_EXPIRES_AT)
         (not
           (> next_reservation_expires_at
@@ -502,7 +521,7 @@
        external_settlement_evidence_hash artifact_hash
        purchase_id payment_attestation_hash stripe_receipt_hash
        stripe_receipt_expires_at deed_launcher_id vault_p2_puzzle_hash
-       next_reservation_expires_at
+       external_result_puzzle_hash next_reservation_expires_at
        MOD_HASH SMART_DEED_INNER_HASH P2_VAULT_MOD_HASH SINGLETON_MOD_HASH
        SINGLETON_LAUNCHER_HASH CAT_MOD_HASH OFFER_MOD_HASH NETWORK
        COLLECTION_ID METADATA_ROOT METADATA_ANCHOR_ID SHARE_PPM
@@ -559,13 +578,14 @@
                       (stripe-receipt-settlement-message
                         stripe_receipt_hash artifact_hash purchase_id
                         external_settlement_evidence_hash
-                        payment_attestation_hash deed_launcher_id
-                        vault_p2_puzzle_hash)))
+                        payment_attestation_hash rail deed_launcher_id
+                        COLLECTION_ID vault_p2_puzzle_hash
+                        external_result_puzzle_hash)))
                   (list REMARK PROTOCOL_PREFIX
-                    "STRIPE_RECEIPT_BINDING_V1" artifact_hash purchase_id
+                    "EXTERNAL_RECEIPT_BINDING_V1" artifact_hash purchase_id
                     stripe_receipt_hash external_settlement_evidence_hash
-                    payment_attestation_hash deed_launcher_id
-                    vault_p2_puzzle_hash))
+                    payment_attestation_hash rail deed_launcher_id
+                    vault_p2_puzzle_hash external_result_puzzle_hash))
                 (if (= rail RAIL_CHIA_XCH)
                   (list
                     (list ASSERT_COIN_ANNOUNCEMENT
@@ -643,7 +663,7 @@
        DEED_LAUNCHER_ID PROTOCOL_PUZHASH SMART_DEED_INNER_HASH METADATA_ROOT
        PROVIDER_ID artifact_hash purchase_id my_parent_id my_puzzlehash my_amount
        rail rail_asset_id rail_amount vault_p2_puzzle_hash buyer_offer_nonce
-       purchase_mode VALIDATOR_PUBKEYS signer_indices
+       purchase_mode external_result_puzzle_hash VALIDATOR_PUBKEYS signer_indices
        next_reservation_expires_at my_id RESERVATION_PURCHASE_ID
        RESERVATION_ARTIFACT_HASH RESERVATION_VAULT_P2_PUZZLE_HASH
        RESERVATION_ZKPASSPORT_ROOT RESERVATION_RAIL RESERVATION_AMOUNT
@@ -673,7 +693,11 @@
               purchase_mode rail CAT_MOD_HASH OFFER_MOD_HASH rail_asset_id)
             (payment-message
               (seller-offer-nonce my_parent_id my_puzzlehash my_amount)
-              PROTOCOL_PUZHASH
+              (if (and
+                    (= purchase_mode MODE_EXTERNAL)
+                    (= rail RAIL_EVM_TEST_USD))
+                external_result_puzzle_hash
+                PROTOCOL_PUZHASH)
               (settlement-amount purchase_mode rail rail_amount)
               purchase_id artifact_hash)))
         (list ASSERT_PUZZLE_ANNOUNCEMENT
@@ -782,6 +806,7 @@
     (is-size-b32 payment_attestation_hash)
     (is-size-b32 stripe_receipt_hash)
     (is-uint64 stripe_receipt_expires_at)
+    (is-size-b32 external_result_puzzle_hash)
     (is-uint64 next_reservation_expires_at)
     (= vault_p2_puzzle_hash RESERVATION_VAULT_P2_PUZZLE_HASH)
     (= zkpassport_root RESERVATION_ZKPASSPORT_ROOT)
@@ -804,7 +829,8 @@
       purchase_mode purchase_kind rail voucher_coin_id voucher_transition_message
       external_receipt_coin_id external_settlement_evidence_hash
       payment_attestation_hash stripe_receipt_hash
-      stripe_receipt_expires_at next_reservation_expires_at)
+      stripe_receipt_expires_at external_result_puzzle_hash
+      next_reservation_expires_at)
     (is-sorted-strict signer_indices)
     (if (or
           (= purchase_mode MODE_EXTERNAL)
@@ -846,7 +872,7 @@
               presale_terms_hash))
           payment_attestation_hash stripe_receipt_hash
           stripe_receipt_expires_at DEED_LAUNCHER_ID vault_p2_puzzle_hash
-          next_reservation_expires_at
+          external_result_puzzle_hash next_reservation_expires_at
           MOD_HASH SMART_DEED_INNER_HASH P2_VAULT_MOD_HASH
           SINGLETON_MOD_HASH SINGLETON_LAUNCHER_HASH CAT_MOD_HASH
           OFFER_MOD_HASH NETWORK COLLECTION_ID METADATA_ROOT
@@ -884,7 +910,8 @@
               presale_terms_hash))
           my_parent_id my_puzzlehash my_amount rail rail_asset_id rail_amount
           vault_p2_puzzle_hash buyer_offer_nonce purchase_mode
-          VALIDATOR_PUBKEYS signer_indices next_reservation_expires_at my_id
+          external_result_puzzle_hash VALIDATOR_PUBKEYS signer_indices
+          next_reservation_expires_at my_id
           RESERVATION_PURCHASE_ID RESERVATION_ARTIFACT_HASH
           RESERVATION_VAULT_P2_PUZZLE_HASH RESERVATION_ZKPASSPORT_ROOT
           RESERVATION_RAIL RESERVATION_AMOUNT RESERVATION_EXPIRES_AT)))

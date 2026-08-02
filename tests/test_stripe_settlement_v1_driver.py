@@ -37,6 +37,7 @@ from solslot_puzzles.payment_artifacts_v3 import (
 from solslot_puzzles.stripe_settlement_v1_driver import (
     InventoryReservationV1,
     PrimaryMintTermsV3,
+    StripeSettlementTermsV1,
     build_inventory_reservation_spend,
     build_inventory_extension_spend,
     build_inventory_release_spend,
@@ -48,6 +49,7 @@ from solslot_puzzles.stripe_settlement_v1_driver import (
     make_stripe_receipt_puzzle,
     prepare_stripe_receipt_offer,
     stripe_receipt_settlement_message,
+    stripe_settlement_authorization_message,
     validator_roster_root,
 )
 from solslot_puzzles.vault_driver import puzzle_hash_for_p2_vault
@@ -164,7 +166,16 @@ def test_receipt_puzzle_requires_exact_two_of_three_and_emits_binding() -> None:
         row for row in conditions if int.from_bytes(row[0], "big") == 60
     ]
     assert len(sigs) == 2
-    assert {row[2] for row in sigs} == {bytes(receipt.receipt_hash)}
+    assert {row[2] for row in sigs} == {
+        bytes(
+            stripe_settlement_authorization_message(
+                StripeSettlementTermsV1(
+                    receipt=receipt,
+                    validator_pubkeys=terms.validator_pubkeys,
+                )
+            )
+        )
+    }
     assert announcements == [[b"\x3c", bytes(stripe_receipt_settlement_message(receipt))]]
 
     with pytest.raises(PaymentArtifactError, match="exactly two"):
