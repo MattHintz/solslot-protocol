@@ -174,7 +174,11 @@ FROZEN_CHECKSUM: Optional[str] = (
 )
 
 # ── Cache ──
-_puzzle_cache: Dict[str, Program] = {}
+# ``Program`` wraps a chia_rs LazyNode and must not be shared across threads.
+# Cache only deterministic serialized CLVM and reconstruct a caller-local
+# Program.  This keeps API request workers and test clients from inheriting or
+# destroying a LazyNode owned by another thread.
+_puzzle_cache: Dict[str, bytes] = {}
 
 
 class PuzzleIntegrityError(Exception):
@@ -183,14 +187,16 @@ class PuzzleIntegrityError(Exception):
 
 
 def load_puzzle(filename: str) -> Program:
-    """Load and cache a compiled Chialisp puzzle by filename."""
+    """Load compiled Chialisp and return a Program owned by this thread."""
     if filename not in _puzzle_cache:
-        _puzzle_cache[filename] = load_clvm(
-            filename,
-            package_or_requirement="solslot_puzzles",
-            recompile=True,
+        _puzzle_cache[filename] = bytes(
+            load_clvm(
+                filename,
+                package_or_requirement="solslot_puzzles",
+                recompile=True,
+            )
         )
-    return _puzzle_cache[filename]
+    return Program.from_bytes(_puzzle_cache[filename])
 
 
 def compute_puzzles_checksum() -> str:

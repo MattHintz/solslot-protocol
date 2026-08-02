@@ -62,9 +62,18 @@ RESERVATION_EXTEND_MODE = 6
 MAX_RESERVATION_EXTENSION_SECONDS = 11 * 24 * 60 * 60
 _STRIPE_SETTLEMENT_DOMAIN = b"SOLSLOT_STRIPE_RECEIPT_SETTLEMENT_V1"
 
-_MINT_OFFER_V5_MOD: Program | None = None
-_INVENTORY_AVAILABLE_MOD: Program | None = None
-_STRIPE_RECEIPT_MOD: Program | None = None
+# chia_rs ``Program`` values own thread-affine LazyNodes.  API request tests
+# and production workers may call this driver from different threads, so keep
+# only immutable serialized puzzle bytes at module scope and reconstruct the
+# Program in the calling thread.
+_MINT_OFFER_V5_MOD_BYTES = bytes(load_puzzle("mint_offer_delegate_v5.clsp"))
+_INVENTORY_AVAILABLE_MOD_BYTES = bytes(
+    load_puzzle("mint_offer_inventory_available_v1.clsp")
+)
+_STRIPE_RECEIPT_MOD_BYTES = bytes(
+    load_puzzle("stripe_settlement_receipt_v1.clsp")
+)
+_P2_VAULT_MOD_HASH = bytes32(load_puzzle("p2_vault.clsp").get_tree_hash())
 
 
 @dataclass(frozen=True)
@@ -195,10 +204,7 @@ class StripeSettlementTermsV1:
 
 
 def mint_offer_delegate_v5_mod() -> Program:
-    global _MINT_OFFER_V5_MOD
-    if _MINT_OFFER_V5_MOD is None:
-        _MINT_OFFER_V5_MOD = load_puzzle("mint_offer_delegate_v5.clsp")
-    return _MINT_OFFER_V5_MOD
+    return Program.from_bytes(_MINT_OFFER_V5_MOD_BYTES)
 
 
 def mint_offer_delegate_v5_mod_hash() -> bytes32:
@@ -206,12 +212,7 @@ def mint_offer_delegate_v5_mod_hash() -> bytes32:
 
 
 def mint_offer_inventory_available_v1_mod() -> Program:
-    global _INVENTORY_AVAILABLE_MOD
-    if _INVENTORY_AVAILABLE_MOD is None:
-        _INVENTORY_AVAILABLE_MOD = load_puzzle(
-            "mint_offer_inventory_available_v1.clsp"
-        )
-    return _INVENTORY_AVAILABLE_MOD
+    return Program.from_bytes(_INVENTORY_AVAILABLE_MOD_BYTES)
 
 
 def mint_offer_inventory_available_v1_mod_hash() -> bytes32:
@@ -219,12 +220,7 @@ def mint_offer_inventory_available_v1_mod_hash() -> bytes32:
 
 
 def stripe_settlement_receipt_v1_mod() -> Program:
-    global _STRIPE_RECEIPT_MOD
-    if _STRIPE_RECEIPT_MOD is None:
-        _STRIPE_RECEIPT_MOD = load_puzzle(
-            "stripe_settlement_receipt_v1.clsp"
-        )
-    return _STRIPE_RECEIPT_MOD
+    return Program.from_bytes(_STRIPE_RECEIPT_MOD_BYTES)
 
 
 def stripe_settlement_receipt_v1_mod_hash() -> bytes32:
@@ -378,7 +374,7 @@ def stripe_settlement_receipt_solution(
 def _mint_immutable_args(terms: PrimaryMintTermsV3) -> tuple[object, ...]:
     return (
         terms.smart_deed_inner_hash,
-        bytes32(load_puzzle("p2_vault.clsp").get_tree_hash()),
+        _P2_VAULT_MOD_HASH,
         SINGLETON_MOD_HASH,
         SINGLETON_LAUNCHER_HASH,
         bytes32(CAT_MOD.get_tree_hash()),

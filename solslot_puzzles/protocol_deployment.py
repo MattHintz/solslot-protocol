@@ -110,43 +110,32 @@ def _reject_empty_gov_pubkey(value: bytes, name: str) -> None:
         raise ValueError(f"{name} must be configured before deployment")
 
 
-# ─── Lazy-loaded compiled puzzles ───────────────────────────────────────────
-_POOL_INNER_MOD: Program | None = None
-_POOL_TOKEN_TAIL_MOD: Program | None = None
-_QUORUM_DID_MOD: Program | None = None
+# ─── Thread-safe compiled puzzle templates ──────────────────────────────────
+def _load_clvm_bytes(filename: str) -> bytes:
+    return bytes(
+        load_clvm(
+            filename,
+            package_or_requirement="solslot_puzzles",
+            recompile=True,
+        )
+    )
+
+
+_POOL_INNER_MOD_BYTES = _load_clvm_bytes("pool_singleton_inner_v3.clsp")
+_POOL_TOKEN_TAIL_MOD_BYTES = _load_clvm_bytes("pool_token_tail.clsp")
+_QUORUM_DID_MOD_BYTES = _load_clvm_bytes("quorum_did_inner.clsp")
 
 
 def _pool_inner_mod() -> Program:
-    global _POOL_INNER_MOD
-    if _POOL_INNER_MOD is None:
-        _POOL_INNER_MOD = load_clvm(
-            "pool_singleton_inner_v3.clsp",
-            package_or_requirement="solslot_puzzles",
-            recompile=True,
-        )
-    return _POOL_INNER_MOD
+    return Program.from_bytes(_POOL_INNER_MOD_BYTES)
 
 
 def _pool_token_tail_mod() -> Program:
-    global _POOL_TOKEN_TAIL_MOD
-    if _POOL_TOKEN_TAIL_MOD is None:
-        _POOL_TOKEN_TAIL_MOD = load_clvm(
-            "pool_token_tail.clsp",
-            package_or_requirement="solslot_puzzles",
-            recompile=True,
-        )
-    return _POOL_TOKEN_TAIL_MOD
+    return Program.from_bytes(_POOL_TOKEN_TAIL_MOD_BYTES)
 
 
 def _quorum_did_mod() -> Program:
-    global _QUORUM_DID_MOD
-    if _QUORUM_DID_MOD is None:
-        _QUORUM_DID_MOD = load_clvm(
-            "quorum_did_inner.clsp",
-            package_or_requirement="solslot_puzzles",
-            recompile=True,
-        )
-    return _QUORUM_DID_MOD
+    return Program.from_bytes(_QUORUM_DID_MOD_BYTES)
 
 
 def _p2_vault_mod_hash() -> bytes32:
