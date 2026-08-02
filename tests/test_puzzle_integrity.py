@@ -263,6 +263,7 @@ def test_rc25_manifest_records_base_binding_and_governed_sgt_changes():
     assert tuple(manifest["newPuzzleHashes"]) == (
         "sgt_reserve_inner_v1.clsp",
         "sgt_sale_inner_v1.clsp",
+        "purchase_batch_settlement_receipt_v1.clsp",
     )
     for group in ("changedPuzzleHashes", "newPuzzleHashes"):
         for filename, expected_hash in manifest[group].items():

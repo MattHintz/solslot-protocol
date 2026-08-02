@@ -6,6 +6,7 @@ import pytest
 from chia.types.blockchain_format.coin import Coin
 from chia.types.blockchain_format.program import Program
 from chia.wallet.lineage_proof import LineageProof
+from chia.wallet.puzzles.p2_delegated_puzzle_or_hidden_puzzle import puzzle_for_pk
 from chia.wallet.puzzles.singleton_top_layer_v1_1 import (
     SINGLETON_LAUNCHER_HASH,
     SINGLETON_MOD,
@@ -16,12 +17,18 @@ from chia_rs.sized_bytes import bytes32
 from chia_rs.sized_ints import uint64
 
 from solslot_puzzles.payment_artifacts_v2 import (
+    OracleObservationV1,
     PaymentArtifactError,
+    XCH_ASSET_DECIMALS,
+    build_oracle_round,
 )
 from solslot_puzzles.payment_artifacts_v3 import (
+    build_purchase_batch_settlement_receipt_v1,
+    build_purchase_batch_v1,
     build_evm_test_usd_purchase_artifact_v3,
     build_external_settlement_receipt_v1,
     build_stripe_purchase_artifact_v3,
+    build_xch_purchase_artifact_v3,
 )
 from solslot_puzzles.primary_purchase_v2_driver import (
     BASE_SEPOLIA_USDC_ASSET_ID,
@@ -29,12 +36,21 @@ from solslot_puzzles.primary_purchase_v2_driver import (
 from solslot_puzzles.stripe_settlement_v1_driver import (
     InventoryReservationV1,
     PrimaryMintTermsV3,
+    PurchaseBatchSettlementTermsV1,
     StripeSettlementTermsV1,
+    build_external_primary_batch_offer_v5,
     build_external_receipt_spend,
+    build_native_primary_batch_offer_v5,
+    build_purchase_batch_receipt_spend,
     build_stripe_primary_offer_v5,
+    curry_purchase_batch_settlement_receipt,
     curry_stripe_settlement_receipt,
     make_mint_offer_v5_inner,
+    prepare_chia_buyer_batch_offer_v3,
+    prepare_purchase_batch_receipt_offer,
     prepare_stripe_receipt_offer,
+    purchase_batch_child_settlement_message,
+    purchase_batch_settlement_authorization_message,
     stripe_receipt_settlement_message,
     stripe_settlement_authorization_message,
 )
@@ -247,7 +263,6 @@ def test_v5_external_result_rules_fail_closed() -> None:
             observed_at=1_800_000_100,
             result_authorization_puzzle_hash=bytes32.zeros,
         )
-
     with pytest.raises(
         PaymentArtifactError,
         match="cannot carry a Base result authorization",
@@ -261,6 +276,247 @@ def test_v5_external_result_rules_fail_closed() -> None:
             result_authorization_puzzle_hash=b32(86),
         )
 
+
+def test_v5_native_batch_bundles_two_exact_smartdeeds_in_one_offer() -> None:
+    observations = tuple(
+        OracleObservationV1(
+            source_id=b32(seed),
+            asset_id=bytes32.zeros,
+            asset_decimals=XCH_ASSET_DECIMALS,
+            price_usd_minor_per_asset=2_100 + (seed - 31) * 25,
+            observed_at=1_700_000_000 + seed - 31,
+            valid_until=1_700_000_600 + seed - 31,
+            evidence_hash=b32(seed + 20),
+        )
+        for seed in (31, 32, 33)
+    )
+    oracle = build_oracle_round(
+        network="testnet11",
+        sequence=1,
+        asset_id=bytes32.zeros,
+        asset_decimals=XCH_ASSET_DECIMALS,
+        operator_set_root=b32(60),
+        observations=observations,
+    )
+    artifacts = tuple(
+        build_xch_purchase_artifact_v3(
+            network="testnet11",
+            collection_id=b32(1),
+            deed_launcher_id=b32(seed),
+            metadata_root=b32(3),
+            metadata_anchor_id=b32(4),
+            share_ppm=100_000,
+            base_usd_amount_minor=10_000,
+            technology_fee_bps=100,
+            protocol_treasury_puzzle_hash=b32(5),
+            zkpassport_root=b32(6),
+            vault_launcher_id=VAULT_LAUNCHER,
+            vault_p2_puzzle_hash=VAULT_P2,
+            authorization_nonce=b32(9),
+            authorization_expires_at=1_700_000_550,
+            quote_expires_at=1_700_000_500,
+            oracle_round=oracle,
+        )
+        for seed in (101, 102)
+    )
+    batch = build_purchase_batch_v1(
+        batch_nonce=b32(103),
+        artifacts=artifacts,
+    )
+    item_terms = tuple(mint_terms(item) for item in artifacts)
+    payment_key = AugSchemeMPL.key_gen(bytes([104]) * 32)
+    payment_puzzle = puzzle_for_pk(payment_key.get_g1())
+    payment_coin = Coin(
+        b32(105),
+        bytes32(payment_puzzle.get_tree_hash()),
+        uint64(batch.total_rail_amount + 1_000),
+    )
+    buyer = prepare_chia_buyer_batch_offer_v3(
+        payment_coin=payment_coin,
+        payment_public_key=bytes(payment_key.get_g1()),
+        batch=batch,
+        terms=item_terms,
+    )
+    reservations = tuple(
+        InventoryReservationV1(
+            artifact=item,
+            expires_at=item.quote_expires_at,
+        )
+        for item in artifacts
+    )
+    inners = tuple(
+        make_mint_offer_v5_inner(terms, reservation)
+        for terms, reservation in zip(item_terms, reservations, strict=True)
+    )
+    structs = tuple(
+        Program.to(
+            (
+                SINGLETON_MOD_HASH,
+                (item.deed_launcher_id, SINGLETON_LAUNCHER_HASH),
+            )
+        )
+        for item in artifacts
+    )
+    deed_coins = tuple(
+        Coin(
+            b32(110 + index),
+            bytes32(
+                SINGLETON_MOD.curry(struct, inner).get_tree_hash()
+            ),
+            uint64(1),
+        )
+        for index, (struct, inner) in enumerate(
+            zip(structs, inners, strict=True)
+        )
+    )
+    lineages = tuple(
+        LineageProof(b32(120 + index), bytes32(inner.get_tree_hash()), uint64(1))
+        for index, inner in enumerate(inners)
+    )
+    purchase = build_native_primary_batch_offer_v5(
+        buyer_offer=buyer.offer,
+        batch=batch,
+        deed_coins=deed_coins,
+        deed_singleton_structs=structs,
+        lineage_proofs=lineages,
+        signer_indices_by_artifact=((0, 2), (1, 2)),
+        terms=item_terms,
+        reservations=reservations,
+    )
+
+    assert len(purchase.deed_spends) == 2
+    assert len(purchase.issuer_offers) == 2
+    assert purchase.aggregate_offer.is_valid()
+    assert set(purchase.aggregate_offer.arbitrage().values()) == {0}
+    assert set(purchase.buyer_offer.requested_payments) == {
+        item.deed_launcher_id for item in artifacts
+    }
+
+
+def test_v5_stripe_batch_delivers_two_exact_smartdeeds_atomically() -> None:
+    artifacts = tuple(
+        build_stripe_purchase_artifact_v3(
+            network="testnet11",
+            collection_id=b32(1),
+            deed_launcher_id=b32(seed),
+            metadata_root=b32(3),
+            metadata_anchor_id=b32(4),
+            share_ppm=100_000,
+            base_usd_amount_minor=10_000,
+            technology_fee_bps=100,
+            protocol_treasury_puzzle_hash=b32(5),
+            zkpassport_root=b32(6),
+            vault_launcher_id=VAULT_LAUNCHER,
+            vault_p2_puzzle_hash=VAULT_P2,
+            authorization_nonce=b32(9),
+            authorization_expires_at=1_800_000_600,
+            quote_expires_at=1_800_000_300,
+        )
+        for seed in (101, 102)
+    )
+    batch = build_purchase_batch_v1(
+        batch_nonce=b32(103),
+        artifacts=artifacts,
+    )
+    receipt = build_purchase_batch_settlement_receipt_v1(
+        batch=batch,
+        provider_id=b32(104),
+        external_reference_hash=b32(105),
+        evidence_hash=b32(106),
+        observed_at=1_800_000_100,
+        validator_pubkeys=VALIDATORS,  # type: ignore[arg-type]
+        collected_amount_minor=batch.total_rail_amount + 75,
+        processing_charge_minor=75,
+    )
+    item_terms = tuple(mint_terms(item) for item in batch.artifacts)
+    receipt_terms = PurchaseBatchSettlementTermsV1(
+        receipt=receipt,
+        validator_pubkeys=VALIDATORS,  # type: ignore[arg-type]
+    )
+    receipt_puzzle = curry_purchase_batch_settlement_receipt(receipt_terms)
+    receipt_coin = Coin(
+        b32(107),
+        bytes32(receipt_puzzle.get_tree_hash()),
+        uint64(batch.quantity),
+    )
+    receipt_spend = build_purchase_batch_receipt_spend(
+        receipt_coin=receipt_coin,
+        terms=receipt_terms,
+        signer_indices=(0, 2),
+    )
+    conditions = receipt_puzzle.run(
+        Program.from_bytes(bytes(receipt_spend.solution))
+    ).as_python()
+    signatures = [row for row in conditions if opcode(row) == AGG_SIG_ME]
+    announcements = [
+        row for row in conditions if opcode(row) == CREATE_COIN_ANNOUNCEMENT
+    ]
+    assert len(signatures) == 2
+    assert {row[2] for row in signatures} == {
+        bytes(purchase_batch_settlement_authorization_message(receipt_terms))
+    }
+    assert {row[1] for row in announcements} == {
+        bytes(purchase_batch_child_settlement_message(receipt, artifact))
+        for artifact in batch.artifacts
+    }
+
+    receipt_offer = prepare_purchase_batch_receipt_offer(
+        receipt_spend=receipt_spend,
+        receipt=receipt,
+        terms=item_terms,
+    )
+    reservations = tuple(
+        InventoryReservationV1(
+            artifact=item,
+            expires_at=item.quote_expires_at,
+        )
+        for item in batch.artifacts
+    )
+    inners = tuple(
+        make_mint_offer_v5_inner(term, reservation)
+        for term, reservation in zip(item_terms, reservations, strict=True)
+    )
+    structs = tuple(
+        Program.to(
+            (
+                SINGLETON_MOD_HASH,
+                (item.deed_launcher_id, SINGLETON_LAUNCHER_HASH),
+            )
+        )
+        for item in batch.artifacts
+    )
+    deed_coins = tuple(
+        Coin(
+            b32(110 + index),
+            bytes32(SINGLETON_MOD.curry(struct, inner).get_tree_hash()),
+            uint64(1),
+        )
+        for index, (struct, inner) in enumerate(
+            zip(structs, inners, strict=True)
+        )
+    )
+    lineages = tuple(
+        LineageProof(b32(120 + index), bytes32(inner.get_tree_hash()), uint64(1))
+        for index, inner in enumerate(inners)
+    )
+    purchase = build_external_primary_batch_offer_v5(
+        receipt_offer=receipt_offer,
+        receipt_coin=receipt_coin,
+        receipt=receipt,
+        deed_coins=deed_coins,
+        deed_singleton_structs=structs,
+        lineage_proofs=lineages,
+        terms=item_terms,
+        reservations=reservations,
+    )
+
+    assert len(purchase.deed_spends) == 2
+    assert len(purchase.issuer_offers) == 2
+    assert purchase.aggregate_offer.is_valid()
+    assert set(purchase.aggregate_offer.arbitrage().values()) == {0}
+    assert set(purchase.buyer_offer.requested_payments) == {
+        item.deed_launcher_id for item in batch.artifacts
+    }
 
 def test_v5_base_result_changes_receipt_but_not_artifact_reservation() -> None:
     first = base_receipt(b32(90))
@@ -309,3 +565,8 @@ def test_v5_settlement_announcement_cannot_drop_base_result() -> None:
     )
     assert message != without_result
     assert hashlib.sha256(bytes(receipt_coin.name()) + bytes(message)).digest()
+    build_purchase_batch_receipt_spend,
+    curry_purchase_batch_settlement_receipt,
+    prepare_purchase_batch_receipt_offer,
+    purchase_batch_child_settlement_message,
+    purchase_batch_settlement_authorization_message,

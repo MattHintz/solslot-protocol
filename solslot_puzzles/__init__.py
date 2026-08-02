@@ -121,6 +121,11 @@ PUZZLE_FILENAMES = (
     # sale/grant allocations require an exact executed governance bill.
     "sgt_reserve_inner_v1.clsp",
     "sgt_sale_inner_v1.clsp",
+    # One external payment can settle up to 100 exact SmartDeed singletons in
+    # one standard Offer bundle. SGT quantity remains one CAT amount and keeps
+    # using the single-artifact receipt above. Appended after the prior RC25
+    # inventory so every historical release remains contiguous and auditable.
+    "purchase_batch_settlement_receipt_v1.clsp",
 )
 
 # ── Frozen checksum — update after every intentional puzzle change ──
@@ -170,7 +175,7 @@ FROZEN_CHECKSUM: Optional[str] = (
     # RC25 preserves RC24's reservation and refundable voucher modules, then
     # adds governed SGT custody and sale while binding direct Base settlement
     # to a one-use Chia result authorization.
-    "37936deff8f2c25f606f9a041c17e6770414d5d591c0c40c09e7f92d1810f714"
+    "1dd524857ee08656cfcd65121b94f68505f418f4e7edc1809e4a129aa9d09a28"
 )
 
 # ── Cache ──

@@ -1,4 +1,4 @@
-"""Canonical RC24 direct-purchase and Stripe settlement artifacts.
+"""Canonical RC25 governed-asset purchase and settlement artifacts.
 
 The fixed-order CLVM lists in this module are the authorization contract.
 Transport JSON is accepted only when its program, artifact, and receipt hashes
@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import IntEnum
 import hashlib
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 from chia.types.blockchain_format.program import Program
 from chia_rs.sized_bytes import bytes32
@@ -27,14 +27,18 @@ from solslot_puzzles.payment_artifacts_v2 import (
 
 PURCHASE_ARTIFACT_SCHEMA = "solslot.purchase-artifact.v3"
 PURCHASE_ARTIFACT_V3_SCHEMA = PURCHASE_ARTIFACT_SCHEMA
+PURCHASE_BATCH_SCHEMA = "solslot.purchase-batch.v1"
 STRIPE_SETTLEMENT_EVIDENCE_SCHEMA = "solslot.stripe-settlement-evidence.v1"
 STRIPE_SETTLEMENT_RECEIPT_SCHEMA = "solslot.stripe-settlement-receipt.v1"
 EXTERNAL_SETTLEMENT_RECEIPT_SCHEMA = "solslot.external-settlement-receipt.v1"
+PURCHASE_BATCH_RECEIPT_SCHEMA = "solslot.purchase-batch-receipt.v1"
 
 PURCHASE_ARTIFACT_VERSION = 3
 PURCHASE_ARTIFACT_V3_VERSION = PURCHASE_ARTIFACT_VERSION
+PURCHASE_BATCH_VERSION = 1
 STRIPE_SETTLEMENT_EVIDENCE_VERSION = 1
 STRIPE_SETTLEMENT_RECEIPT_VERSION = 1
+PURCHASE_BATCH_RECEIPT_VERSION = 1
 
 TECHNOLOGY_FEE_BPS_ALPHA = 100
 TECHNOLOGY_FEE_BPS_HARD_CAP = 1_000
@@ -43,6 +47,7 @@ STRIPE_RECEIPT_TTL_SECONDS = 48 * 60 * 60
 SHARE_PPM_TOTAL = 1_000_000
 _U64_MAX = (1 << 64) - 1
 _PURCHASE_ID_TAG = b"SOLSLOT_PURCHASE_ID_V3"
+_PURCHASE_BATCH_ID_TAG = b"SOLSLOT_PURCHASE_BATCH_ID_V1"
 _STRIPE_REFERENCE_TAG = b"SOLSLOT_STRIPE_REFERENCE_V1"
 _STRIPE_PENDING_EVIDENCE_TAG = b"SOLSLOT_STRIPE_PENDING_EVIDENCE_V1"
 _EXTERNAL_PENDING_EVIDENCE_TAG = b"SOLSLOT_EXTERNAL_PENDING_EVIDENCE_V1"
@@ -97,6 +102,9 @@ class PurchaseKind(IntEnum):
 class PurchaseDeliveryKind(IntEnum):
     SMARTDEED = 1
     SGT = 2
+
+
+MAX_PURCHASE_BATCH_QUANTITY = 100
 
 
 def technology_fee_minor(base_minor: int, fee_bps: int) -> int:
@@ -355,6 +363,438 @@ class PurchaseArtifactV3:
             raise PaymentArtifactError("purchase quote has expired")
         if now >= self.authorization_expires_at:
             raise PaymentArtifactError("vault authorization has expired")
+
+
+@dataclass(frozen=True)
+class PurchaseBatchV1:
+    """One reviewed checkout containing exact governed delivery artifacts.
+
+    SmartDeeds remain unique singleton children and therefore appear once each.
+    An SGT checkout remains one governed allocation artifact whose CAT amount is
+    the requested quantity. This avoids pretending fungible SGT and unique deed
+    singletons have the same chain representation.
+    """
+
+    batch_nonce: bytes32
+    artifacts: tuple[PurchaseArtifactV3, ...]
+
+    def __post_init__(self) -> None:
+        _require_bytes32(self.batch_nonce, "batch_nonce")
+        if self.batch_nonce == ZERO_32:
+            raise PaymentArtifactError("batch_nonce must be non-zero")
+        artifacts = tuple(self.artifacts)
+        object.__setattr__(self, "artifacts", artifacts)
+        if not artifacts or len(artifacts) > MAX_PURCHASE_BATCH_QUANTITY:
+            raise PaymentArtifactError(
+                f"purchase batch must contain 1..{MAX_PURCHASE_BATCH_QUANTITY} artifacts"
+            )
+        if tuple(sorted(artifacts, key=_purchase_batch_sort_key)) != artifacts:
+            raise PaymentArtifactError(
+                "purchase batch artifacts must use canonical delivery order"
+            )
+        if len({item.artifact_hash for item in artifacts}) != len(artifacts):
+            raise PaymentArtifactError("purchase batch artifacts must be unique")
+
+        first = artifacts[0]
+        common_fields = (
+            "network",
+            "collection_id",
+            "metadata_root",
+            "metadata_anchor_id",
+            "protocol_treasury_puzzle_hash",
+            "zkpassport_root",
+            "rail",
+            "rail_chain_id",
+            "rail_asset_id",
+            "rail_asset_decimals",
+            "vault_launcher_id",
+            "vault_p2_puzzle_hash",
+            "authorization_nonce",
+            "authorization_expires_at",
+            "quote_expires_at",
+            "oracle_round_hash",
+            "oracle_price_usd_minor_per_asset",
+            "source_evidence_root",
+            "purchase_kind",
+            "presale_terms_hash",
+            "technology_fee_bps",
+            "delivery_kind",
+        )
+        for item in artifacts[1:]:
+            mismatches = [
+                name
+                for name in common_fields
+                if getattr(item, name) != getattr(first, name)
+            ]
+            if mismatches:
+                raise PaymentArtifactError(
+                    "purchase batch children disagree on " + ", ".join(mismatches)
+                )
+
+        if first.delivery_kind == PurchaseDeliveryKind.SMARTDEED:
+            if len({item.collection_id for item in artifacts}) != 1:
+                raise PaymentArtifactError(
+                    "SmartDeed batch must belong to one governed collection"
+                )
+            if any(item.delivery_amount != 1 for item in artifacts):
+                raise PaymentArtifactError(
+                    "each SmartDeed batch child must deliver one exact deed"
+                )
+            if len({item.deed_launcher_id for item in artifacts}) != len(artifacts):
+                raise PaymentArtifactError(
+                    "SmartDeed batch cannot repeat a deed launcher"
+                )
+        elif len(artifacts) != 1:
+            raise PaymentArtifactError(
+                "SGT quantity must use one governed CAT allocation artifact"
+            )
+
+        for name, value in (
+            ("total_base_amount_minor", self.total_base_amount_minor),
+            ("total_technology_fee_minor", self.total_technology_fee_minor),
+            ("total_subtotal_minor", self.total_subtotal_minor),
+            ("total_rail_amount", self.total_rail_amount),
+        ):
+            _require_u64(value, name, minimum=1)
+
+    @property
+    def delivery_kind(self) -> PurchaseDeliveryKind:
+        return self.artifacts[0].delivery_kind
+
+    @property
+    def network(self) -> str:
+        return self.artifacts[0].network
+
+    @property
+    def rail(self) -> PaymentRail:
+        return self.artifacts[0].rail
+
+    @property
+    def vault_launcher_id(self) -> bytes32:
+        return self.artifacts[0].vault_launcher_id
+
+    @property
+    def vault_p2_puzzle_hash(self) -> bytes32:
+        return self.artifacts[0].vault_p2_puzzle_hash
+
+    @property
+    def zkpassport_root(self) -> bytes32:
+        return self.artifacts[0].zkpassport_root
+
+    @property
+    def protocol_treasury_puzzle_hash(self) -> bytes32:
+        return self.artifacts[0].protocol_treasury_puzzle_hash
+
+    @property
+    def quote_expires_at(self) -> int:
+        return self.artifacts[0].quote_expires_at
+
+    @property
+    def quantity(self) -> int:
+        if self.delivery_kind == PurchaseDeliveryKind.SGT:
+            return self.artifacts[0].delivery_amount
+        return len(self.artifacts)
+
+    @property
+    def total_base_amount_minor(self) -> int:
+        return sum(item.base_amount_minor for item in self.artifacts)
+
+    @property
+    def total_technology_fee_minor(self) -> int:
+        return sum(item.technology_fee_minor for item in self.artifacts)
+
+    @property
+    def total_subtotal_minor(self) -> int:
+        return sum(item.subtotal_minor for item in self.artifacts)
+
+    @property
+    def total_rail_amount(self) -> int:
+        return sum(item.rail_amount for item in self.artifacts)
+
+    def assert_live(self, now: int) -> None:
+        """Require every exact child quote and authorization to remain live."""
+
+        for artifact in self.artifacts:
+            artifact.assert_live(now)
+
+    def to_program(self) -> Program:
+        first = self.artifacts[0]
+        return Program.to(
+            [
+                PURCHASE_BATCH_VERSION,
+                int(self.delivery_kind),
+                self.quantity,
+                bytes(self.batch_nonce),
+                first.network.encode("ascii"),
+                int(first.rail),
+                first.rail_chain_id,
+                bytes(first.rail_asset_id),
+                first.rail_asset_decimals,
+                bytes(first.vault_launcher_id),
+                bytes(first.vault_p2_puzzle_hash),
+                bytes(first.zkpassport_root),
+                bytes(first.protocol_treasury_puzzle_hash),
+                self.total_base_amount_minor,
+                self.total_technology_fee_minor,
+                self.total_subtotal_minor,
+                self.total_rail_amount,
+                [
+                    [
+                        bytes(item.artifact_hash),
+                        bytes(item.purchase_id),
+                        bytes(item.delivery_asset_id),
+                        item.delivery_amount,
+                        bytes(item.delivery_context_hash),
+                    ]
+                    for item in self.artifacts
+                ],
+            ]
+        )
+
+    @property
+    def batch_hash(self) -> bytes32:
+        return bytes32(self.to_program().get_tree_hash())
+
+    @property
+    def purchase_id(self) -> bytes32:
+        return bytes32(
+            Program.to(
+                [_PURCHASE_BATCH_ID_TAG, bytes(self.batch_hash)]
+            ).get_tree_hash()
+        )
+
+
+@dataclass(frozen=True)
+class PurchaseBatchSettlementReceiptV1:
+    """Validator-authenticated Stripe/Base result for one exact deed batch."""
+
+    batch: PurchaseBatchV1
+    attestation: PaymentAttestationV1
+    evidence_hash: bytes32
+    validator_roster_root: bytes32
+    validator_threshold: int
+    receipt_nonce: bytes32
+    observed_at: int
+    expires_at: int
+    collected_amount_minor: int
+    processing_charge_minor: int = 0
+    result_authorization_puzzle_hash: bytes32 = ZERO_32
+
+    def __post_init__(self) -> None:
+        if self.batch.delivery_kind != PurchaseDeliveryKind.SMARTDEED:
+            raise PaymentArtifactError(
+                "batch settlement receipts are only for unique SmartDeeds"
+            )
+        if self.batch.rail not in {
+            PaymentRail.STRIPE,
+            PaymentRail.EVM_TEST_USD,
+        }:
+            raise PaymentArtifactError(
+                "batch settlement receipt requires Stripe or Base USDC"
+            )
+        for value, name in (
+            (self.evidence_hash, "evidence_hash"),
+            (self.validator_roster_root, "validator_roster_root"),
+            (self.receipt_nonce, "receipt_nonce"),
+            (
+                self.result_authorization_puzzle_hash,
+                "result_authorization_puzzle_hash",
+            ),
+        ):
+            _require_bytes32(value, name)
+        if ZERO_32 in {
+            self.evidence_hash,
+            self.validator_roster_root,
+            self.receipt_nonce,
+        }:
+            raise PaymentArtifactError(
+                "batch receipt evidence, roster, and nonce must be non-zero"
+            )
+        if self.validator_threshold != 2:
+            raise PaymentArtifactError(
+                "batch receipt requires the fixed 2-of-3 validator threshold"
+            )
+        if (
+            self.attestation.purchase_id != self.batch.purchase_id
+            or self.attestation.artifact_hash != self.batch.batch_hash
+            or self.attestation.evidence_hash != self.evidence_hash
+        ):
+            raise PaymentArtifactError(
+                "batch payment attestation does not match its purchase batch"
+            )
+        if (
+            self.attestation.transition != PaymentTransition.SUCCEEDED
+            or self.attestation.resolution != PaymentResolution.DELIVER
+        ):
+            raise PaymentArtifactError(
+                "batch delivery requires a succeeded delivery attestation"
+            )
+        _require_u64(self.observed_at, "observed_at", minimum=1)
+        _require_u64(self.expires_at, "expires_at", minimum=1)
+        _require_u64(
+            self.collected_amount_minor,
+            "collected_amount_minor",
+            minimum=1,
+        )
+        _require_u64(
+            self.processing_charge_minor,
+            "processing_charge_minor",
+            minimum=0,
+        )
+        if self.attestation.observed_at != self.observed_at:
+            raise PaymentArtifactError(
+                "batch receipt and attestation observation times differ"
+            )
+        if self.expires_at <= self.observed_at:
+            raise PaymentArtifactError(
+                "batch settlement receipt must expire after observation"
+            )
+        if self.expires_at - self.observed_at > STRIPE_RECEIPT_TTL_SECONDS:
+            raise PaymentArtifactError(
+                "batch settlement receipt exceeds the 48-hour lifetime"
+            )
+        if self.batch.rail == PaymentRail.EVM_TEST_USD:
+            if self.result_authorization_puzzle_hash == ZERO_32:
+                raise PaymentArtifactError(
+                    "Base batch settlement requires a result authorization"
+                )
+            if self.processing_charge_minor != 0:
+                raise PaymentArtifactError(
+                    "Base batch settlement cannot carry a Stripe processing charge"
+                )
+            if self.collected_amount_minor != self.batch.total_rail_amount:
+                raise PaymentArtifactError(
+                    "Base batch payment does not match the exact aggregate quote"
+                )
+        elif self.result_authorization_puzzle_hash != ZERO_32:
+            raise PaymentArtifactError(
+                "Stripe batch settlement cannot carry a Base result authorization"
+            )
+        elif self.collected_amount_minor != (
+            self.batch.total_rail_amount + self.processing_charge_minor
+        ):
+            raise PaymentArtifactError(
+                "Stripe batch payment does not match the aggregate quote and charge"
+            )
+
+    def to_program(self) -> Program:
+        return Program.to(
+            [
+                PURCHASE_BATCH_RECEIPT_VERSION,
+                bytes(self.batch.batch_hash),
+                bytes(self.batch.purchase_id),
+                bytes(self.attestation.attestation_hash),
+                bytes(self.evidence_hash),
+                bytes(self.validator_roster_root),
+                self.validator_threshold,
+                bytes(self.receipt_nonce),
+                self.observed_at,
+                self.expires_at,
+                int(self.batch.rail),
+                self.batch.quantity,
+                bytes(self.batch.vault_launcher_id),
+                bytes(self.batch.vault_p2_puzzle_hash),
+                bytes(self.batch.zkpassport_root),
+                bytes(self.batch.protocol_treasury_puzzle_hash),
+                self.batch.total_technology_fee_minor,
+                self.batch.total_rail_amount,
+                self.collected_amount_minor,
+                self.processing_charge_minor,
+                bytes(self.result_authorization_puzzle_hash),
+                [
+                    [
+                        bytes(item.artifact_hash),
+                        bytes(item.purchase_id),
+                        bytes(item.deed_launcher_id),
+                        bytes(item.collection_id),
+                    ]
+                    for item in self.batch.artifacts
+                ],
+            ]
+        )
+
+    @property
+    def receipt_hash(self) -> bytes32:
+        return bytes32(self.to_program().get_tree_hash())
+
+    def assert_live(self, now: int) -> None:
+        """Require every exact child quote and vault authorization to be live."""
+
+        _require_u64(now, "now", minimum=1)
+        if now >= self.expires_at:
+            raise PaymentArtifactError("batch settlement receipt has expired")
+        self.batch.assert_live(now)
+
+
+def build_purchase_batch_v1(
+    *,
+    batch_nonce: bytes32,
+    artifacts: Sequence[PurchaseArtifactV3],
+) -> PurchaseBatchV1:
+    return PurchaseBatchV1(
+        batch_nonce=batch_nonce,
+        artifacts=tuple(sorted(artifacts, key=_purchase_batch_sort_key)),
+    )
+
+
+def purchase_batch_to_json(batch: PurchaseBatchV1) -> dict[str, Any]:
+    return {
+        "schema": PURCHASE_BATCH_SCHEMA,
+        "batchNonce": _hex32(batch.batch_nonce),
+        "deliveryKind": int(batch.delivery_kind),
+        "quantity": str(batch.quantity),
+        "totalBaseAmountMinor": str(batch.total_base_amount_minor),
+        "totalTechnologyFeeMinor": str(batch.total_technology_fee_minor),
+        "totalSubtotalMinor": str(batch.total_subtotal_minor),
+        "totalRailAmount": str(batch.total_rail_amount),
+        "artifacts": [purchase_artifact_to_json(item) for item in batch.artifacts],
+        "programHex": "0x" + bytes(batch.to_program()).hex(),
+        "batchHash": _hex32(batch.batch_hash),
+        "purchaseId": _hex32(batch.purchase_id),
+    }
+
+
+def purchase_batch_from_json(value: Mapping[str, Any]) -> PurchaseBatchV1:
+    expected = {
+        "schema",
+        "batchNonce",
+        "deliveryKind",
+        "quantity",
+        "totalBaseAmountMinor",
+        "totalTechnologyFeeMinor",
+        "totalSubtotalMinor",
+        "totalRailAmount",
+        "artifacts",
+        "programHex",
+        "batchHash",
+        "purchaseId",
+    }
+    _require_exact_keys(value, expected, "purchase batch")
+    if value["schema"] != PURCHASE_BATCH_SCHEMA:
+        raise PaymentArtifactError("purchase batch schema is unsupported")
+    children = value["artifacts"]
+    if not isinstance(children, list):
+        raise PaymentArtifactError("purchase batch artifacts must be a list")
+    batch = PurchaseBatchV1(
+        batch_nonce=_json_bytes32(value, "batchNonce"),
+        artifacts=tuple(
+            purchase_artifact_from_json(item)
+            if isinstance(item, Mapping)
+            else _raise_batch_child()
+            for item in children
+        ),
+    )
+    canonical = purchase_batch_to_json(batch)
+    for field in expected - {"artifacts", "schema", "batchNonce"}:
+        if value[field] != canonical[field]:
+            raise PaymentArtifactError(
+                f"purchase batch {field} does not match canonical CLVM"
+            )
+    if value["artifacts"] != canonical["artifacts"]:
+        raise PaymentArtifactError(
+            "purchase batch artifacts do not match canonical delivery order"
+        )
+    return batch
 
 
 @dataclass(frozen=True)
@@ -1781,10 +2221,114 @@ def build_stripe_settlement_receipt_v1(
     )
 
 
+def build_purchase_batch_settlement_receipt_v1(
+    *,
+    batch: PurchaseBatchV1,
+    provider_id: bytes32,
+    external_reference_hash: bytes32,
+    evidence_hash: bytes32,
+    observed_at: int,
+    validator_pubkeys: tuple[bytes, bytes, bytes],
+    collected_amount_minor: int,
+    processing_charge_minor: int = 0,
+    result_authorization_puzzle_hash: bytes32 = ZERO_32,
+    receipt_nonce: bytes32 | None = None,
+    expires_at: int | None = None,
+) -> PurchaseBatchSettlementReceiptV1:
+    """Build one 2-of-3 receipt for an exact external SmartDeed batch."""
+
+    if len(validator_pubkeys) != 3 or len(set(validator_pubkeys)) != 3:
+        raise PaymentArtifactError(
+            "batch settlement requires three distinct validator public keys"
+        )
+    if any(len(value) != 48 for value in validator_pubkeys):
+        raise PaymentArtifactError(
+            "batch settlement validator public keys must be 48 bytes"
+        )
+    for value, name in (
+        (provider_id, "provider_id"),
+        (external_reference_hash, "external_reference_hash"),
+        (evidence_hash, "evidence_hash"),
+    ):
+        _require_bytes32(value, name)
+        if value == ZERO_32:
+            raise PaymentArtifactError(f"{name} must be non-zero")
+    _require_u64(observed_at, "observed_at", minimum=1)
+
+    pending = PaymentAttestationV1(
+        purchase_id=batch.purchase_id,
+        artifact_hash=batch.batch_hash,
+        transition=PaymentTransition.PENDING,
+        resolution=PaymentResolution.NONE,
+        provider_id=provider_id,
+        external_reference_hash=external_reference_hash,
+        evidence_hash=evidence_hash,
+        previous_attestation_hash=ZERO_32,
+        observed_at=max(1, min(observed_at, batch.quote_expires_at - 1)),
+    )
+    succeeded = PaymentAttestationV1(
+        purchase_id=batch.purchase_id,
+        artifact_hash=batch.batch_hash,
+        transition=PaymentTransition.SUCCEEDED,
+        resolution=PaymentResolution.DELIVER,
+        provider_id=provider_id,
+        external_reference_hash=external_reference_hash,
+        evidence_hash=evidence_hash,
+        previous_attestation_hash=pending.attestation_hash,
+        observed_at=observed_at,
+    )
+    roster_root = bytes32(
+        Program.to(list(validator_pubkeys)).get_tree_hash()
+    )
+    resolved_nonce = receipt_nonce or bytes32(
+        Program.to(
+            [
+                b"SOLSLOT_PURCHASE_BATCH_RECEIPT_NONCE_V1",
+                bytes(batch.purchase_id),
+                bytes(evidence_hash),
+                bytes(roster_root),
+            ]
+        ).get_tree_hash()
+    )
+    return PurchaseBatchSettlementReceiptV1(
+        batch=batch,
+        attestation=succeeded,
+        evidence_hash=evidence_hash,
+        validator_roster_root=roster_root,
+        validator_threshold=2,
+        receipt_nonce=resolved_nonce,
+        observed_at=observed_at,
+        expires_at=(
+            expires_at
+            if expires_at is not None
+            else observed_at + STRIPE_RECEIPT_TTL_SECONDS
+        ),
+        collected_amount_minor=collected_amount_minor,
+        processing_charge_minor=processing_charge_minor,
+        result_authorization_puzzle_hash=result_authorization_puzzle_hash,
+    )
+
+
 purchase_artifact_v3_to_json = purchase_artifact_to_json
 purchase_artifact_v3_from_json = purchase_artifact_from_json
 stripe_settlement_evidence_to_json = stripe_evidence_to_json
 stripe_settlement_evidence_from_json = stripe_evidence_from_json
+
+
+def _purchase_batch_sort_key(
+    artifact: PurchaseArtifactV3,
+) -> tuple[bytes, bytes]:
+    if not isinstance(artifact, PurchaseArtifactV3):
+        raise PaymentArtifactError(
+            "purchase batch children must be PurchaseArtifactV3 values"
+        )
+    return bytes(artifact.delivery_asset_id), bytes(artifact.artifact_hash)
+
+
+def _raise_batch_child() -> PurchaseArtifactV3:
+    raise PaymentArtifactError(
+        "purchase batch artifacts must be canonical purchase objects"
+    )
 
 
 __all__ = [
@@ -1792,6 +2336,9 @@ __all__ = [
     "MAX_TECHNOLOGY_FEE_BPS",
     "PURCHASE_ARTIFACT_SCHEMA",
     "PURCHASE_ARTIFACT_V3_SCHEMA",
+    "PURCHASE_BATCH_RECEIPT_SCHEMA",
+    "PURCHASE_BATCH_SCHEMA",
+    "PURCHASE_BATCH_RECEIPT_SCHEMA",
     "STRIPE_RECEIPT_TTL_SECONDS",
     "STRIPE_PAYMENT_PROVIDER_ID",
     "STRIPE_SETTLEMENT_EVIDENCE_SCHEMA",
@@ -1799,6 +2346,8 @@ __all__ = [
     "TECHNOLOGY_FEE_BPS_ALPHA",
     "TECHNOLOGY_FEE_BPS_HARD_CAP",
     "PurchaseArtifactV3",
+    "PurchaseBatchV1",
+    "PurchaseBatchSettlementReceiptV1",
     "PurchaseDeliveryKind",
     "PurchaseKind",
     "StripeDisputeState",
@@ -1815,6 +2364,8 @@ __all__ = [
     "build_evm_test_usd_purchase_artifact",
     "build_evm_test_usd_purchase_artifact_v3",
     "build_external_settlement_receipt_v1",
+    "build_purchase_batch_settlement_receipt_v1",
+    "build_purchase_batch_v1",
     "build_sgt_purchase_artifact_v3",
     "build_stripe_purchase_artifact",
     "build_stripe_purchase_artifact_v3",
@@ -1828,6 +2379,8 @@ __all__ = [
     "purchase_artifact_v3_from_json",
     "purchase_artifact_to_json",
     "purchase_artifact_v3_to_json",
+    "purchase_batch_from_json",
+    "purchase_batch_to_json",
     "stripe_evidence_from_json",
     "stripe_evidence_to_json",
     "stripe_settlement_evidence_from_json",

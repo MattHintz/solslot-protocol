@@ -1,4 +1,4 @@
-"""RC24 Stripe receipt and governed SmartDeed delivery drivers."""
+"""RC25 governed-asset receipt and primary SmartDeed delivery drivers."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -37,6 +37,8 @@ from solslot_puzzles.payment_artifacts_v2 import PaymentArtifactError, PaymentRa
 from solslot_puzzles.payment_artifacts_v3 import (
     ExternalSettlementReceiptV1,
     PurchaseArtifactV3,
+    PurchaseBatchSettlementReceiptV1,
+    PurchaseBatchV1,
     PurchaseDeliveryKind,
     StripeSettlementReceiptV1,
 )
@@ -72,6 +74,9 @@ _INVENTORY_AVAILABLE_MOD_BYTES = bytes(
 )
 _STRIPE_RECEIPT_MOD_BYTES = bytes(
     load_puzzle("stripe_settlement_receipt_v1.clsp")
+)
+_PURCHASE_BATCH_RECEIPT_MOD_BYTES = bytes(
+    load_puzzle("purchase_batch_settlement_receipt_v1.clsp")
 )
 _P2_VAULT_MOD_HASH = bytes32(load_puzzle("p2_vault.clsp").get_tree_hash())
 
@@ -173,6 +178,16 @@ class InventoryTransitionSpendV1:
     validator_message: bytes32 | None
 
 
+@dataclass(frozen=True)
+class ChiaPrimaryBatchOffer:
+    """One atomic native checkout for multiple unique SmartDeeds."""
+
+    buyer_offer: Offer
+    issuer_offers: tuple[Offer, ...]
+    aggregate_offer: Offer
+    deed_spends: tuple[CoinSpend, ...]
+
+
 ExternalReceiptV1 = StripeSettlementReceiptV1 | ExternalSettlementReceiptV1
 
 
@@ -203,6 +218,20 @@ class StripeSettlementTermsV1:
             )
 
 
+@dataclass(frozen=True)
+class PurchaseBatchSettlementTermsV1:
+    receipt: PurchaseBatchSettlementReceiptV1
+    validator_pubkeys: tuple[bytes, bytes, bytes]
+
+    def __post_init__(self) -> None:
+        if self.receipt.validator_roster_root != validator_roster_root(
+            self.validator_pubkeys
+        ):
+            raise PaymentArtifactError(
+                "batch receipt validator roster does not match configured validators"
+            )
+
+
 def mint_offer_delegate_v5_mod() -> Program:
     return Program.from_bytes(_MINT_OFFER_V5_MOD_BYTES)
 
@@ -225,6 +254,14 @@ def stripe_settlement_receipt_v1_mod() -> Program:
 
 def stripe_settlement_receipt_v1_mod_hash() -> bytes32:
     return bytes32(stripe_settlement_receipt_v1_mod().get_tree_hash())
+
+
+def purchase_batch_settlement_receipt_v1_mod() -> Program:
+    return Program.from_bytes(_PURCHASE_BATCH_RECEIPT_MOD_BYTES)
+
+
+def purchase_batch_settlement_receipt_v1_mod_hash() -> bytes32:
+    return bytes32(purchase_batch_settlement_receipt_v1_mod().get_tree_hash())
 
 
 def validator_roster_root(pubkeys: Sequence[bytes]) -> bytes32:
@@ -368,6 +405,80 @@ def stripe_settlement_receipt_solution(
             receipt_coin.amount,
             list(_validate_signer_indices(signer_indices)),
         ]
+    )
+
+
+def curry_purchase_batch_settlement_receipt(
+    terms: PurchaseBatchSettlementTermsV1,
+) -> Program:
+    receipt = terms.receipt
+    batch = receipt.batch
+    children = [
+        [
+            artifact.artifact_hash,
+            artifact.purchase_id,
+            artifact.deed_launcher_id,
+            artifact.collection_id,
+        ]
+        for artifact in batch.artifacts
+    ]
+    return purchase_batch_settlement_receipt_v1_mod().curry(
+        batch.batch_hash,
+        batch.purchase_id,
+        receipt.receipt_hash,
+        receipt.evidence_hash,
+        receipt.attestation.attestation_hash,
+        int(batch.rail),
+        batch.quantity,
+        batch.vault_launcher_id,
+        batch.vault_p2_puzzle_hash,
+        batch.zkpassport_root,
+        batch.total_technology_fee_minor,
+        batch.total_rail_amount,
+        receipt.collected_amount_minor,
+        receipt.processing_charge_minor,
+        batch.protocol_treasury_puzzle_hash,
+        receipt.observed_at,
+        receipt.expires_at,
+        receipt.result_authorization_puzzle_hash,
+        children,
+        list(terms.validator_pubkeys),
+        OFFER_MOD_HASH,
+    )
+
+
+def build_purchase_batch_receipt_spend(
+    *,
+    receipt_coin: Coin,
+    terms: PurchaseBatchSettlementTermsV1,
+    signer_indices: Sequence[int],
+) -> CoinSpend:
+    """Spend one exact N-mojo batch receipt with two validators."""
+
+    receipt = terms.receipt
+    receipt.assert_live(receipt.observed_at)
+    indices = _validate_signer_indices(signer_indices)
+    puzzle = curry_purchase_batch_settlement_receipt(terms)
+    if int(receipt_coin.amount) != receipt.batch.quantity:
+        raise PaymentArtifactError(
+            "batch receipt coin amount must equal the exact deed quantity"
+        )
+    if receipt_coin.puzzle_hash != puzzle.get_tree_hash():
+        raise PaymentArtifactError(
+            "batch receipt coin does not match the authenticated settlement"
+        )
+    return make_spend(
+        receipt_coin,
+        puzzle,
+        Program.to(
+            [
+                receipt_coin.name(),
+                receipt_coin.parent_coin_info,
+                receipt_coin.puzzle_hash,
+                receipt_coin.amount,
+                list(indices),
+            ]
+        ),
     )
 
 
@@ -938,6 +1049,223 @@ def prepare_chia_buyer_offer_v3(
     )
 
 
+def prepare_chia_buyer_batch_offer_v3(
+    *,
+    payment_coin: Coin,
+    payment_public_key: bytes,
+    batch: PurchaseBatchV1,
+    terms: Sequence[PrimaryMintTermsV3],
+    cat_lineage_proof: LineageProof | None = None,
+) -> PreparedChiaBuyerOffer:
+    """Build one wallet signature requesting every deed in a native batch."""
+
+    artifacts = batch.artifacts
+    if batch.delivery_kind != PurchaseDeliveryKind.SMARTDEED:
+        raise PaymentArtifactError(
+            "native SmartDeed batching cannot be used for fungible SGT"
+        )
+    if len(artifacts) != len(terms):
+        raise PaymentArtifactError(
+            "native batch terms must match every purchase artifact"
+        )
+    if artifacts[0].rail not in (PaymentRail.CHIA_XCH, PaymentRail.CHIA_CAT):
+        raise PaymentArtifactError("native batch requires XCH or CAT")
+    for artifact, item_terms in zip(artifacts, terms, strict=True):
+        assert_artifact_matches_terms(artifact, item_terms)
+    if len(payment_public_key) != 48:
+        raise PaymentArtifactError("payment_public_key must be 48 bytes")
+    try:
+        public_key = G1Element.from_bytes(payment_public_key)
+    except ValueError as exc:
+        raise PaymentArtifactError(
+            "payment_public_key is not valid BLS"
+        ) from exc
+    if int(payment_coin.amount) < batch.total_rail_amount:
+        raise PaymentArtifactError(
+            "payment coin is smaller than the batched H-system quote"
+        )
+
+    first = artifacts[0]
+    payment_puzzle = puzzle_for_pk(public_key)
+    drivers = {
+        artifact.deed_launcher_id: smart_deed_singleton_driver(
+            artifact.deed_launcher_id
+        )
+        for artifact in artifacts
+    }
+    requested = {
+        artifact.deed_launcher_id: [
+            CreateCoin(
+                artifact.vault_p2_puzzle_hash,
+                uint64(1),
+                [
+                    artifact.deed_launcher_id,
+                    item_terms.smart_deed_inner_hash,
+                    artifact.metadata_root,
+                    artifact.purchase_id,
+                    artifact.artifact_hash,
+                ],
+            )
+        ]
+        for artifact, item_terms in zip(artifacts, terms, strict=True)
+    }
+    notarized = Offer.notarize_payments(requested, [payment_coin])
+    announcements = Offer.calculate_announcements(notarized, drivers)
+    conditions = [
+        CreateCoin(
+            OFFER_MOD_HASH,
+            uint64(batch.total_rail_amount),
+            [OFFER_MOD_HASH],
+        ).to_program(),
+        *(announcement.to_program() for announcement in announcements),
+    ]
+    change = int(payment_coin.amount) - batch.total_rail_amount
+    if change:
+        conditions.append(
+            CreateCoin(
+                bytes32(payment_puzzle.get_tree_hash()),
+                uint64(change),
+                [bytes32(payment_puzzle.get_tree_hash())],
+            ).to_program()
+        )
+    inner_solution = solution_for_conditions(
+        [condition.as_python() for condition in conditions]
+    )
+
+    if first.rail == PaymentRail.CHIA_XCH:
+        if payment_coin.puzzle_hash != payment_puzzle.get_tree_hash():
+            raise PaymentArtifactError(
+                "XCH payment coin does not belong to payment_public_key"
+            )
+        coin_spend = make_spend(payment_coin, payment_puzzle, inner_solution)
+        bundle = WalletSpendBundle([coin_spend], G2Element())
+    else:
+        expected_cat_puzzle = construct_cat_puzzle(
+            CAT_MOD,
+            first.rail_asset_id,
+            payment_puzzle,
+        )
+        if payment_coin.puzzle_hash != expected_cat_puzzle.get_tree_hash():
+            raise PaymentArtifactError(
+                "CAT payment coin does not belong to payment_public_key and asset"
+            )
+        if (
+            cat_lineage_proof is None
+            or cat_lineage_proof.parent_name is None
+            or cat_lineage_proof.inner_puzzle_hash is None
+            or cat_lineage_proof.amount is None
+        ):
+            raise PaymentArtifactError(
+                "CAT payment coin requires a complete lineage proof"
+            )
+        drivers[first.rail_asset_id] = chia_cat_driver(first.rail_asset_id)
+        bundle = unsigned_spend_bundle_for_spendable_cats(
+            CAT_MOD,
+            [
+                SpendableCAT(
+                    payment_coin,
+                    first.rail_asset_id,
+                    payment_puzzle,
+                    inner_solution,
+                    lineage_proof=cat_lineage_proof,
+                )
+            ],
+        )
+        coin_spend = bundle.coin_spends[0]
+
+    offer = Offer(notarized, bundle, drivers)
+    validate_chia_buyer_batch_offer_v3(
+        buyer_offer=offer,
+        batch=batch,
+        terms=terms,
+    )
+    return PreparedChiaBuyerOffer(
+        offer=offer,
+        coin_spend=coin_spend,
+        payment_puzzle=payment_puzzle,
+    )
+
+
+def validate_chia_buyer_batch_offer_v3(
+    *,
+    buyer_offer: Offer,
+    batch: PurchaseBatchV1,
+    terms: Sequence[PrimaryMintTermsV3],
+) -> bytes32:
+    """Validate all destinations and the exact aggregate native amount."""
+
+    artifacts = batch.artifacts
+    if (
+        batch.delivery_kind != PurchaseDeliveryKind.SMARTDEED
+        or len(artifacts) != len(terms)
+    ):
+        raise PaymentArtifactError("buyer batch shape is invalid")
+    requested = buyer_offer.requested_payments
+    if set(requested) != {
+        artifact.deed_launcher_id for artifact in artifacts
+    }:
+        raise PaymentArtifactError(
+            "buyer batch must request exactly the committed SmartDeeds"
+        )
+    nonces: set[bytes32] = set()
+    for artifact, item_terms in zip(artifacts, terms, strict=True):
+        assert_artifact_matches_terms(artifact, item_terms)
+        payments = requested[artifact.deed_launcher_id]
+        if len(payments) != 1:
+            raise PaymentArtifactError(
+                "buyer batch must contain one destination per SmartDeed"
+            )
+        payment = payments[0]
+        if (
+            payment.puzzle_hash != artifact.vault_p2_puzzle_hash
+            or int(payment.amount) != 1
+            or list(payment.memos)
+            != [
+                artifact.deed_launcher_id,
+                item_terms.smart_deed_inner_hash,
+                artifact.metadata_root,
+                artifact.purchase_id,
+                artifact.artifact_hash,
+            ]
+        ):
+            raise PaymentArtifactError(
+                "buyer batch changes a SmartDeed destination or commitment"
+            )
+        nonces.add(bytes32(payment.nonce))
+        expected_driver = smart_deed_singleton_driver(
+            artifact.deed_launcher_id
+        )
+        actual_driver = buyer_offer.driver_dict.get(artifact.deed_launcher_id)
+        if actual_driver is None or actual_driver.info != expected_driver.info:
+            raise PaymentArtifactError(
+                "buyer batch uses an unexpected SmartDeed singleton driver"
+            )
+    if len(nonces) != 1:
+        raise PaymentArtifactError(
+            "buyer batch SmartDeeds must share one atomic offer nonce"
+        )
+    first = artifacts[0]
+    payment_asset = (
+        None if first.rail == PaymentRail.CHIA_XCH else first.rail_asset_id
+    )
+    offered = buyer_offer.get_offered_amounts()
+    if (
+        set(offered) != {payment_asset}
+        or int(offered[payment_asset]) != batch.total_rail_amount
+    ):
+        raise PaymentArtifactError(
+            "buyer batch must contain only the exact aggregate XCH or CAT payment"
+        )
+    if first.rail == PaymentRail.CHIA_CAT:
+        expected_cat = chia_cat_driver(first.rail_asset_id)
+        actual_cat = buyer_offer.driver_dict.get(first.rail_asset_id)
+        if actual_cat is None or actual_cat.info != expected_cat.info:
+            raise PaymentArtifactError(
+                "buyer batch uses an unexpected CAT driver"
+            )
+    return next(iter(nonces))
+
+
 def validate_chia_buyer_offer_v3(
     *,
     buyer_offer: Offer,
@@ -1170,6 +1498,114 @@ def build_native_primary_offer_v5(
     )
 
 
+def build_native_primary_batch_offer_v5(
+    *,
+    buyer_offer: Offer,
+    batch: PurchaseBatchV1,
+    deed_coins: Sequence[Coin],
+    deed_singleton_structs: Sequence[Program],
+    lineage_proofs: Sequence[LineageProof],
+    signer_indices_by_artifact: Sequence[Sequence[int]],
+    terms: Sequence[PrimaryMintTermsV3],
+    reservations: Sequence[InventoryReservationV1],
+) -> ChiaPrimaryBatchOffer:
+    """Aggregate exact issuer halves with one signed native buyer offer."""
+
+    artifacts = batch.artifacts
+    lengths = {
+        len(artifacts),
+        len(deed_coins),
+        len(deed_singleton_structs),
+        len(lineage_proofs),
+        len(signer_indices_by_artifact),
+        len(terms),
+        len(reservations),
+    }
+    if len(lengths) != 1:
+        raise PaymentArtifactError(
+            "native batch chain contexts must match every artifact"
+        )
+    buyer_offer_nonce = validate_chia_buyer_batch_offer_v3(
+        buyer_offer=buyer_offer,
+        batch=batch,
+        terms=terms,
+    )
+    issuer_offers: list[Offer] = []
+    deed_spends: list[CoinSpend] = []
+    first = artifacts[0]
+    payment_asset = (
+        None if first.rail == PaymentRail.CHIA_XCH else first.rail_asset_id
+    )
+    for (
+        artifact,
+        deed_coin,
+        singleton_struct,
+        lineage_proof,
+        item_signer_indices,
+        item_terms,
+        reservation,
+    ) in zip(
+        artifacts,
+        deed_coins,
+        deed_singleton_structs,
+        lineage_proofs,
+        signer_indices_by_artifact,
+        terms,
+        reservations,
+        strict=True,
+    ):
+        deed_spend = build_native_mint_offer_v5_spend(
+            deed_coin=deed_coin,
+            deed_singleton_struct=singleton_struct,
+            lineage_proof=lineage_proof,
+            artifact=artifact,
+            buyer_offer_nonce=buyer_offer_nonce,
+            signer_indices=item_signer_indices,
+            terms=item_terms,
+            reservation=reservation,
+        )
+        drivers = {
+            artifact.deed_launcher_id: smart_deed_singleton_driver(
+                artifact.deed_launcher_id
+            )
+        }
+        if first.rail == PaymentRail.CHIA_CAT:
+            drivers[first.rail_asset_id] = chia_cat_driver(
+                first.rail_asset_id
+            )
+        issuer_offers.append(
+            Offer(
+                Offer.notarize_payments(
+                    {
+                        payment_asset: [
+                            CreateCoin(
+                                item_terms.protocol_puzhash,
+                                uint64(artifact.rail_amount),
+                                [artifact.purchase_id, artifact.artifact_hash],
+                            )
+                        ]
+                    },
+                    [deed_coin],
+                ),
+                WalletSpendBundle([deed_spend], G2Element()),
+                drivers,
+            )
+        )
+        deed_spends.append(deed_spend)
+
+    aggregate = Offer.aggregate([buyer_offer, *issuer_offers])
+    if not aggregate.is_valid():
+        raise PaymentArtifactError(
+            "batched buyer and issuer offers do not balance exactly"
+        )
+    return ChiaPrimaryBatchOffer(
+        buyer_offer=buyer_offer,
+        issuer_offers=tuple(issuer_offers),
+        aggregate_offer=aggregate,
+        deed_spends=tuple(deed_spends),
+    )
+
+
 def stripe_offer_v5_solution(
     *,
     deed_coin: Coin,
@@ -1383,6 +1819,311 @@ def build_stripe_primary_offer_v5(
     )
 
 
+def prepare_purchase_batch_receipt_offer(
+    *,
+    receipt_spend: CoinSpend,
+    receipt: PurchaseBatchSettlementReceiptV1,
+    terms: Sequence[PrimaryMintTermsV3],
+) -> Offer:
+    """Request every exact deed in exchange for one N-mojo receipt coin."""
+
+    item_terms = _validate_purchase_batch_terms(receipt.batch, terms)
+    receipt_terms = PurchaseBatchSettlementTermsV1(
+        receipt=receipt,
+        validator_pubkeys=item_terms[0].validator_pubkeys,
+    )
+    if receipt_spend.coin.puzzle_hash != curry_purchase_batch_settlement_receipt(
+        receipt_terms
+    ).get_tree_hash():
+        raise PaymentArtifactError("batch receipt spend uses the wrong puzzle")
+    requested = {
+        artifact.deed_launcher_id: [
+            CreateCoin(
+                artifact.vault_p2_puzzle_hash,
+                uint64(1),
+                [
+                    artifact.deed_launcher_id,
+                    term.smart_deed_inner_hash,
+                    artifact.metadata_root,
+                    artifact.purchase_id,
+                    artifact.artifact_hash,
+                ],
+            )
+        ]
+        for artifact, term in zip(
+            receipt.batch.artifacts, item_terms, strict=True
+        )
+    }
+    offer = Offer(
+        Offer.notarize_payments(requested, [receipt_spend.coin]),
+        WalletSpendBundle([receipt_spend], G2Element()),
+        {
+            artifact.deed_launcher_id: smart_deed_singleton_driver(
+                artifact.deed_launcher_id
+            )
+            for artifact in receipt.batch.artifacts
+        },
+    )
+    if offer.get_offered_amounts() != {None: receipt.batch.quantity}:
+        raise PaymentArtifactError(
+            "batch receipt offer must expose one technical mojo per deed"
+        )
+    if offer.fees() != 0:
+        raise PaymentArtifactError("batch receipt offer must be zero fee")
+    return offer
+
+
+def purchase_batch_offer_v5_solution(
+    *,
+    deed_coin: Coin,
+    receipt_coin: Coin,
+    receipt: PurchaseBatchSettlementReceiptV1,
+    artifact: PurchaseArtifactV3,
+    buyer_offer_nonce: bytes32,
+    terms: PrimaryMintTermsV3,
+    reservation: InventoryReservationV1,
+) -> Program:
+    assert_artifact_matches_terms(artifact, terms)
+    if reservation.artifact != artifact or artifact not in receipt.batch.artifacts:
+        raise PaymentArtifactError(
+            "batch receipt child differs from the active deed reservation"
+        )
+    return Program.to(
+        [
+            deed_coin.name(),
+            deed_coin.parent_coin_info,
+            deed_coin.puzzle_hash,
+            deed_coin.amount,
+            artifact.vault_launcher_id,
+            artifact.vault_p2_puzzle_hash,
+            artifact.zkpassport_root,
+            artifact.authorization_nonce,
+            artifact.authorization_expires_at,
+            artifact.quote_expires_at,
+            int(artifact.rail),
+            artifact.rail_chain_id,
+            artifact.rail_asset_id,
+            artifact.rail_asset_decimals,
+            artifact.rail_amount,
+            artifact.oracle_round_hash,
+            artifact.oracle_price_usd_minor_per_asset,
+            artifact.source_evidence_root,
+            int(artifact.purchase_kind),
+            artifact.presale_terms_hash,
+            buyer_offer_nonce,
+            STRIPE_EXTERNAL_MODE,
+            bytes32.zeros,
+            bytes32.zeros,
+            receipt_coin.name(),
+            receipt.evidence_hash,
+            receipt.attestation.attestation_hash,
+            receipt.receipt_hash,
+            receipt.expires_at,
+            receipt.result_authorization_puzzle_hash,
+            0,
+            [],
+        ]
+    )
+
+
+def build_purchase_batch_mint_offer_v5_spend(
+    *,
+    deed_coin: Coin,
+    deed_singleton_struct: Program,
+    lineage_proof: LineageProof,
+    receipt_coin: Coin,
+    receipt: PurchaseBatchSettlementReceiptV1,
+    artifact: PurchaseArtifactV3,
+    buyer_offer_nonce: bytes32,
+    terms: PrimaryMintTermsV3,
+    reservation: InventoryReservationV1,
+) -> CoinSpend:
+    inner = make_mint_offer_v5_inner(terms, reservation)
+    full_puzzle = SINGLETON_MOD.curry(deed_singleton_struct, inner)
+    if deed_coin.puzzle_hash != full_puzzle.get_tree_hash():
+        raise PaymentArtifactError(
+            "deed coin puzzle hash does not match mint offer v5"
+        )
+    return make_spend(
+        deed_coin,
+        full_puzzle,
+        solution_for_singleton(
+            lineage_proof,
+            uint64(deed_coin.amount),
+            purchase_batch_offer_v5_solution(
+                deed_coin=deed_coin,
+                receipt_coin=receipt_coin,
+                receipt=receipt,
+                artifact=artifact,
+                buyer_offer_nonce=buyer_offer_nonce,
+                terms=terms,
+                reservation=reservation,
+            ),
+        ),
+    )
+
+
+def build_external_primary_batch_offer_v5(
+    *,
+    receipt_offer: Offer,
+    receipt_coin: Coin,
+    receipt: PurchaseBatchSettlementReceiptV1,
+    deed_coins: Sequence[Coin],
+    deed_singleton_structs: Sequence[Program],
+    lineage_proofs: Sequence[LineageProof],
+    terms: Sequence[PrimaryMintTermsV3],
+    reservations: Sequence[InventoryReservationV1],
+) -> ChiaPrimaryBatchOffer:
+    batch = receipt.batch
+    item_terms = _validate_purchase_batch_terms(batch, terms)
+    count = len(batch.artifacts)
+    if not (
+        len(deed_coins)
+        == len(deed_singleton_structs)
+        == len(lineage_proofs)
+        == len(reservations)
+        == count
+    ):
+        raise PaymentArtifactError(
+            "external batch inputs must match the exact deed quantity"
+        )
+    buyer_offer_nonce = _validate_purchase_batch_receipt_offer(
+        receipt_offer=receipt_offer,
+        receipt_coin=receipt_coin,
+        receipt=receipt,
+        terms=item_terms,
+    )
+    deed_spends: list[CoinSpend] = []
+    issuer_offers: list[Offer] = []
+    for artifact, deed_coin, singleton_struct, lineage, term, reservation in zip(
+        batch.artifacts,
+        deed_coins,
+        deed_singleton_structs,
+        lineage_proofs,
+        item_terms,
+        reservations,
+        strict=True,
+    ):
+        deed_spend = build_purchase_batch_mint_offer_v5_spend(
+            deed_coin=deed_coin,
+            deed_singleton_struct=singleton_struct,
+            lineage_proof=lineage,
+            receipt_coin=receipt_coin,
+            receipt=receipt,
+            artifact=artifact,
+            buyer_offer_nonce=buyer_offer_nonce,
+            terms=term,
+            reservation=reservation,
+        )
+        deed_spends.append(deed_spend)
+        issuer_offers.append(
+            Offer(
+                Offer.notarize_payments(
+                    {
+                        None: [
+                            CreateCoin(
+                                (
+                                    receipt.result_authorization_puzzle_hash
+                                    if batch.rail == PaymentRail.EVM_TEST_USD
+                                    else term.protocol_puzhash
+                                ),
+                                uint64(1),
+                                [artifact.purchase_id, artifact.artifact_hash],
+                            )
+                        ]
+                    },
+                    [deed_coin],
+                ),
+                WalletSpendBundle([deed_spend], G2Element()),
+                {
+                    artifact.deed_launcher_id: smart_deed_singleton_driver(
+                        artifact.deed_launcher_id
+                    )
+                },
+            )
+        )
+    aggregate = Offer.aggregate([receipt_offer, *issuer_offers])
+    if not aggregate.is_valid():
+        raise PaymentArtifactError(
+            "external batch receipt and issuer offers do not balance exactly"
+        )
+    return ChiaPrimaryBatchOffer(
+        buyer_offer=receipt_offer,
+        issuer_offers=tuple(issuer_offers),
+        aggregate_offer=aggregate,
+        deed_spends=tuple(deed_spends),
+    )
+
+
+def purchase_batch_child_settlement_message(
+    receipt: PurchaseBatchSettlementReceiptV1,
+    artifact: PurchaseArtifactV3,
+) -> bytes32:
+    if artifact not in receipt.batch.artifacts:
+        raise PaymentArtifactError("artifact is not part of this purchase batch")
+    return bytes32(
+        Program.to(
+            [
+                b"SOLSLOT_EXTERNAL_RECEIPT_SETTLEMENT_V1",
+                artifact.artifact_hash,
+                artifact.purchase_id,
+                receipt.receipt_hash,
+                int(receipt.batch.rail),
+                int(PurchaseDeliveryKind.SMARTDEED),
+                artifact.deed_launcher_id,
+                1,
+                artifact.collection_id,
+                receipt.batch.vault_p2_puzzle_hash,
+                receipt.result_authorization_puzzle_hash,
+                receipt.evidence_hash,
+                receipt.attestation.attestation_hash,
+            ]
+        ).get_tree_hash()
+    )
+
+
+def purchase_batch_settlement_authorization_message(
+    terms: PurchaseBatchSettlementTermsV1,
+) -> bytes32:
+    receipt = terms.receipt
+    batch = receipt.batch
+    children = [
+        [
+            artifact.artifact_hash,
+            artifact.purchase_id,
+            artifact.deed_launcher_id,
+            artifact.collection_id,
+        ]
+        for artifact in batch.artifacts
+    ]
+    return bytes32(
+        Program.to(
+            [
+                b"SOLSLOT_PURCHASE_BATCH_RECEIPT_AUTH_V1",
+                batch.batch_hash,
+                batch.purchase_id,
+                receipt.receipt_hash,
+                receipt.evidence_hash,
+                receipt.attestation.attestation_hash,
+                int(batch.rail),
+                batch.quantity,
+                batch.vault_launcher_id,
+                batch.vault_p2_puzzle_hash,
+                batch.zkpassport_root,
+                batch.total_technology_fee_minor,
+                batch.total_rail_amount,
+                receipt.collected_amount_minor,
+                receipt.processing_charge_minor,
+                batch.protocol_treasury_puzzle_hash,
+                receipt.observed_at,
+                receipt.expires_at,
+                receipt.result_authorization_puzzle_hash,
+                children,
+            ]
+        ).get_tree_hash()
+    )
+
+
 def stripe_receipt_settlement_message(
     receipt: ExternalReceiptV1,
 ) -> bytes32:
@@ -1491,6 +2232,85 @@ def _validate_stripe_receipt_offer(
     return bytes32(payment.nonce)
 
 
+def _validate_purchase_batch_terms(
+    batch: PurchaseBatchV1,
+    terms: Sequence[PrimaryMintTermsV3],
+) -> tuple[PrimaryMintTermsV3, ...]:
+    values = tuple(terms)
+    if len(values) != len(batch.artifacts):
+        raise PaymentArtifactError(
+            "batch mint terms must match every exact delivery artifact"
+        )
+    for artifact, term in zip(batch.artifacts, values, strict=True):
+        assert_artifact_matches_terms(artifact, term)
+    if len({term.validator_pubkeys for term in values}) != 1:
+        raise PaymentArtifactError(
+            "batch children must use the same validator roster"
+        )
+    if len({term.protocol_puzhash for term in values}) != 1:
+        raise PaymentArtifactError(
+            "batch children must use the same protocol settlement puzzle"
+        )
+    return values
+
+
+def _validate_purchase_batch_receipt_offer(
+    *,
+    receipt_offer: Offer,
+    receipt_coin: Coin,
+    receipt: PurchaseBatchSettlementReceiptV1,
+    terms: Sequence[PrimaryMintTermsV3],
+) -> bytes32:
+    batch = receipt.batch
+    item_terms = _validate_purchase_batch_terms(batch, terms)
+    expected_launchers = {
+        artifact.deed_launcher_id for artifact in batch.artifacts
+    }
+    requested = receipt_offer.requested_payments
+    if set(requested) != expected_launchers:
+        raise PaymentArtifactError(
+            "batch receipt must request every committed SmartDeed exactly once"
+        )
+    nonces: set[bytes32] = set()
+    for artifact, term in zip(batch.artifacts, item_terms, strict=True):
+        payments = requested[artifact.deed_launcher_id]
+        if len(payments) != 1:
+            raise PaymentArtifactError(
+                "batch receipt must request one output per SmartDeed"
+            )
+        payment = payments[0]
+        expected_memos = [
+            artifact.deed_launcher_id,
+            term.smart_deed_inner_hash,
+            artifact.metadata_root,
+            artifact.purchase_id,
+            artifact.artifact_hash,
+        ]
+        if (
+            payment.puzzle_hash != batch.vault_p2_puzzle_hash
+            or int(payment.amount) != 1
+            or list(payment.memos) != expected_memos
+        ):
+            raise PaymentArtifactError(
+                "batch receipt does not deliver an exact deed to its vault"
+            )
+        nonces.add(bytes32(payment.nonce))
+    if len(nonces) != 1:
+        raise PaymentArtifactError(
+            "batch receipt deliveries must share one atomic offer nonce"
+        )
+    if receipt_offer.get_offered_amounts() != {None: batch.quantity}:
+        raise PaymentArtifactError(
+            "batch receipt must offer one technical mojo per deed"
+        )
+    spends = receipt_offer.coin_spends()
+    if len(spends) != 1 or spends[0].coin != receipt_coin:
+        raise PaymentArtifactError(
+            "batch receipt offer must contain the exact receipt spend"
+        )
+    return next(iter(nonces))
+
+
 def _validate_signer_indices(indices: Sequence[int]) -> tuple[int, int]:
     values = tuple(indices)
     if len(values) != PROVIDER_THRESHOLD:
@@ -1510,21 +2330,28 @@ def _require_bytes32(value: bytes32, name: str) -> None:
 
 
 __all__ = [
+    "ChiaPrimaryBatchOffer",
     "InventoryReservationSpendV1",
     "InventoryReservationV1",
     "InventoryTransitionSpendV1",
     "MAX_RESERVATION_EXTENSION_SECONDS",
     "PRIMARY_PURCHASE_PROVIDER_ID",
     "PrimaryMintTermsV3",
+    "PurchaseBatchSettlementTermsV1",
+    "build_external_primary_batch_offer_v5",
     "build_inventory_reservation_spend",
     "build_inventory_extension_spend",
     "build_inventory_release_spend",
     "build_external_receipt_spend",
     "build_native_mint_offer_v5_spend",
     "build_native_primary_offer_v5",
+    "build_native_primary_batch_offer_v5",
+    "build_purchase_batch_mint_offer_v5_spend",
+    "build_purchase_batch_receipt_spend",
     "build_stripe_mint_offer_v5_spend",
     "build_stripe_primary_offer_v5",
     "build_stripe_receipt_spend",
+    "curry_purchase_batch_settlement_receipt",
     "inventory_extension_message",
     "inventory_release_message",
     "inventory_reservation_message",
@@ -1535,9 +2362,15 @@ __all__ = [
     "mint_offer_inventory_available_v1_mod_hash",
     "native_offer_v5_solution",
     "prepare_chia_buyer_offer_v3",
+    "prepare_chia_buyer_batch_offer_v3",
+    "prepare_purchase_batch_receipt_offer",
     "prepare_stripe_receipt_offer",
     "stripe_receipt_settlement_message",
     "stripe_settlement_receipt_v1_mod_hash",
+    "purchase_batch_child_settlement_message",
+    "purchase_batch_settlement_authorization_message",
+    "purchase_batch_settlement_receipt_v1_mod_hash",
     "validate_chia_buyer_offer_v3",
+    "validate_chia_buyer_batch_offer_v3",
     "validator_roster_root",
 ]
