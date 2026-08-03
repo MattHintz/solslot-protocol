@@ -171,6 +171,7 @@ class SwapReceipt:
     pool_coin_id: bytes32
     vault_launcher_id: bytes32
     vault_coin_id: bytes32
+    sols_payment_coin_id: bytes32
     counterparty_puzzle_hash: bytes32
     quote_expires_at: int
     operation_hash: bytes32
@@ -359,6 +360,7 @@ def prepare_deed_to_sols(
         pool_coin_id=_bytes32("pool_coin_id", pool_coin_id),
         vault_launcher_id=_bytes32("vault_launcher_id", vault_launcher_id),
         vault_coin_id=_bytes32("vault_coin_id", vault_coin_id),
+        sols_payment_coin_id=bytes32.zeros,
         counterparty_puzzle_hash=_bytes32(
             "seller_sols_puzzle_hash",
             seller_sols_puzzle_hash,
@@ -386,9 +388,12 @@ def prepare_sols_to_deed(
     pause: ScopedPause | None,
     vault_launcher_id: bytes32,
     vault_coin_id: bytes32,
+    sols_payment_coin_id: bytes32,
     destination_p2_vault_hash: bytes32,
     quote_expires_at: int,
 ) -> SwapReceipt:
+    if sols_payment_coin_id == bytes32.zeros:
+        raise ValueError("sols_payment_coin_id must be non-zero")
     normalized = canonical_inventory(inventory)
     state.validate(normalized)
     _validate_statutes(
@@ -456,6 +461,10 @@ def prepare_sols_to_deed(
         pool_coin_id=_bytes32("pool_coin_id", pool_coin_id),
         vault_launcher_id=_bytes32("vault_launcher_id", vault_launcher_id),
         vault_coin_id=_bytes32("vault_coin_id", vault_coin_id),
+        sols_payment_coin_id=_bytes32(
+            "sols_payment_coin_id",
+            sols_payment_coin_id,
+        ),
         counterparty_puzzle_hash=_bytes32(
             "destination_p2_vault_hash",
             destination_p2_vault_hash,

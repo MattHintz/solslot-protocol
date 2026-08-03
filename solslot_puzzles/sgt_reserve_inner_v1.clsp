@@ -4,7 +4,10 @@
 ;;; The fixed SGT issuance enters this owner puzzle instead of an ordinary
 ;;; wallet. The reserve can sponsor an admin-approved proposal, but SGT can
 ;;; leave the reserve only after the canonical governance tracker executes an
-;;; exact SGT_SALE or SGT_GRANT bill.
+;;; exact SGT_SALE or SGT_GRANT bill. The reserve may also sponsor a governed
+;;; funded-redemption bill, but that path can only return the complete reserve
+;;; unchanged after tracker execution; the paired wUSDC.b treasury performs
+;;; the redemption allocation.
 ;;;
 ;;; Spend modes:
 ;;;   1 LOCK  - lock the full reserve coin behind an exact proposal hash.
@@ -42,6 +45,7 @@
 
     (defconstant BILL_SGT_SALE 0x59)  ; "Y"
     (defconstant BILL_SGT_GRANT 0x47) ; "G"
+    (defconstant BILL_REDEMPTION 0x44) ; "D"
     (defconstant ADMIN_PROPOSAL_TAG 0x474f5650) ; "GOVP"
     (defconstant EXEC_TAG 0x45584543) ; "EXEC"
     (defconstant SGT_PROTOCOL_TRANSITION_TAG 0x53475450) ; "SGTP"
@@ -166,6 +170,29 @@
         (or (valid-sale-bill bill) (valid-grant-bill bill))
     )
 
+    ;; (D collection_id settlement_id payment_asset_id total_payment_amount
+    ;;    deed_count allocations_root)
+    ;; The reserve validates enough shape to sponsor the proposal. Governance
+    ;; and the non-withdrawable redemption treasury independently bind and
+    ;; validate the complete allocation at execution.
+    (defun-inline valid-redemption-bill (bill)
+        (and
+            (= (list-length bill) 7)
+            (= (nth-value 0 bill) BILL_REDEMPTION)
+            (is-nonzero-b32 (nth-value 1 bill))
+            (is-nonzero-b32 (nth-value 2 bill))
+            (= (nth-value 3 bill) WUSDC_B_ASSET_ID)
+            (is-uint64 (nth-value 4 bill))
+            (> (nth-value 4 bill) 0)
+            (is-uint64 (nth-value 5 bill))
+            (> (nth-value 5 bill) 0)
+            (is-nonzero-b32 (nth-value 6 bill)))
+    )
+
+    (defun-inline valid-sponsored-bill (bill)
+        (or (valid-allocation-bill bill) (valid-redemption-bill bill))
+    )
+
     (defun-inline sale-owner-inner-hash (bill proposal_hash)
         (curry_hashes SGT_SALE_MOD_HASH
             (sha256 1 SGT_SALE_MOD_HASH)
@@ -226,7 +253,7 @@
                     (= (list-length params) 4)
                     (is-size-b32 (nth-value 0 params))
                     (= (nth-value 0 params) (sha256tree (nth-value 1 params)))
-                    (valid-allocation-bill (nth-value 1 params))
+                    (valid-sponsored-bill (nth-value 1 params))
                     (is-uint64 (nth-value 2 params))
                     (is-size-b32 (nth-value 3 params))
                     (list

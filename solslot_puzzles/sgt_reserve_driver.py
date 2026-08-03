@@ -30,6 +30,7 @@ from chia_rs.sized_ints import uint64
 from solslot_puzzles import load_puzzle
 from solslot_puzzles.vault_driver import P2_VAULT_MOD_HASH, puzzle_hash_for_p2_vault
 from solslot_puzzles.sgt_driver import (
+    BILL_REDEMPTION,
     BILL_SGT_GRANT,
     BILL_SGT_SALE,
     SGT_RELEASE_EXEC,
@@ -222,8 +223,14 @@ def build_reserve_lock_coin_spend(
 ) -> CoinSpend:
     """Lock the complete reserve coin as the first vote for one queued bill."""
     values = list(bill.as_iter())
-    if not values or values[0].as_atom() not in (BILL_SGT_SALE, BILL_SGT_GRANT):
-        raise ValueError("reserve can sponsor only SGT_SALE or SGT_GRANT")
+    if not values or values[0].as_atom() not in (
+        BILL_SGT_SALE,
+        BILL_SGT_GRANT,
+        BILL_REDEMPTION,
+    ):
+        raise ValueError(
+            "reserve can sponsor only SGT_SALE, SGT_GRANT, or funded redemption"
+        )
     reserve_inner = sgt_reserve_inner_puzzle(
         proposal_tracker_struct=proposal_tracker_struct,
         admin_authority_struct=admin_authority_struct,
@@ -433,6 +440,55 @@ def build_reserve_execute_spends(
     return (
         by_coin_id[bytes32(locked_reserve_coin.name())],
         by_coin_id[bytes32(ephemeral_free_coin.name())],
+    )
+
+
+def build_reserve_release_spend(
+    *,
+    locked_reserve_coin: Coin,
+    locked_reserve_lineage_proof: LineageProof,
+    proposal_tracker_struct: Program,
+    reserve_owner_inner_hash: bytes32,
+    sgt_tail_hash: bytes32,
+    bill: Program,
+    voting_deadline: int,
+    tracker_inner_puzzle_hash: bytes32,
+) -> CoinSpend:
+    """Return non-allocation proposal stake unchanged after tracker execution.
+
+    Funded redemption allocates wUSDC.b in its paired treasury spend. This
+    helper releases the company SGT vote back to the exact same reserve owner
+    and exposes no sale, grant, transfer, or change path.
+    """
+    values = list(bill.as_iter())
+    if len(values) != 7 or values[0].as_atom() != BILL_REDEMPTION:
+        raise ValueError("reserve release requires an exact funded redemption bill")
+    proposal_hash = proposal_hash_from_bill(bill)
+    locked_inner = sgt_locked_inner_puzzle(
+        bytes32(sgt_free_inner_mod().get_tree_hash()),
+        proposal_tracker_struct,
+        reserve_owner_inner_hash,
+        proposal_hash,
+        voting_deadline,
+    )
+    expected = construct_cat_puzzle(CAT_MOD, sgt_tail_hash, locked_inner)
+    if locked_reserve_coin.puzzle_hash != expected.get_tree_hash():
+        raise ValueError("locked reserve coin does not match the redemption bill")
+    return _one_cat_spend(
+        SpendableCAT(
+            coin=locked_reserve_coin,
+            limitations_program_hash=sgt_tail_hash,
+            inner_puzzle=locked_inner,
+            inner_solution=Program.to(
+                [
+                    SGT_RELEASE_EXEC,
+                    tracker_inner_puzzle_hash,
+                    locked_reserve_coin.amount,
+                ]
+            ),
+            lineage_proof=locked_reserve_lineage_proof,
+            extra_delta=0,
+        )
     )
 
 

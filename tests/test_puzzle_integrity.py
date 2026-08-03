@@ -267,9 +267,63 @@ def test_rc25_manifest_records_base_binding_and_governed_sgt_changes():
     )
     for group in ("changedPuzzleHashes", "newPuzzleHashes"):
         for filename, expected_hash in manifest[group].items():
-            assert bytes(load_puzzle(filename).get_tree_hash()).hex() == expected_hash
+            if filename != "sgt_reserve_inner_v1.clsp":
+                assert bytes(load_puzzle(filename).get_tree_hash()).hex() == expected_hash
     assert set(manifest["changeReasons"]) == {
         *manifest["changedPuzzleHashes"],
         *manifest["newPuzzleHashes"],
     }
+    rc23_manifest = json.loads(
+        (
+            Path(__file__).resolve().parents[1]
+            / "release-manifests"
+            / "rc23-puzzle-hashes.json"
+        ).read_text(encoding="utf-8")
+    )
+    rc25_hashes = {
+        **rc20_manifest["preservedPuzzleHashes"],
+        **rc20_manifest["newPuzzleHashes"],
+        **rc22_manifest["changedPuzzleHashes"],
+        **rc22_manifest["newPuzzleHashes"],
+        **rc23_manifest["newPuzzleHashes"],
+        **rc24_manifest["newPuzzleHashes"],
+        **manifest["changedPuzzleHashes"],
+        **manifest["newPuzzleHashes"],
+    }
+    checksum = hashlib.sha256()
+    rc25_end = PUZZLE_FILENAMES.index(
+        "purchase_batch_settlement_receipt_v1.clsp"
+    ) + 1
+    for filename in PUZZLE_FILENAMES[:rc25_end]:
+        checksum.update(bytes.fromhex(rc25_hashes[filename]))
+    assert checksum.hexdigest() == manifest["canonicalChecksum"]
+
+
+def test_rc26_manifest_preserves_rc25_and_records_vault_sols_custody():
+    root = Path(__file__).resolve().parents[1] / "release-manifests"
+    manifest = json.loads(
+        (root / "rc26-puzzle-hashes.json").read_text(encoding="utf-8")
+    )
+    rc25 = json.loads(
+        (root / "rc25-puzzle-hashes.json").read_text(encoding="utf-8")
+    )
+    assert manifest["preservedCanonicalChecksum"] == rc25["canonicalChecksum"]
+    assert manifest["previousPuzzleHashes"] == {
+        "sgt_reserve_inner_v1.clsp": rc25["newPuzzleHashes"][
+            "sgt_reserve_inner_v1.clsp"
+        ]
+    }
+    assert set(manifest["changedPuzzleHashes"]) == {
+        "sgt_reserve_inner_v1.clsp"
+    }
+    assert tuple(manifest["newPuzzleHashes"]) == (
+        "vault_sols_inner_v1.clsp",
+    )
+    assert set(manifest["changeReasons"]) == {
+        *manifest["changedPuzzleHashes"],
+        *manifest["newPuzzleHashes"],
+    }
+    for group in ("changedPuzzleHashes", "newPuzzleHashes"):
+        for filename, expected_hash in manifest[group].items():
+            assert bytes(load_puzzle(filename).get_tree_hash()).hex() == expected_hash
     assert compute_puzzles_checksum() == manifest["canonicalChecksum"]

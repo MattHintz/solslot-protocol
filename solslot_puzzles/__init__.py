@@ -126,6 +126,10 @@ PUZZLE_FILENAMES = (
     # using the single-artifact receipt above. Appended after the prior RC25
     # inventory so every historical release remains contiguous and auditable.
     "purchase_batch_settlement_receipt_v1.clsp",
+    # RC26 makes Sols custody vault-native for both BLS and EVM vaults. Each
+    # coin can only satisfy an exact one-time Pool V4 swap and return change to
+    # the same vault-bound puzzle. Appended to preserve historical inventories.
+    "vault_sols_inner_v1.clsp",
 )
 
 # ── Frozen checksum — update after every intentional puzzle change ──
@@ -176,7 +180,9 @@ FROZEN_CHECKSUM: Optional[str] = (
     # adds governed SGT custody and sale while binding direct Base settlement
     # to a one-use Chia result authorization. Its final pre-genesis purchase
     # inventory also commits to each SmartDeed's DID-authorized launcher hash.
-    "f2c45372a5f44384ec83918a2cf5b8f8e84a8626a2ab70e3aed7380f78873f69"
+    # RC26 adds the exact funded-redemption voting path to the governed SGT
+    # reserve and appends vault-bound Sols custody without changing Pool V4.
+    "cc5807afe5c1a9de082dad2e3f515b3f76f6bfb3e3cb1274bfd589090c6a2e57"
 )
 
 # ── Cache ──

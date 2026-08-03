@@ -51,7 +51,7 @@ from solslot_puzzles.sols_swap_v4_driver import (
     aggregate_sols_to_deed_swap,
     build_deed_to_sols_protocol_offer,
     build_sols_to_deed_protocol_offer,
-    prepare_sols_buyer_offer,
+    prepare_vault_sols_buyer_offer,
     validate_sols_buyer_offer,
 )
 from solslot_puzzles.vault_driver import AUTH_TYPE_BLS, puzzle_hash_for_p2_vault
@@ -59,6 +59,7 @@ from solslot_puzzles.vault_v2_driver import (
     puzzle_for_vault_v2_full,
     vault_v2_inner_mod_hash,
 )
+from solslot_puzzles.vault_sols_v1 import puzzle_for_vault_sols_inner
 
 
 def b32(seed: int) -> bytes32:
@@ -331,6 +332,31 @@ def _fixture() -> SwapFixture:
         current_inner=vault_inner,
         seed=43,
     )
+    payment_puzzle = puzzle_for_vault_sols_inner(
+        config=CONFIG,
+        vault_launcher_id=VAULT_LAUNCHER,
+    )
+    payment_parent = Coin(
+        b32(45),
+        bytes32(
+            construct_cat_puzzle(
+                CAT_MOD,
+                RULES.sols_tail_hash,
+                payment_puzzle,
+            ).get_tree_hash()
+        ),
+        1_000_000,
+    )
+    payment_coin = Coin(
+        payment_parent.name(),
+        payment_parent.puzzle_hash,
+        payment_parent.amount,
+    )
+    payment_lineage = LineageProof(
+        parent_name=payment_parent.parent_coin_info,
+        inner_puzzle_hash=bytes32(payment_puzzle.get_tree_hash()),
+        amount=payment_parent.amount,
+    )
     receipt = prepare_sols_to_deed(
         pool_coin_id=pool_coin.name(),
         state=deposit.next_state,
@@ -342,6 +368,7 @@ def _fixture() -> SwapFixture:
         pause=None,
         vault_launcher_id=VAULT_LAUNCHER,
         vault_coin_id=vault_coin.name(),
+        sols_payment_coin_id=payment_coin.name(),
         destination_p2_vault_hash=puzzle_hash_for_p2_vault(VAULT_LAUNCHER),
         quote_expires_at=QUOTE_EXPIRES,
     )
@@ -356,28 +383,6 @@ def _fixture() -> SwapFixture:
         parent_inner=statutes_inner,
         current_inner=statutes_inner,
         seed=44,
-    )
-    payment_puzzle = puzzle_for_pk(OWNER_SK.get_g1())
-    payment_parent = Coin(
-        b32(45),
-        bytes32(
-            construct_cat_puzzle(
-                CAT_MOD,
-                RULES.sols_tail_hash,
-                payment_puzzle,
-            ).get_tree_hash()
-        ),
-        receipt.sols_to_deed_quote.buyer_total_sols_mojos + 10,
-    )
-    payment_coin = Coin(
-        payment_parent.name(),
-        payment_parent.puzzle_hash,
-        payment_parent.amount,
-    )
-    payment_lineage = LineageProof(
-        parent_name=payment_parent.parent_coin_info,
-        inner_puzzle_hash=bytes32(payment_puzzle.get_tree_hash()),
-        amount=payment_parent.amount,
     )
     assert custody_coin.parent_coin_info == deed_parent_coin.name()
     return SwapFixture(
@@ -397,9 +402,8 @@ def _fixture() -> SwapFixture:
 
 def test_sols_to_deed_offer_balances_exact_protocol_spends() -> None:
     fixture = _fixture()
-    buyer = prepare_sols_buyer_offer(
+    buyer = prepare_vault_sols_buyer_offer(
         payment_coin=fixture.payment_coin,
-        payment_public_key=OWNER_PK,
         payment_lineage_proof=fixture.payment_lineage,
         receipt=fixture.receipt,
         config=CONFIG,
@@ -471,9 +475,8 @@ def test_sols_to_deed_offer_balances_exact_protocol_spends() -> None:
 
 def test_sols_buyer_offer_rejects_wrong_vault_and_amount() -> None:
     fixture = _fixture()
-    buyer = prepare_sols_buyer_offer(
+    buyer = prepare_vault_sols_buyer_offer(
         payment_coin=fixture.payment_coin,
-        payment_public_key=OWNER_PK,
         payment_lineage_proof=fixture.payment_lineage,
         receipt=fixture.receipt,
         config=CONFIG,
@@ -500,6 +503,18 @@ def test_sols_buyer_offer_rejects_wrong_vault_and_amount() -> None:
         validate_sols_buyer_offer(
             buyer_offer=buyer.offer,
             receipt=altered,
+            config=CONFIG,
+            vault_launcher_id=VAULT_LAUNCHER,
+        )
+
+    different_source = replace(
+        fixture.receipt,
+        sols_payment_coin_id=b32(103),
+    )
+    with pytest.raises(SolsSwapOfferError, match="different Sols coin"):
+        validate_sols_buyer_offer(
+            buyer_offer=buyer.offer,
+            receipt=different_source,
             config=CONFIG,
             vault_launcher_id=VAULT_LAUNCHER,
         )

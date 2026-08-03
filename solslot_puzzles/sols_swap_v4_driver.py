@@ -80,6 +80,11 @@ from solslot_puzzles.vault_v2_driver import (
     puzzle_for_vault_v2_full,
     vault_v2_inner_mod_hash,
 )
+from solslot_puzzles.vault_sols_v1 import (
+    puzzle_for_vault_sols_cat,
+    puzzle_for_vault_sols_inner,
+    vault_sols_inner_solution_for_swap,
+)
 
 
 class SolsSwapOfferError(ValueError):
@@ -423,6 +428,88 @@ def prepare_sols_buyer_offer(
     )
 
 
+def prepare_vault_sols_buyer_offer(
+    *,
+    payment_coin: Coin,
+    payment_lineage_proof: LineageProof,
+    receipt: SwapReceipt,
+    config: PoolV4Config,
+    vault_launcher_id: bytes32,
+) -> PreparedSolsBuyerOffer:
+    """Create an unsigned Sols offer controlled by the vault singleton.
+
+    No independent BLS payment key exists. Pool V4 commits to the complete
+    economic operation and emits its one-time announcement only after the
+    registered vault owner authorizes it. This custody puzzle separately binds
+    the selected input coin, exact payment, expiry, and same-vault change.
+    """
+    _assert_driver_config(config)
+    quote = _quote(receipt)
+    _complete_lineage(payment_lineage_proof, "vault Sols payment coin")
+    if int(payment_coin.amount) < quote.buyer_total_sols_mojos:
+        raise SolsSwapOfferError("Sols payment coin is smaller than the quote")
+    if receipt.sols_payment_coin_id != payment_coin.name():
+        raise SolsSwapOfferError(
+            "Sols payment coin does not match the governed operation"
+        )
+    _assert_vault_binding(
+        receipt,
+        vault_launcher_id=vault_launcher_id,
+    )
+    payment_puzzle = puzzle_for_vault_sols_inner(
+        config=config,
+        vault_launcher_id=vault_launcher_id,
+    )
+    expected_cat = puzzle_for_vault_sols_cat(
+        config=config,
+        vault_launcher_id=vault_launcher_id,
+    )
+    if payment_coin.puzzle_hash != expected_cat.get_tree_hash():
+        raise SolsSwapOfferError(
+            "Sols payment coin is not controlled by this vault"
+        )
+    inner_solution = vault_sols_inner_solution_for_swap(
+        payment_coin=payment_coin,
+        payment_amount=quote.buyer_total_sols_mojos,
+        operation_hash=receipt.operation_hash,
+        quote_expires_at=receipt.quote_expires_at,
+        pool_state=receipt.current_state,
+        pool_inventory=receipt.inventory,
+    )
+    bundle = unsigned_spend_bundle_for_spendable_cats(
+        CAT_MOD,
+        [
+            SpendableCAT(
+                payment_coin,
+                config.permanent_rules.sols_tail_hash,
+                payment_puzzle,
+                inner_solution,
+                lineage_proof=payment_lineage_proof,
+            )
+        ],
+    )
+    offer = Offer(
+        {},
+        bundle,
+        {
+            config.permanent_rules.sols_tail_hash: chia_cat_driver(
+                config.permanent_rules.sols_tail_hash
+            )
+        },
+    )
+    validate_sols_buyer_offer(
+        buyer_offer=offer,
+        receipt=receipt,
+        config=config,
+        vault_launcher_id=vault_launcher_id,
+    )
+    return PreparedSolsBuyerOffer(
+        offer=offer,
+        coin_spend=bundle.coin_spends[0],
+        payment_puzzle=payment_puzzle,
+    )
+
+
 def validate_sols_buyer_offer(
     *,
     buyer_offer: Offer,
@@ -451,6 +538,20 @@ def validate_sols_buyer_offer(
     actual_sols = buyer_offer.driver_dict.get(sols_tail)
     if actual_sols is None or actual_sols.info != expected_sols.info:
         raise SolsSwapOfferError("buyer uses an unexpected Sols CAT driver")
+    if receipt.sols_payment_coin_id == bytes32.zeros:
+        raise SolsSwapOfferError("buyer operation is missing its Sols input coin")
+    coin_spends = tuple(buyer_offer.coin_spends())
+    if len(coin_spends) != 1:
+        raise SolsSwapOfferError("buyer offer must spend one Sols coin")
+    selected = coin_spends[0].coin
+    if selected.name() != receipt.sols_payment_coin_id:
+        raise SolsSwapOfferError("buyer offer spends a different Sols coin")
+    expected_cat = puzzle_for_vault_sols_cat(
+        config=config,
+        vault_launcher_id=vault_launcher_id,
+    )
+    if selected.puzzle_hash != expected_cat.get_tree_hash():
+        raise SolsSwapOfferError("buyer Sols coin is not vault controlled")
     expected_pool_announcement = AssertPuzzleAnnouncement(
         asserted_ph=bytes32(
             make_pool_v4_full(
@@ -481,8 +582,6 @@ def validate_sols_buyer_offer(
         raise SolsSwapOfferError(
             "buyer offer contains unexpected asset drivers"
         )
-
-
 def build_sols_to_deed_protocol_offer(
     *,
     receipt: SwapReceipt,
@@ -1137,6 +1236,7 @@ __all__ = [
     "DeedToSolsProtocolOffer",
     "pool_operation_announcement",
     "prepare_sols_buyer_offer",
+    "prepare_vault_sols_buyer_offer",
     "validate_sols_buyer_offer",
     "build_sols_to_deed_protocol_offer",
     "build_deed_to_sols_protocol_offer",

@@ -244,7 +244,10 @@ def test_reserve_lock_rejects_non_allocation_governance_bill() -> None:
             )
         )
 
-    with pytest.raises(ValueError, match="only SGT_SALE or SGT_GRANT"):
+    with pytest.raises(
+        ValueError,
+        match="only SGT_SALE, SGT_GRANT, or funded redemption",
+    ):
         build_reserve_lock_coin_spend(
             reserve_coin=Coin(b32(31), b32(32), uint64(100_000)),
             reserve_lineage_proof=LineageProof(

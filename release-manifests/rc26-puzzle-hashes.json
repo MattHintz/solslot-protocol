@@ -1,0 +1,20 @@
+{
+  "schema": "solslot.puzzle-hashes.v1",
+  "release": "RC26",
+  "preservedRelease": "RC25",
+  "preservedCanonicalChecksum": "f2c45372a5f44384ec83918a2cf5b8f8e84a8626a2ab70e3aed7380f78873f69",
+  "previousPuzzleHashes": {
+    "sgt_reserve_inner_v1.clsp": "f5ff2492b60f5d049ad91f3ac4822fb54e8815fd67b6fefea172f017526f6c32"
+  },
+  "changedPuzzleHashes": {
+    "sgt_reserve_inner_v1.clsp": "99c0d9313f1e6f3f7f938a45bc14b1d04127a2b468cbfe915242e12755f0f830"
+  },
+  "newPuzzleHashes": {
+    "vault_sols_inner_v1.clsp": "bbb8d654c79d65e931135c7f7e576dd6b2c3b1f6cc93b9bcf5bf1bd924285500"
+  },
+  "changeReasons": {
+    "sgt_reserve_inner_v1.clsp": "allow the governed SGT reserve to sponsor a funded-redemption bill while requiring the complete reserve vote to return unchanged after tracker execution",
+    "vault_sols_inner_v1.clsp": "hold Sols under one vault-launcher-bound CAT owner for BLS and EVM vaults; permit only exact Pool V4 offers and return all change to the same custody puzzle"
+  },
+  "canonicalChecksum": "cc5807afe5c1a9de082dad2e3f515b3f76f6bfb3e3cb1274bfd589090c6a2e57"
+}

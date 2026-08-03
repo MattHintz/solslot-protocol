@@ -257,6 +257,7 @@ def test_sols_to_deed_solution_pays_reserve_and_fees_without_melt() -> None:
         pause=None,
         vault_launcher_id=VAULT_LAUNCHER,
         vault_coin_id=VAULT_COIN,
+        sols_payment_coin_id=b32(41),
         destination_p2_vault_hash=destination,
         quote_expires_at=QUOTE_EXPIRES,
     )
