@@ -132,6 +132,7 @@ def test_reserve_pays_first_and_only_exact_shortfall_is_minted() -> None:
         pause=None,
         vault_launcher_id=b32(26),
         vault_coin_id=b32(27),
+        sols_payment_coin_id=b32(59),
         destination_p2_vault_hash=b32(28),
         quote_expires_at=1_800_080_000,
     )
@@ -161,6 +162,7 @@ def test_sols_purchase_returns_principal_to_reserve_without_melt() -> None:
         pause=None,
         vault_launcher_id=b32(22),
         vault_coin_id=b32(23),
+        sols_payment_coin_id=b32(60),
         destination_p2_vault_hash=b32(24),
         quote_expires_at=1_800_080_000,
     )
@@ -196,6 +198,7 @@ def test_settlement_stops_new_deposits_but_keeps_sols_acquisition_open() -> None
         pause=None,
         vault_launcher_id=b32(32),
         vault_coin_id=b32(33),
+        sols_payment_coin_id=b32(61),
         destination_p2_vault_hash=b32(34),
         quote_expires_at=1_800_080_000,
     )
@@ -217,6 +220,7 @@ def test_settlement_stops_new_deposits_but_keeps_sols_acquisition_open() -> None
             pause=None,
             vault_launcher_id=b32(36),
             vault_coin_id=b32(37),
+            sols_payment_coin_id=b32(62),
             destination_p2_vault_hash=b32(38),
             quote_expires_at=1_800_080_000,
         )
@@ -301,6 +305,7 @@ def test_allocation_pause_stale_nav_and_quote_expiry_fail_closed() -> None:
             pause=None,
             vault_launcher_id=b32(48),
             vault_coin_id=b32(49),
+            sols_payment_coin_id=b32(63),
             destination_p2_vault_hash=b32(50),
             quote_expires_at=1_800_080_000,
         )
@@ -364,3 +369,38 @@ def test_operation_hash_changes_with_pool_coin_vault_and_destination() -> None:
     assert first.operation_hash != second.operation_hash
     assert first.operation_hash != third.operation_hash
     assert inventory_root(first.next_inventory) == first.next_state.inventory_root
+
+
+def test_sols_purchase_operation_hash_is_coin_selection_independent() -> None:
+    deposit = _deposit()
+    common = {
+        "pool_coin_id": b32(70),
+        "state": deposit.next_state,
+        "inventory": deposit.next_inventory,
+        "deed_launcher_id": deposit.record.deed_launcher_id,
+        "collection": COLLECTION,
+        "parameters": PARAMETERS,
+        "statutes_state": STATUTES,
+        "pause": None,
+        "vault_launcher_id": b32(71),
+        "vault_coin_id": b32(72),
+        "destination_p2_vault_hash": b32(73),
+        "quote_expires_at": 1_800_080_000,
+    }
+    first = prepare_sols_to_deed(
+        **common,
+        sols_payment_coin_id=b32(74),
+    )
+    second = prepare_sols_to_deed(
+        **common,
+        sols_payment_coin_id=b32(75),
+    )
+
+    # Pool V4 authorizes the economic operation once. The vault-bound CAT
+    # puzzle separately pins the selected input coin and exact payment.
+    assert first.operation_hash == second.operation_hash
+    with pytest.raises(ValueError, match="must be non-zero"):
+        prepare_sols_to_deed(
+            **common,
+            sols_payment_coin_id=bytes32.zeros,
+        )

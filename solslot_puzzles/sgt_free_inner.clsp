@@ -7,9 +7,15 @@
 ;;; INNER_PUZZLE_HASH curried in.
 ;;;
 ;;; Two spend cases:
-;;;   1 — TRANSFER : run the user's inner puzzle, replace its single
+;;;   1 — PROTOCOL TRANSITION: run an immutable protocol inner puzzle and
+;;;                  replace every
 ;;;                  CREATE_COIN with one whose puzhash is a re-curry of
 ;;;                  sgt_free_inner around the requested new owner hash.
+;;;                  At least one output is required. CAT2 conservation
+;;;                  remains authoritative for the total output amount.
+;;;                  The inner must emit the exact SGT protocol-transition
+;;;                  marker. Ordinary p2_vault spends cannot emit it, so SGT
+;;;                  held by a vault cannot be migrated to an arbitrary owner.
 ;;;                  All other inner conditions pass through unchanged
 ;;;                  except that REMARK / SEND_MESSAGE / RECEIVE_MESSAGE
 ;;;                  using the solslot PROTOCOL_PREFIX are rejected so a
@@ -53,6 +59,7 @@
     ;; Spend case constants
     (defconstant SGT_TRANSFER 1)
     (defconstant SGT_LOCK 2)
+    (defconstant SGT_PROTOCOL_TRANSITION_TAG 0x53475450) ; "SGTP"
 
     ;; LOCK announcement tag (4 ASCII bytes "LOCK")
     (defconstant LOCK_TAG 0x4c4f434b)
@@ -82,9 +89,19 @@
     ;; authority to emit the LOCK announcement (only in LOCK mode).
     ;;
     ;; PROTOCOL_PREFIX is a defconstant from utility_macros.clib (a literal).
+    (defun-inline is-protocol-transition-marker (cond_code cond_body)
+        (and
+            (= cond_code REMARK)
+            (= (f cond_body) PROTOCOL_PREFIX)
+            (= (f (r cond_body)) SGT_PROTOCOL_TRANSITION_TAG)
+            (not (r (r cond_body))))
+    )
+
     (defun-inline check_no_protocol_prefix_abuse (cond_code cond_body)
         (if (= cond_code REMARK)
-            (if (= (f cond_body) PROTOCOL_PREFIX) (x) 1)
+            (if (= (f cond_body) PROTOCOL_PREFIX)
+                (is-protocol-transition-marker cond_code cond_body)
+                1)
             (if (any (= cond_code SEND_MESSAGE) (= cond_code RECEIVE_MESSAGE))
                 (x)
                 (if (any (= cond_code CREATE_PUZZLE_ANNOUNCEMENT)
@@ -116,20 +133,21 @@
             (sha256 1 deadline))
     )
 
-    ;; Walk the conditions list for TRANSFER mode: rewrap the single
-    ;; CREATE_COIN's destination, anti-spoof everything else, return the
-    ;; transformed list.
+    ;; Walk the conditions list for TRANSFER mode: rewrap every CREATE_COIN
+    ;; destination, anti-spoof everything else, and require at least one
+    ;; output. Supporting multiple outputs is necessary for ordinary SGT coin
+    ;; splitting and for governed reserve allocations. CAT2 still proves
+    ;; conservation across the complete spend bundle.
     (defun filter_transfer
             (mod_hash locked_mod_hash tracker_struct
-             conditions found_create_coin acc)
+             conditions found_create_coin found_protocol_marker acc)
         (if conditions
             (if (= (f (f conditions)) CREATE_COIN)
                 (assert
-                    (not found_create_coin)
                     (is-size-b32 (f (r (f conditions))))
                     (is-uint64 (f (r (r (f conditions)))))
                     (filter_transfer mod_hash locked_mod_hash tracker_struct
-                        (r conditions) 1
+                        (r conditions) 1 found_protocol_marker
                         (c
                             (list CREATE_COIN
                                 (compute_self_free_puzhash
@@ -143,8 +161,11 @@
                         (f (f conditions)) (r (f conditions)))
                     (filter_transfer mod_hash locked_mod_hash tracker_struct
                         (r conditions) found_create_coin
+                        (or found_protocol_marker
+                            (is-protocol-transition-marker
+                                (f (f conditions)) (r (f conditions))))
                         (c (f conditions) acc))))
-            (assert found_create_coin acc))
+            (assert found_create_coin found_protocol_marker acc))
     )
 
     ;; Walk the conditions list for LOCK mode: verify the single CREATE_COIN
@@ -162,8 +183,10 @@
                     (filter_lock (r conditions) expected_locked_puzhash my_amount
                         1 (c (f conditions) acc)))
                 (assert
-                    (check_no_protocol_prefix_abuse
-                        (f (f conditions)) (r (f conditions)))
+                    (if (= (f (f conditions)) CREATE_COIN_ANNOUNCEMENT)
+                        1
+                        (check_no_protocol_prefix_abuse
+                            (f (f conditions)) (r (f conditions))))
                     (filter_lock (r conditions) expected_locked_puzhash my_amount
                         found_create_coin (c (f conditions) acc))))
             (assert found_create_coin acc))
@@ -177,7 +200,7 @@
                 (= (sha256tree inner_puzzle) INNER_PUZZLE_HASH)
                 (filter_transfer
                     MOD_HASH LOCKED_MOD_HASH PROPOSAL_TRACKER_STRUCT
-                    (a inner_puzzle inner_solution) 0 ()))
+                    (a inner_puzzle inner_solution) 0 0 ()))
             (if (= spend_case SGT_LOCK)
                 (assert
                     (is-size-b32 (f case_args))           ; proposal_hash

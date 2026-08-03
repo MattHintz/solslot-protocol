@@ -27,6 +27,9 @@ from solslot_puzzles.protocol_deployment import singleton_full_puzzle_hash
 from solslot_puzzles.sgt_driver import (
     TEST_KOS_MINT_EXECUTE_PUBKEY,
     admin_governance_proposal_message,
+    bill_sgt_grant,
+    bill_sgt_sale,
+    cat_sgt_free_puzzle_hash,
     proposal_tracker_v2_inner_puzzle,
     proposal_tracker_v2_mod,
 )
@@ -347,6 +350,97 @@ def test_malformed_statute_bill_cannot_enter_open_state() -> None:
     )
     with pytest.raises(Exception):
         inner.run(solution)
+
+
+@pytest.mark.parametrize(
+    "bill",
+    [
+        bill_sgt_sale(
+            sale_id=b32(0x61),
+            sgt_amount=25_000,
+            recipient_vault_launcher_id=b32(0x62),
+            payment_rail=1,
+            payment_asset_id=bytes32.zeros,
+            payment_amount=1_000_000,
+            company_treasury_puzzle_hash=b32(0x63),
+            expires_at=1_900_000_000,
+            reserve_owner_inner_puzzle_hash=b32(0x66),
+        ),
+        bill_sgt_sale(
+            sale_id=b32(0x68),
+            sgt_amount=750,
+            recipient_vault_launcher_id=b32(0x69),
+            payment_rail=3,
+            payment_asset_id=bytes32.zeros,
+            payment_amount=101_000,
+            company_treasury_puzzle_hash=b32(0x6A),
+            expires_at=1_900_000_000,
+            reserve_owner_inner_puzzle_hash=b32(0x6B),
+            purchase_artifact_hash=b32(0x6C),
+        ),
+        bill_sgt_grant(
+            grant_id=b32(0x64),
+            sgt_amount=10_000,
+            recipient_vault_launcher_id=b32(0x65),
+            reason_hash=b32(0x66),
+            reserve_owner_inner_puzzle_hash=b32(0x67),
+        ),
+    ],
+)
+def test_sgt_allocation_bills_enter_and_execute_through_canonical_tracker(
+    bill: Program,
+) -> None:
+    proposal_hash = bytes32(bill.get_tree_hash())
+    idle = tracker()
+    propose = Program.to(
+        [
+            b32(0x41),
+            idle.get_tree_hash(),
+            1,
+            1,
+            [
+                proposal_hash,
+                bill,
+                b32(0x42),
+                500_000,
+                300,
+                [b32(0x43), b32(0x44), PARAMETERS],
+            ],
+        ]
+    )
+    assert list(idle.run(propose).as_iter())
+
+    active = tracker(
+        proposal_hash=proposal_hash,
+        bill=bill,
+        vote_tally=500_000,
+        deadline=100,
+    )
+    execute = Program.to(
+        [b32(0x45), active.get_tree_hash(), 1, 3, []]
+    )
+    conditions = list(active.run(execute).as_iter())
+    assert any(condition.first().as_int() == 62 for condition in conditions)
+    concurrent = [
+        list(condition.as_iter())
+        for condition in conditions
+        if condition.first().as_int() == 65
+    ]
+    bill_values = list(bill.as_iter())
+    reserve_owner = bytes32(
+        bill_values[9 if bill_values[0].as_atom() == b"Y" else 5].as_atom()
+    )
+    expected_reserve_puzzle = cat_sgt_free_puzzle_hash(
+        TRACKER_STRUCT,
+        b32(0x01),
+        b32(0x02),
+        b32(0x03),
+        b32(0x04),
+        reserve_owner,
+    )
+    assert len(concurrent) == 1
+    assert bytes32(concurrent[0][1].as_atom()) == expected_reserve_puzzle
+    assert not any(condition.first().as_int() == 66 for condition in conditions)
 
 
 def test_statute_bill_rejects_non_exact_version_increment() -> None:

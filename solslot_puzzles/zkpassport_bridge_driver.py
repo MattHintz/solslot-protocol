@@ -19,14 +19,13 @@ from solslot_puzzles.zkpassport_attestation import (
 )
 
 
-_ZKPASSPORT_BRIDGE_MOD: Program | None = None
+_ZKPASSPORT_BRIDGE_MOD_BYTES = bytes(
+    load_puzzle("zkpassport_bridge_message.clsp")
+)
 
 
 def zkpassport_bridge_mod() -> Program:
-    global _ZKPASSPORT_BRIDGE_MOD
-    if _ZKPASSPORT_BRIDGE_MOD is None:
-        _ZKPASSPORT_BRIDGE_MOD = load_puzzle("zkpassport_bridge_message.clsp")
-    return _ZKPASSPORT_BRIDGE_MOD
+    return Program.from_bytes(_ZKPASSPORT_BRIDGE_MOD_BYTES)
 
 
 def make_bridge_puzzle(validator_pubkeys: Sequence[bytes], threshold: int) -> Program:

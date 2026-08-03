@@ -97,6 +97,8 @@ def ceremony_plan(
         validator_pubkeys=VALIDATOR_KEYS,
         trusted_treasury_reserve_puzzle_hash=bytes32(b"\x61" * 32),
         trusted_protocol_treasury_puzzle_hash=bytes32(b"\x62" * 32),
+        company_sgt_sale_treasury_puzzle_hash=bytes32(b"\x65" * 32),
+        wusdc_b_asset_id=bytes32(b"\x66" * 32),
         trusted_governance_rewards_puzzle_hash=bytes32(b"\x63" * 32),
         trusted_governance_rewards_root=bytes32(b"\x64" * 32),
         retired_coordinates=(bytes32(b"\x71" * 32),),
@@ -135,6 +137,12 @@ def test_rc23_plan_replaces_nav_registry_with_statutes() -> None:
     assert payload["bridgeBatch"]["changeAmount"] == 0
     assert payload["bridgeBatch"]["networkFeeSource"] == (
         "separate-fountain-fee-till"
+    )
+    assert payload["trustedDestinations"][
+        "companySgtSaleTreasuryPuzzleHash"
+    ] == "0x" + (b"\x65" * 32).hex()
+    assert payload["puzzleHashes"]["sgtReserveInner"] == (
+        "0x" + plan.protocol.sgt_reserve_inner_puzzle_hash.hex()
     )
     assert payload["adminAuthority"]["version"] == 3
     assert payload["adminAuthority"]["fundingAmount"] == 16

@@ -16,6 +16,8 @@ from solslot_puzzles.payment_artifacts_v2 import (
 from solslot_puzzles.payment_artifacts_v3 import (
     STRIPE_RECEIPT_TTL_SECONDS,
     PurchaseArtifactV3,
+    PurchaseBatchSettlementReceiptV1,
+    PurchaseBatchV1,
     PurchaseKind,
     StripeDisputeState,
     StripeFundingType,
@@ -25,10 +27,14 @@ from solslot_puzzles.payment_artifacts_v3 import (
     StripeSettlementEvidenceV1,
     StripeSettlementReceiptV1,
     build_stripe_purchase_artifact,
+    build_purchase_batch_v1,
+    build_sgt_purchase_artifact_v3,
     payment_attestation_from_json,
     payment_attestation_to_json,
     purchase_artifact_from_json,
     purchase_artifact_to_json,
+    purchase_batch_from_json,
+    purchase_batch_to_json,
     stripe_evidence_from_json,
     stripe_evidence_to_json,
     stripe_receipt_from_json,
@@ -137,12 +143,12 @@ def test_one_percent_fee_uses_ceiling_and_hard_cap() -> None:
 def test_artifact_commits_fee_treasury_eligibility_and_vault() -> None:
     item = artifact()
     assert item.artifact_hash.hex() == (
-        "2889da8d662bd0dcc27e7197e3a3816d"
-        "bcab7643f642595a5ba27c6054a2c072"
+        "0793c08da148c2f187e4f8b80e297716"
+        "4e008df91a5c1a72e3622876cc7c0421"
     )
     assert item.purchase_id.hex() == (
-        "4075085748452a03a60cd0f37e8eff2a"
-        "aee9496e15a3a505b4b59acfb234a6af"
+        "595b1fbca03e9909ff7647afc9fde7d0"
+        "54af55e6d6381c40abbb1ad98082769d"
     )
     assert item.technology_fee_minor == 229
     assert item.subtotal_minor == 23_129
@@ -161,6 +167,157 @@ def test_artifact_json_round_trip_rederives_program_and_hashes() -> None:
     payload["baseAmountMinor"] = "22901"
     with pytest.raises(PaymentArtifactError):
         purchase_artifact_from_json(payload)
+
+
+def test_smartdeed_batch_commits_unique_children_totals_and_quantity() -> None:
+    first = artifact()
+    second = build_stripe_purchase_artifact(
+        network=first.network,
+        collection_id=first.collection_id,
+        deed_launcher_id=b32(14),
+        metadata_root=first.metadata_root,
+        metadata_anchor_id=first.metadata_anchor_id,
+        share_ppm=first.share_ppm,
+        base_amount_minor=first.base_amount_minor,
+        technology_fee_bps=first.technology_fee_bps,
+        protocol_treasury_puzzle_hash=first.protocol_treasury_puzzle_hash,
+        zkpassport_root=first.zkpassport_root,
+        vault_launcher_id=first.vault_launcher_id,
+        vault_p2_puzzle_hash=first.vault_p2_puzzle_hash,
+        authorization_nonce=first.authorization_nonce,
+        authorization_expires_at=first.authorization_expires_at,
+        quote_expires_at=first.quote_expires_at,
+    )
+    batch = build_purchase_batch_v1(
+        batch_nonce=b32(15),
+        artifacts=[second, first],
+    )
+
+    assert batch.quantity == 2
+    assert batch.total_base_amount_minor == first.base_amount_minor * 2
+    assert batch.total_technology_fee_minor == first.technology_fee_minor * 2
+    assert batch.total_rail_amount == first.rail_amount * 2
+    assert purchase_batch_from_json(purchase_batch_to_json(batch)) == batch
+
+    with pytest.raises(PaymentArtifactError, match="must be unique"):
+        PurchaseBatchV1(batch_nonce=b32(15), artifacts=(first, first))
+
+
+def test_sgt_batch_keeps_quantity_as_one_cat_allocation() -> None:
+    sgt = build_sgt_purchase_artifact_v3(
+        network="testnet11",
+        sgt_asset_id=b32(20),
+        sale_id=b32(21),
+        sgt_amount=25,
+        base_usd_amount_minor=2_500,
+        technology_fee_bps=100,
+        protocol_treasury_puzzle_hash=b32(5),
+        zkpassport_root=b32(6),
+        rail=PaymentRail.STRIPE,
+        rail_chain_id=0,
+        rail_asset_id=bytes32.zeros,
+        rail_asset_decimals=2,
+        vault_launcher_id=b32(7),
+        vault_p2_puzzle_hash=b32(8),
+        authorization_nonce=b32(9),
+        authorization_expires_at=1_800_000_000,
+        quote_expires_at=1_700_000_600,
+    )
+    batch = build_purchase_batch_v1(
+        batch_nonce=b32(22),
+        artifacts=[sgt],
+    )
+
+    assert batch.quantity == 25
+    assert len(batch.artifacts) == 1
+    with pytest.raises(PaymentArtifactError, match="must be unique"):
+        PurchaseBatchV1(batch_nonce=b32(22), artifacts=(sgt, sgt))
+
+
+def test_batch_rejects_mixed_vaults_and_tampered_totals() -> None:
+    first = artifact()
+    second = replace(
+        first,
+        deed_launcher_id=b32(14),
+        delivery_asset_id=b32(14),
+        vault_launcher_id=b32(16),
+        vault_p2_puzzle_hash=b32(17),
+    )
+    with pytest.raises(PaymentArtifactError, match="vault_launcher_id"):
+        build_purchase_batch_v1(
+            batch_nonce=b32(18),
+            artifacts=[first, second],
+        )
+
+    payload = purchase_batch_to_json(
+        build_purchase_batch_v1(batch_nonce=b32(18), artifacts=[first])
+    )
+    payload["quantity"] = "2"
+    with pytest.raises(PaymentArtifactError, match="quantity"):
+        purchase_batch_from_json(payload)
+
+
+def test_batch_rejects_metadata_drift_and_expired_children() -> None:
+    first = artifact()
+    changed_metadata = replace(
+        first,
+        deed_launcher_id=b32(14),
+        delivery_asset_id=b32(14),
+        metadata_root=b32(19),
+    )
+    with pytest.raises(PaymentArtifactError, match="metadata_root"):
+        build_purchase_batch_v1(
+            batch_nonce=b32(18),
+            artifacts=[first, changed_metadata],
+        )
+
+    batch = build_purchase_batch_v1(batch_nonce=b32(18), artifacts=[first])
+    with pytest.raises(PaymentArtifactError, match="quote has expired"):
+        batch.assert_live(first.quote_expires_at)
+
+
+def test_stripe_batch_receipt_binds_exact_collected_total_and_expiry() -> None:
+    first = artifact()
+    second = replace(
+        first,
+        deed_launcher_id=b32(14),
+        delivery_asset_id=b32(14),
+    )
+    batch = build_purchase_batch_v1(
+        batch_nonce=b32(18),
+        artifacts=[first, second],
+    )
+    observed_at = 1_700_000_100
+    attestation = PaymentAttestationV1(
+        purchase_id=batch.purchase_id,
+        artifact_hash=batch.batch_hash,
+        transition=PaymentTransition.SUCCEEDED,
+        resolution=PaymentResolution.DELIVER,
+        provider_id=b32(19),
+        external_reference_hash=b32(20),
+        evidence_hash=b32(21),
+        previous_attestation_hash=b32(22),
+        observed_at=observed_at,
+    )
+    receipt = PurchaseBatchSettlementReceiptV1(
+        batch=batch,
+        attestation=attestation,
+        evidence_hash=attestation.evidence_hash,
+        validator_roster_root=b32(23),
+        validator_threshold=2,
+        receipt_nonce=b32(24),
+        observed_at=observed_at,
+        expires_at=observed_at + 300,
+        collected_amount_minor=batch.total_rail_amount + 75,
+        processing_charge_minor=75,
+    )
+
+    receipt.assert_live(observed_at + 1)
+    assert receipt.receipt_hash != bytes32.zeros
+    with pytest.raises(PaymentArtifactError, match="aggregate quote and charge"):
+        replace(receipt, collected_amount_minor=receipt.collected_amount_minor - 1)
+    with pytest.raises(PaymentArtifactError, match="receipt has expired"):
+        receipt.assert_live(receipt.expires_at)
 
 
 def test_presale_artifact_commits_governed_terms_and_cannot_be_relabelled() -> None:

@@ -179,32 +179,48 @@ class PreparedXchVoucherOfferV2:
     purchase_launcher_coin: Coin
 
 
+_SERIES_MOD_BYTES = bytes(load_puzzle("voucher_presale_series_v2.clsp"))
+_VOUCHER_INNER_MOD_BYTES = bytes(load_puzzle("voucher_nft_inner_v2.clsp"))
+_ESCROW_MOD_BYTES = bytes(load_puzzle("voucher_payment_escrow_v2.clsp"))
+_EXTERNAL_RECEIPT_MOD_BYTES = bytes(
+    load_puzzle("voucher_external_escrow_receipt_v2.clsp")
+)
+_BASE_RESULT_AUTHORIZATION_MOD_BYTES = bytes(
+    load_puzzle("voucher_base_result_authorization_v2.clsp")
+)
+_PURCHASE_LAUNCHER_MOD_BYTES = bytes(
+    load_puzzle("voucher_purchase_launcher_v2.clsp")
+)
+_BURN_MOD_BYTES = bytes(load_puzzle("voucher_burn_v2.clsp"))
+_BURN_INNER_HASH = bytes32(Program.from_bytes(_BURN_MOD_BYTES).get_tree_hash())
+
+
 def series_mod() -> Program:
-    return load_puzzle("voucher_presale_series_v2.clsp")
+    return Program.from_bytes(_SERIES_MOD_BYTES)
 
 
 def voucher_inner_mod() -> Program:
-    return load_puzzle("voucher_nft_inner_v2.clsp")
+    return Program.from_bytes(_VOUCHER_INNER_MOD_BYTES)
 
 
 def escrow_mod() -> Program:
-    return load_puzzle("voucher_payment_escrow_v2.clsp")
+    return Program.from_bytes(_ESCROW_MOD_BYTES)
 
 
 def external_receipt_mod() -> Program:
-    return load_puzzle("voucher_external_escrow_receipt_v2.clsp")
+    return Program.from_bytes(_EXTERNAL_RECEIPT_MOD_BYTES)
 
 
 def base_result_authorization_mod() -> Program:
-    return load_puzzle("voucher_base_result_authorization_v2.clsp")
+    return Program.from_bytes(_BASE_RESULT_AUTHORIZATION_MOD_BYTES)
 
 
 def purchase_launcher_mod() -> Program:
-    return load_puzzle("voucher_purchase_launcher_v2.clsp")
+    return Program.from_bytes(_PURCHASE_LAUNCHER_MOD_BYTES)
 
 
 def burn_inner_hash() -> bytes32:
-    return bytes32(load_puzzle("voucher_burn_v2.clsp").get_tree_hash())
+    return _BURN_INNER_HASH
 
 
 def singleton_struct(launcher_id: bytes32) -> Program:
@@ -518,6 +534,34 @@ def curry_base_result_authorization(
         voucher.global_payment_id,
         voucher.payment_principal,
         1 if action == VoucherAction.REDEEM else 0,
+    )
+
+
+def curry_direct_base_result_authorization(
+    *,
+    purchase_artifact_hash: bytes32,
+    global_payment_id: bytes32,
+    payment_principal: int,
+    return_puzzle_hash: bytes32,
+) -> Program:
+    """Reuse the reviewed one-use Base result handoff for direct delivery."""
+
+    for value, label in (
+        (purchase_artifact_hash, "purchase artifact hash"),
+        (global_payment_id, "global payment ID"),
+        (return_puzzle_hash, "return puzzle hash"),
+    ):
+        if value == bytes32.zeros:
+            raise VoucherV2Error(f"{label} cannot be zero")
+    if payment_principal <= 0 or payment_principal >= 1 << 64:
+        raise VoucherV2Error("payment principal must be a positive uint64")
+    return base_result_authorization_mod().curry(
+        burn_inner_hash(),
+        return_puzzle_hash,
+        purchase_artifact_hash,
+        global_payment_id,
+        payment_principal,
+        1,
     )
 
 
@@ -1033,7 +1077,7 @@ def build_xch_voucher_terminal_spends(
         raise VoucherV2Error("current voucher coin does not match its commitments")
     terminal_voucher_full = puzzle_for_singleton(
         voucher_launcher_id,
-        load_puzzle("voucher_burn_v2.clsp"),
+        Program.from_bytes(_BURN_MOD_BYTES),
     )
 
     payment_puzzle = curry_xch_escrow(
@@ -1701,6 +1745,7 @@ __all__ = [
     "curry_series",
     "curry_external_receipt",
     "curry_base_result_authorization",
+    "curry_direct_base_result_authorization",
     "external_receipt_evidence_message",
     "external_receipt_settlement_message",
     "curry_purchase_launcher",

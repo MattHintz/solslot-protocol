@@ -106,9 +106,9 @@ PUZZLE_FILENAMES = (
     "admin_identity_terminal_action_v1.clsp",
     "admin_identity_prepare_announcement_v1.clsp",
     "eip712_member_v2.clsp",
-    # RC24 external-payment settlement. Stripe state is independently
-    # authenticated by the configured 2-of-3 validators before a one-mojo
-    # receipt can atomically deliver the exact governed deed to its vault.
+    # RC25 external-payment settlement. Stripe or Base USDC state is
+    # independently authenticated by the configured 2-of-3 validators before
+    # a one-mojo receipt can atomically deliver the exact governed asset.
     "stripe_settlement_receipt_v1.clsp",
     "mint_offer_inventory_available_v1.clsp",
     "mint_offer_delegate_v5.clsp",
@@ -117,6 +117,19 @@ PUZZLE_FILENAMES = (
     # validator-authenticated Stripe receipt without exposing a PaymentIntent.
     "voucher_nft_inner_v3.clsp",
     "voucher_stripe_receipt_v1.clsp",
+    # RC25 governed SGT distribution. The fixed issuance enters a reserve puzzle;
+    # sale/grant allocations require an exact executed governance bill.
+    "sgt_reserve_inner_v1.clsp",
+    "sgt_sale_inner_v1.clsp",
+    # One external payment can settle up to 100 exact SmartDeed singletons in
+    # one standard Offer bundle. SGT quantity remains one CAT amount and keeps
+    # using the single-artifact receipt above. Appended after the prior RC25
+    # inventory so every historical release remains contiguous and auditable.
+    "purchase_batch_settlement_receipt_v1.clsp",
+    # RC26 makes Sols custody vault-native for both BLS and EVM vaults. Each
+    # coin can only satisfy an exact one-time Pool V4 swap and return change to
+    # the same vault-bound puzzle. Appended to preserve historical inventories.
+    "vault_sols_inner_v1.clsp",
 )
 
 # ── Frozen checksum — update after every intentional puzzle change ──
@@ -163,14 +176,21 @@ FROZEN_CHECKSUM: Optional[str] = (
     #   - RC19 native XCH/CAT primary purchases use a dedicated on-demand
     #     offer delegate that binds one exact deed to one canonical vault and
     #     exposes no standalone external-payment escrow branch.
-    # RC24 appends validator-authenticated direct Stripe settlement, exact deed
-    # reservation, and a refundable Stripe voucher that reuses the frozen RC20
-    # series. RC23 bytes remain frozen in its manifest.
-    "6a4e0c968febd112bb5acfb6a61890c56ad8ff07d92ac60feba9f256ff3b6f53"
+    # RC25 preserves RC24's reservation and refundable voucher modules, then
+    # adds governed SGT custody and sale while binding direct Base settlement
+    # to a one-use Chia result authorization. Its final pre-genesis purchase
+    # inventory also commits to each SmartDeed's DID-authorized launcher hash.
+    # RC26 adds the exact funded-redemption voting path to the governed SGT
+    # reserve and appends vault-bound Sols custody without changing Pool V4.
+    "cc5807afe5c1a9de082dad2e3f515b3f76f6bfb3e3cb1274bfd589090c6a2e57"
 )
 
 # ── Cache ──
-_puzzle_cache: Dict[str, Program] = {}
+# ``Program`` wraps a chia_rs LazyNode and must not be shared across threads.
+# Cache only deterministic serialized CLVM and reconstruct a caller-local
+# Program.  This keeps API request workers and test clients from inheriting or
+# destroying a LazyNode owned by another thread.
+_puzzle_cache: Dict[str, bytes] = {}
 
 
 class PuzzleIntegrityError(Exception):
@@ -179,14 +199,16 @@ class PuzzleIntegrityError(Exception):
 
 
 def load_puzzle(filename: str) -> Program:
-    """Load and cache a compiled Chialisp puzzle by filename."""
+    """Load compiled Chialisp and return a Program owned by this thread."""
     if filename not in _puzzle_cache:
-        _puzzle_cache[filename] = load_clvm(
-            filename,
-            package_or_requirement="solslot_puzzles",
-            recompile=True,
+        _puzzle_cache[filename] = bytes(
+            load_clvm(
+                filename,
+                package_or_requirement="solslot_puzzles",
+                recompile=True,
+            )
         )
-    return _puzzle_cache[filename]
+    return Program.from_bytes(_puzzle_cache[filename])
 
 
 def compute_puzzles_checksum() -> str:

@@ -9,6 +9,7 @@ from chia.wallet.conditions import CreateCoin
 from chia.wallet.lineage_proof import LineageProof
 from chia.wallet.puzzles.singleton_top_layer_v1_1 import (
     SINGLETON_LAUNCHER_HASH,
+    SINGLETON_MOD,
     SINGLETON_MOD_HASH,
     puzzle_for_singleton,
 )
@@ -29,6 +30,7 @@ from solslot_puzzles.funded_redemption_v1 import (
     redemption_leaf_conditions,
     redemption_payment_memos,
 )
+from solslot_puzzles.mint_publish_driver import deed_singleton_struct
 from solslot_puzzles.vault_driver import (
     AUTH_TYPE_BLS,
     ZKPASSPORT_EMPTY_ATTEST_ROOT,
@@ -38,6 +40,9 @@ from solslot_puzzles.vault_v2_driver import puzzle_for_vault_v2_inner
 from solslot_puzzles.primary_purchase_v2_driver import (
     chia_cat_driver,
     smart_deed_singleton_driver,
+)
+from solslot_puzzles.stripe_settlement_v1_driver import (
+    deed_launcher_puzzle_hash_from_struct,
 )
 from solslot_puzzles.redemption_treasury_v1 import (
     fund_redemption_leaves,
@@ -117,6 +122,29 @@ def governance_struct() -> Program:
     )
 
 
+def smart_deed_struct(deed_launcher_id: bytes32) -> Program:
+    return deed_singleton_struct(
+        deed_launcher_id=deed_launcher_id,
+        protocol_did_singleton_struct=governance_struct(),
+    )
+
+
+def smart_deed_driver(deed_launcher_id: bytes32):
+    struct = smart_deed_struct(deed_launcher_id)
+    launcher_hash = deed_launcher_puzzle_hash_from_struct(
+        struct,
+        deed_launcher_id,
+    )
+    return smart_deed_singleton_driver(deed_launcher_id, launcher_hash)
+
+
+def smart_deed_launcher_hash(deed_launcher_id: bytes32 = DEED_A) -> bytes32:
+    return deed_launcher_puzzle_hash_from_struct(
+        smart_deed_struct(deed_launcher_id),
+        deed_launcher_id,
+    )
+
+
 def allocation(deed_id: bytes32 = DEED_A) -> FundedRedemptionAllocation:
     return next(
         item for item in plan().allocations if item.deed_launcher_id == deed_id
@@ -130,6 +158,9 @@ def funding_coin(item: FundedRedemptionAllocation | None = None) -> Coin:
         collection_id=COLLECTION_ID,
         settlement_id=SETTLEMENT_ID,
         allocation=chosen,
+        deed_launcher_puzzle_hash=smart_deed_launcher_hash(
+            chosen.deed_launcher_id
+        ),
     )
     return Coin(
         bytes32(b"\x41" * 32),
@@ -182,6 +213,7 @@ def test_permanent_leaf_asserts_exact_deed_and_offers_exact_wusdc():
         funding_coin=coin,
         plan=current,
         allocation=chosen,
+        deed_singleton_struct=smart_deed_struct(chosen.deed_launcher_id),
     )
     assert [opcode(condition) for condition in conditions] == [
         ASSERT_PUZZLE_ANNOUNCEMENT,
@@ -213,9 +245,7 @@ def test_permanent_leaf_asserts_exact_deed_and_offers_exact_wusdc():
     expected = Offer.calculate_announcements(
         notarized,
         {
-            chosen.deed_launcher_id: smart_deed_singleton_driver(
-                chosen.deed_launcher_id
-            )
+            chosen.deed_launcher_id: smart_deed_driver(chosen.deed_launcher_id)
         },
     )[0].to_program().as_python()
     assert conditions[0][1] == expected[1]
@@ -229,6 +259,9 @@ def test_permanent_leaf_has_no_timeout_or_withdrawal_solution():
         collection_id=COLLECTION_ID,
         settlement_id=SETTLEMENT_ID,
         allocation=chosen,
+        deed_launcher_puzzle_hash=smart_deed_launcher_hash(
+            chosen.deed_launcher_id
+        ),
     )
     with pytest.raises(Exception):
         leaf.run(
@@ -249,10 +282,12 @@ def test_treasury_only_splits_exact_governed_funding():
     inner = redemption_treasury_inner_puzzle(
         governance_singleton_struct=governance_struct(),
         payment_asset_id=PAYMENT_ASSET_ID,
+        deed_launcher_puzzle_hash=smart_deed_launcher_hash(),
     )
     full = redemption_treasury_puzzle(
         governance_singleton_struct=governance_struct(),
         payment_asset_id=PAYMENT_ASSET_ID,
+        deed_launcher_puzzle_hash=smart_deed_launcher_hash(),
     )
     coin = Coin(
         bytes32(b"\x51" * 32),
@@ -305,10 +340,12 @@ def test_treasury_rejects_altered_allocation_and_has_no_change_path():
     inner = redemption_treasury_inner_puzzle(
         governance_singleton_struct=governance_struct(),
         payment_asset_id=PAYMENT_ASSET_ID,
+        deed_launcher_puzzle_hash=smart_deed_launcher_hash(),
     )
     full = redemption_treasury_puzzle(
         governance_singleton_struct=governance_struct(),
         payment_asset_id=PAYMENT_ASSET_ID,
+        deed_launcher_puzzle_hash=smart_deed_launcher_hash(),
     )
     coin = Coin(
         bytes32(b"\x61" * 32),
@@ -344,10 +381,12 @@ def test_drivers_build_funding_and_permanent_offer_without_fee():
     treasury_inner = redemption_treasury_inner_puzzle(
         governance_singleton_struct=governance_struct(),
         payment_asset_id=PAYMENT_ASSET_ID,
+        deed_launcher_puzzle_hash=smart_deed_launcher_hash(),
     )
     treasury_full = redemption_treasury_puzzle(
         governance_singleton_struct=governance_struct(),
         payment_asset_id=PAYMENT_ASSET_ID,
+        deed_launcher_puzzle_hash=smart_deed_launcher_hash(),
     )
     treasury_coin = Coin(
         bytes32(b"\x71" * 32),
@@ -364,6 +403,7 @@ def test_drivers_build_funding_and_permanent_offer_without_fee():
         governance_singleton_struct=governance_struct(),
         governance_inner_puzzle_hash=GOVERNANCE_INNER_HASH,
         plan=current,
+        deed_launcher_puzzle_hash=smart_deed_launcher_hash(),
     )
     assert len(funded.leaf_coins) == current.deed_count
 
@@ -373,6 +413,7 @@ def test_drivers_build_funding_and_permanent_offer_without_fee():
         funding_lineage_proof=funded.leaf_lineage_proof,
         plan=current,
         allocation=chosen,
+        deed_singleton_struct=smart_deed_struct(chosen.deed_launcher_id),
     )
     assert offer.fees() == 0
     assert offer.get_offered_amounts()[PAYMENT_ASSET_ID] == (
@@ -415,8 +456,8 @@ def _holder_acceptance_kwargs():
     deed_parent = Coin(
         bytes32(b"\x82" * 32),
         bytes32(
-            puzzle_for_singleton(
-                chosen.deed_launcher_id,
+            SINGLETON_MOD.curry(
+                smart_deed_struct(chosen.deed_launcher_id),
                 deed_inner,
             ).get_tree_hash()
         ),
@@ -450,6 +491,9 @@ def _holder_acceptance_kwargs():
         "deed_current_inner_puzzle_hash": bytes32(
             deed_inner.get_tree_hash()
         ),
+        "deed_singleton_struct": smart_deed_struct(
+            chosen.deed_launcher_id
+        ),
         "payment_recipient_inner_puzzle_hash": PAYMENT_RECIPIENT,
         "plan": plan(),
         "allocation": chosen,
@@ -461,6 +505,7 @@ def _funded_maker_offer():
     treasury_inner = redemption_treasury_inner_puzzle(
         governance_singleton_struct=governance_struct(),
         payment_asset_id=PAYMENT_ASSET_ID,
+        deed_launcher_puzzle_hash=smart_deed_launcher_hash(),
     )
     treasury_coin = Coin(
         bytes32(b"\x88" * 32),
@@ -468,6 +513,7 @@ def _funded_maker_offer():
             redemption_treasury_puzzle(
                 governance_singleton_struct=governance_struct(),
                 payment_asset_id=PAYMENT_ASSET_ID,
+                deed_launcher_puzzle_hash=smart_deed_launcher_hash(),
             ).get_tree_hash()
         ),
         uint64(current.total_payment_amount),
@@ -482,6 +528,7 @@ def _funded_maker_offer():
         governance_singleton_struct=governance_struct(),
         governance_inner_puzzle_hash=GOVERNANCE_INNER_HASH,
         plan=current,
+        deed_launcher_puzzle_hash=smart_deed_launcher_hash(),
     )
     chosen = allocation()
     index = current.allocations.index(chosen)
@@ -490,6 +537,7 @@ def _funded_maker_offer():
         funding_lineage_proof=funded.leaf_lineage_proof,
         plan=current,
         allocation=chosen,
+        deed_singleton_struct=smart_deed_struct(chosen.deed_launcher_id),
     )[0]
 
 

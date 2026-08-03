@@ -1,0 +1,39 @@
+{
+  "schema": "solslot.puzzle-hashes.v1",
+  "release": "RC25",
+  "preservedRelease": "RC24",
+  "preservedCanonicalChecksum": "6a4e0c968febd112bb5acfb6a61890c56ad8ff07d92ac60feba9f256ff3b6f53",
+  "previousPuzzleHashes": {
+    "sgt_free_inner.clsp": "5b565ff4565b31f8fe351972dd58dd1e1f159b8ec39424db459ea3aa5cdd372c",
+    "governance_singleton_inner_v2.clsp": "a62b3955fe9ded542cc478c74fe8cb81bf12e1bfb7b153f69e4a1b5a84dc7291",
+    "vault_singleton_inner_v2.clsp": "eeb1d13717cae2c62553f50e9a47d2ca9999bdfecbd3a2c81fe4ae30f8e4592a",
+    "stripe_settlement_receipt_v1.clsp": "fc5f6671112050018a23abf3a2660982a5d83ce8ff168bf18f3bb56079ed764b",
+    "mint_offer_inventory_available_v1.clsp": "86666fa2b8b4e49efb4e020d0e289270f946e6f6e54c82d58c2b9abb87073775",
+    "mint_offer_delegate_v5.clsp": "6e6eb04a9afdb0b6fa8eaa4ab5a020c3d8554356e0516e9e4f47711a564a91a5"
+  },
+  "changedPuzzleHashes": {
+    "sgt_free_inner.clsp": "397658ed0de137d97e850c5c7ef18ed95ed36d799c3b2a799f2f8f1f0554112d",
+    "governance_singleton_inner_v2.clsp": "14380db3a00acd31031a2ff5137cacff975800301358499d90ebaa29c08bc193",
+    "vault_singleton_inner_v2.clsp": "34a8ecbe7aa044ca809c04438ad084c439fbfba1714dabaec0e52d206640eb1e",
+    "stripe_settlement_receipt_v1.clsp": "f8a8e54b751adb4a569431d9f70b78f9ffa990696faba1fc8525f5917dee7898",
+    "mint_offer_inventory_available_v1.clsp": "3e4a9f59c0851d717bda68d52b75527659a9712b0f39de4851f09b01b00d8f2e",
+    "mint_offer_delegate_v5.clsp": "c779d3786c8c2f898784f4031f873e81fb785442a5e8fd8dd6dfb9446328a972"
+  },
+  "newPuzzleHashes": {
+    "sgt_reserve_inner_v1.clsp": "f5ff2492b60f5d049ad91f3ac4822fb54e8815fd67b6fefea172f017526f6c32",
+    "sgt_sale_inner_v1.clsp": "3d1cbeffba6456c70d2732da94d2c5d9b149a5776095897fe97e40aaa2c47acf",
+    "purchase_batch_settlement_receipt_v1.clsp": "16ffd80e85712a55e8064adf19df1f6a9e1f85ed4f5336a8eff151e2d141e4c9"
+  },
+  "changeReasons": {
+    "sgt_free_inner.clsp": "allow one governed SGT owner spend to create an exact allocation output and a governed reserve remainder without introducing discretionary recipients",
+    "governance_singleton_inner_v2.clsp": "recognize exact SGT sale and grant bills and prevent tracker execution unless the bill-bound governed reserve allocation is co-spent",
+    "vault_singleton_inner_v2.clsp": "authorize an exact SGT vote-lock co-spend from the existing approved vault without adding another custody puzzle or permitting an SGT transfer",
+    "stripe_settlement_receipt_v1.clsp": "authenticate one exact validator-quorum Stripe or Base USDC settlement receipt; preserve the SmartDeed offer output; and include the one-use Base result authorization in the SmartDeed settlement announcement before EVM escrow payout",
+    "mint_offer_inventory_available_v1.clsp": "preserve RC24 AVAILABLE-to-RESERVED custody while committing each SmartDeed reservation to the extended delivery-bound PurchaseArtifactV3 hash and the deed's DID-authorized launcher puzzle hash",
+    "mint_offer_delegate_v5.clsp": "deliver one exact already-minted governed SmartDeed from its DID-authorized singleton lineage to its artifact-bound approved vault after authenticated Stripe or Base USDC payment and bind the Base offer settlement to the signed one-use result authorization",
+    "purchase_batch_settlement_receipt_v1.clsp": "authenticate one aggregate Stripe or Base USDC payment and atomically expose one technical offer mojo per exact child SmartDeed while emitting the unchanged V5 child settlement announcement for every vault-bound deed",
+    "sgt_reserve_inner_v1.clsp": "hold the fixed SGT issuance in governed custody, reject non-allocation bills at lock time, and independently require each sale or grant bill to name this exact reserve",
+    "sgt_sale_inner_v1.clsp": "create a non-discretionary XCH or approved CAT offer, or consume the shared authenticated Stripe/Base receipt, for one exact approved vault, amount, treasury, artifact, and expiry"
+  },
+  "canonicalChecksum": "f2c45372a5f44384ec83918a2cf5b8f8e84a8626a2ab70e3aed7380f78873f69"
+}

@@ -1,27 +1,34 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;; RC24 authenticated Stripe settlement receipt.
+;;; RC25 authenticated external-settlement receipt.
 ;;;
-;;; This one-mojo coin carries no customer value. It is the standard offer
-;;; half that proves a 2-of-3 validator quorum independently retrieved the
-;;; exact succeeded PaymentIntent committed by StripeSettlementReceiptV1.
+;;; The one-mojo receipt carries no customer value. Two of the three frozen
+;;; validators must sign the exact receipt, rail, delivery, approved vault,
+;;; treasury, lifetime, and optional Base result authorization. SmartDeed
+;;; delivery uses the standard offer settlement coin; governed SGT delivery
+;;; is authorized directly by the sale puzzle.
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (mod
   (
     PURCHASE_ARTIFACT_HASH
     PURCHASE_ID
-    STRIPE_EVIDENCE_HASH
+    SETTLEMENT_RECEIPT_HASH
+    EVIDENCE_HASH
     PAYMENT_ATTESTATION_HASH
-    VALIDATOR_ROSTER_ROOT
-    RECEIPT_NONCE
-    OBSERVED_AT
-    EXPIRES_AT
-    DEED_LAUNCHER_ID
+    PAYMENT_RAIL
+    DELIVERY_KIND
+    DELIVERY_ASSET_ID
+    DELIVERY_AMOUNT
+    DELIVERY_CONTEXT_HASH
     VAULT_LAUNCHER_ID
     APPROVED_VAULT_P2_PUZZLE_HASH
     ZKPASSPORT_ROOT
-    TRUSTED_PROTOCOL_TREASURY
     TECHNOLOGY_FEE_MINOR
+    SETTLEMENT_AMOUNT
+    TRUSTED_PROTOCOL_TREASURY
+    OBSERVED_AT
+    EXPIRES_AT
+    BASE_RESULT_AUTHORIZATION_PUZZLE_HASH
     VALIDATOR_PUBKEYS
     OFFER_MOD_HASH
     ;; solution
@@ -36,11 +43,15 @@
   (include utils.clib)
   (include utility_macros.clib)
 
-  (defconstant RECEIPT_VERSION 1)
   (defconstant VALIDATOR_THRESHOLD 2)
   (defconstant RECEIPT_TTL_SECONDS 172800)
+  (defconstant SIGNATURE_DOMAIN "SOLSLOT_EXTERNAL_RECEIPT_AUTH_V1")
+  (defconstant SETTLEMENT_DOMAIN "SOLSLOT_EXTERNAL_RECEIPT_SETTLEMENT_V1")
+  (defconstant RAIL_STRIPE 1)
+  (defconstant RAIL_EVM_TEST_USD 2)
+  (defconstant DELIVERY_SMARTDEED 1)
+  (defconstant DELIVERY_SGT 2)
   (defconstant ZERO_B32 0x0000000000000000000000000000000000000000000000000000000000000000)
-  (defconstant SETTLEMENT_DOMAIN "SOLSLOT_STRIPE_RECEIPT_SETTLEMENT_V1")
 
   (defun list-length (items)
     (if items (+ 1 (list-length (r items))) 0)
@@ -77,28 +88,34 @@
       ())
   )
 
-  (defun-inline receipt-hash
-      (artifact_hash purchase_id evidence_hash attestation_hash
-       validator_roster_root receipt_nonce observed_at expires_at
-       deed_launcher_id vault_launcher_id vault_p2_puzzle_hash zkpassport_root
-       trusted_protocol_treasury technology_fee_minor)
+  (defun-inline authorization-message ()
     (sha256tree
       (list
-        RECEIPT_VERSION artifact_hash purchase_id evidence_hash
-        attestation_hash validator_roster_root VALIDATOR_THRESHOLD
-        receipt_nonce observed_at expires_at deed_launcher_id
-        vault_launcher_id vault_p2_puzzle_hash zkpassport_root
-        trusted_protocol_treasury
-        technology_fee_minor))
+        SIGNATURE_DOMAIN PURCHASE_ARTIFACT_HASH PURCHASE_ID
+        SETTLEMENT_RECEIPT_HASH EVIDENCE_HASH PAYMENT_ATTESTATION_HASH
+        PAYMENT_RAIL DELIVERY_KIND DELIVERY_ASSET_ID DELIVERY_AMOUNT
+        DELIVERY_CONTEXT_HASH VAULT_LAUNCHER_ID
+        APPROVED_VAULT_P2_PUZZLE_HASH ZKPASSPORT_ROOT
+        TECHNOLOGY_FEE_MINOR SETTLEMENT_AMOUNT TRUSTED_PROTOCOL_TREASURY
+        OBSERVED_AT EXPIRES_AT BASE_RESULT_AUTHORIZATION_PUZZLE_HASH))
   )
 
-  (defun-inline settlement-message
-      (receipt_hash artifact_hash purchase_id evidence_hash attestation_hash
-       deed_launcher_id vault_p2_puzzle_hash)
-    (sha256tree
-      (list
-        SETTLEMENT_DOMAIN receipt_hash artifact_hash purchase_id evidence_hash
-        attestation_hash deed_launcher_id vault_p2_puzzle_hash))
+  (defun-inline settlement-message ()
+    (if (= DELIVERY_KIND DELIVERY_SMARTDEED)
+      (sha256tree
+        (list
+          SETTLEMENT_DOMAIN PURCHASE_ARTIFACT_HASH PURCHASE_ID
+          SETTLEMENT_RECEIPT_HASH PAYMENT_RAIL DELIVERY_KIND
+          DELIVERY_ASSET_ID DELIVERY_AMOUNT DELIVERY_CONTEXT_HASH
+          APPROVED_VAULT_P2_PUZZLE_HASH
+          BASE_RESULT_AUTHORIZATION_PUZZLE_HASH EVIDENCE_HASH
+          PAYMENT_ATTESTATION_HASH))
+      (sha256tree
+        (list
+          SETTLEMENT_DOMAIN PURCHASE_ARTIFACT_HASH PURCHASE_ID
+          SETTLEMENT_RECEIPT_HASH PAYMENT_RAIL DELIVERY_KIND
+          DELIVERY_ASSET_ID DELIVERY_AMOUNT DELIVERY_CONTEXT_HASH
+          APPROVED_VAULT_P2_PUZZLE_HASH)))
   )
 
   (assert
@@ -106,30 +123,40 @@
     (not (= PURCHASE_ARTIFACT_HASH ZERO_B32))
     (is-size-b32 PURCHASE_ID)
     (not (= PURCHASE_ID ZERO_B32))
-    (is-size-b32 STRIPE_EVIDENCE_HASH)
-    (not (= STRIPE_EVIDENCE_HASH ZERO_B32))
+    (is-size-b32 SETTLEMENT_RECEIPT_HASH)
+    (not (= SETTLEMENT_RECEIPT_HASH ZERO_B32))
+    (is-size-b32 EVIDENCE_HASH)
+    (not (= EVIDENCE_HASH ZERO_B32))
     (is-size-b32 PAYMENT_ATTESTATION_HASH)
     (not (= PAYMENT_ATTESTATION_HASH ZERO_B32))
-    (is-size-b32 VALIDATOR_ROSTER_ROOT)
-    (= VALIDATOR_ROSTER_ROOT (sha256tree VALIDATOR_PUBKEYS))
-    (is-size-b32 RECEIPT_NONCE)
-    (not (= RECEIPT_NONCE ZERO_B32))
-    (is-uint64 OBSERVED_AT)
-    (> OBSERVED_AT 0)
-    (is-uint64 EXPIRES_AT)
-    (> EXPIRES_AT OBSERVED_AT)
-    (not (> (- EXPIRES_AT OBSERVED_AT) RECEIPT_TTL_SECONDS))
-    (is-size-b32 DEED_LAUNCHER_ID)
-    (not (= DEED_LAUNCHER_ID ZERO_B32))
+    (or (= PAYMENT_RAIL RAIL_STRIPE) (= PAYMENT_RAIL RAIL_EVM_TEST_USD))
+    (or (= DELIVERY_KIND DELIVERY_SMARTDEED) (= DELIVERY_KIND DELIVERY_SGT))
+    (is-size-b32 DELIVERY_ASSET_ID)
+    (not (= DELIVERY_ASSET_ID ZERO_B32))
+    (is-uint64 DELIVERY_AMOUNT)
+    (> DELIVERY_AMOUNT 0)
+    (is-size-b32 DELIVERY_CONTEXT_HASH)
+    (not (= DELIVERY_CONTEXT_HASH ZERO_B32))
     (is-size-b32 VAULT_LAUNCHER_ID)
     (not (= VAULT_LAUNCHER_ID ZERO_B32))
     (is-size-b32 APPROVED_VAULT_P2_PUZZLE_HASH)
     (not (= APPROVED_VAULT_P2_PUZZLE_HASH ZERO_B32))
     (is-size-b32 ZKPASSPORT_ROOT)
     (not (= ZKPASSPORT_ROOT ZERO_B32))
+    (is-uint64 TECHNOLOGY_FEE_MINOR)
+    (is-uint64 SETTLEMENT_AMOUNT)
+    (> SETTLEMENT_AMOUNT 0)
     (is-size-b32 TRUSTED_PROTOCOL_TREASURY)
     (not (= TRUSTED_PROTOCOL_TREASURY ZERO_B32))
-    (is-uint64 TECHNOLOGY_FEE_MINOR)
+    (is-uint64 OBSERVED_AT)
+    (> OBSERVED_AT 0)
+    (is-uint64 EXPIRES_AT)
+    (> EXPIRES_AT OBSERVED_AT)
+    (not (> (- EXPIRES_AT OBSERVED_AT) RECEIPT_TTL_SECONDS))
+    (is-size-b32 BASE_RESULT_AUTHORIZATION_PUZZLE_HASH)
+    (if (= PAYMENT_RAIL RAIL_EVM_TEST_USD)
+      (not (= BASE_RESULT_AUTHORIZATION_PUZZLE_HASH ZERO_B32))
+      (= BASE_RESULT_AUTHORIZATION_PUZZLE_HASH ZERO_B32))
     (is-size-b32 OFFER_MOD_HASH)
     (= (list-length VALIDATOR_PUBKEYS) 3)
     (all-bls-g1-pubkeys VALIDATOR_PUBKEYS)
@@ -147,36 +174,28 @@
         (list ASSERT_MY_PARENT_ID my_parent_id)
         (list ASSERT_MY_PUZZLEHASH my_puzzle_hash)
         (list ASSERT_MY_AMOUNT 1)
-        (list ASSERT_BEFORE_SECONDS_ABSOLUTE EXPIRES_AT)
-        (list CREATE_COIN OFFER_MOD_HASH 1
-          (list PURCHASE_ARTIFACT_HASH PURCHASE_ID
-            (receipt-hash
-              PURCHASE_ARTIFACT_HASH PURCHASE_ID STRIPE_EVIDENCE_HASH
-              PAYMENT_ATTESTATION_HASH VALIDATOR_ROSTER_ROOT RECEIPT_NONCE
-              OBSERVED_AT EXPIRES_AT DEED_LAUNCHER_ID
-              VAULT_LAUNCHER_ID APPROVED_VAULT_P2_PUZZLE_HASH ZKPASSPORT_ROOT
-              TRUSTED_PROTOCOL_TREASURY TECHNOLOGY_FEE_MINOR)))
-        (list CREATE_COIN_ANNOUNCEMENT
-          (settlement-message
-            (receipt-hash
-              PURCHASE_ARTIFACT_HASH PURCHASE_ID STRIPE_EVIDENCE_HASH
-              PAYMENT_ATTESTATION_HASH VALIDATOR_ROSTER_ROOT RECEIPT_NONCE
-              OBSERVED_AT EXPIRES_AT DEED_LAUNCHER_ID
-              VAULT_LAUNCHER_ID APPROVED_VAULT_P2_PUZZLE_HASH ZKPASSPORT_ROOT
-              TRUSTED_PROTOCOL_TREASURY TECHNOLOGY_FEE_MINOR)
-            PURCHASE_ARTIFACT_HASH PURCHASE_ID STRIPE_EVIDENCE_HASH
-            PAYMENT_ATTESTATION_HASH DEED_LAUNCHER_ID
-            APPROVED_VAULT_P2_PUZZLE_HASH))
-        (list REMARK PROTOCOL_PREFIX "STRIPE_SETTLEMENT_RECEIPT_V1"
-          PURCHASE_ID PURCHASE_ARTIFACT_HASH STRIPE_EVIDENCE_HASH
-          PAYMENT_ATTESTATION_HASH DEED_LAUNCHER_ID
-          APPROVED_VAULT_P2_PUZZLE_HASH))
-      (emit-sigs VALIDATOR_PUBKEYS signer_indices
-        (receipt-hash
-          PURCHASE_ARTIFACT_HASH PURCHASE_ID STRIPE_EVIDENCE_HASH
-          PAYMENT_ATTESTATION_HASH VALIDATOR_ROSTER_ROOT RECEIPT_NONCE
-          OBSERVED_AT EXPIRES_AT DEED_LAUNCHER_ID
-          VAULT_LAUNCHER_ID APPROVED_VAULT_P2_PUZZLE_HASH ZKPASSPORT_ROOT
-          TRUSTED_PROTOCOL_TREASURY TECHNOLOGY_FEE_MINOR)))
+        (list ASSERT_BEFORE_SECONDS_ABSOLUTE EXPIRES_AT))
+      (merge-lists
+        (emit-sigs VALIDATOR_PUBKEYS signer_indices
+          (authorization-message))
+        (list
+          (list CREATE_COIN
+            (if (= DELIVERY_KIND DELIVERY_SMARTDEED)
+              OFFER_MOD_HASH
+              (if (= PAYMENT_RAIL RAIL_EVM_TEST_USD)
+                BASE_RESULT_AUTHORIZATION_PUZZLE_HASH
+                TRUSTED_PROTOCOL_TREASURY))
+            1
+            (list PURCHASE_ARTIFACT_HASH PURCHASE_ID
+              SETTLEMENT_RECEIPT_HASH PAYMENT_RAIL DELIVERY_KIND
+              DELIVERY_ASSET_ID DELIVERY_AMOUNT DELIVERY_CONTEXT_HASH
+              APPROVED_VAULT_P2_PUZZLE_HASH))
+          (list CREATE_COIN_ANNOUNCEMENT (settlement-message))
+          (list REMARK PROTOCOL_PREFIX "EXTERNAL_SETTLEMENT_RECEIPT_V1"
+            PURCHASE_ARTIFACT_HASH PURCHASE_ID SETTLEMENT_RECEIPT_HASH
+            PAYMENT_RAIL DELIVERY_KIND DELIVERY_ASSET_ID DELIVERY_AMOUNT
+            DELIVERY_CONTEXT_HASH APPROVED_VAULT_P2_PUZZLE_HASH
+            SETTLEMENT_AMOUNT TRUSTED_PROTOCOL_TREASURY
+            BASE_RESULT_AUTHORIZATION_PUZZLE_HASH))))
   )
 )

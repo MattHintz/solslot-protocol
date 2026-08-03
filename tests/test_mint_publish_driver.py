@@ -971,6 +971,11 @@ class TestArtifactsCrossDriver:
                 network="testnet11",
                 smart_deed_inner_hash=bytes32(smart.get_tree_hash()),
                 deed_launcher_id=artifacts.deed_launcher_id,
+                deed_launcher_puzzle_hash=deed_launcher_puzzle_hash(
+                    protocol_did_singleton_struct=(
+                        PROTOCOL_DID_SINGLETON_STRUCT
+                    )
+                ),
                 collection_id=COLLECTION_ID,
                 metadata_root=metadata_root,
                 metadata_anchor_id=artifacts.deed_launcher_id,

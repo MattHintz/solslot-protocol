@@ -15,6 +15,7 @@
     P2_VAULT_MOD_HASH
     SINGLETON_MOD_HASH
     SINGLETON_LAUNCHER_HASH
+    DEED_LAUNCHER_PUZZLE_HASH
     CAT_MOD_HASH
     OFFER_MOD_HASH
     NETWORK
@@ -67,6 +68,7 @@
   (defconstant RAIL_CHIA_CAT 4)
   (defconstant PURCHASE_KIND_DIRECT 1)
   (defconstant PURCHASE_KIND_PRESALE 2)
+  (defconstant DELIVERY_SMARTDEED 1)
   (defconstant BASE_SEPOLIA_CHAIN_ID 84532)
   (defconstant BASE_SEPOLIA_USDC_ASSET_ID 0x000000000000000000000000036cbd53842c5426634e7929541ec2318f3dcf7e)
   (defconstant ZERO_B32 0x0000000000000000000000000000000000000000000000000000000000000000)
@@ -131,7 +133,8 @@
         vault_p2_puzzle_hash authorization_nonce authorization_expires_at
         quote_expires_at oracle_round_hash
         oracle_price_usd_minor_per_asset source_evidence_root purchase_kind
-        presale_terms_hash))
+        presale_terms_hash DELIVERY_SMARTDEED DEED_LAUNCHER_ID 1
+        COLLECTION_ID))
   )
 
   (defun-inline purchase-id (artifact_hash)
@@ -204,6 +207,7 @@
       (sha256 1 P2_VAULT_MOD_HASH)
       (sha256 1 SINGLETON_MOD_HASH)
       (sha256 1 SINGLETON_LAUNCHER_HASH)
+      (sha256 1 DEED_LAUNCHER_PUZZLE_HASH)
       (sha256 1 CAT_MOD_HASH)
       (sha256 1 OFFER_MOD_HASH)
       (sha256 1 NETWORK)
@@ -231,6 +235,7 @@
       (sha256 1 P2_VAULT_MOD_HASH)
       (sha256 1 SINGLETON_MOD_HASH)
       (sha256 1 SINGLETON_LAUNCHER_HASH)
+      (sha256 1 DEED_LAUNCHER_PUZZLE_HASH)
       (sha256 1 CAT_MOD_HASH)
       (sha256 1 OFFER_MOD_HASH)
       (sha256 1 NETWORK)
@@ -293,6 +298,9 @@
     (= (list-length VALIDATOR_PUBKEYS) 3)
     (all-bls-g1-pubkeys VALIDATOR_PUBKEYS)
     (has-no-duplicates VALIDATOR_PUBKEYS ())
+    (is-size-b32 DEED_LAUNCHER_PUZZLE_HASH)
+    (not (= DEED_LAUNCHER_PUZZLE_HASH ZERO_B32))
+    (not (= DEED_LAUNCHER_PUZZLE_HASH SINGLETON_LAUNCHER_HASH))
     (= my_amount 1)
     (= vault_p2_puzzle_hash
       (canonical-p2-vault-hash vault_launcher_id))

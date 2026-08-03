@@ -44,6 +44,8 @@ def plan(
         kos_mint_execute_pubkey=TEST_KOS_MINT_EXECUTE_PUBKEY,
         trusted_treasury_reserve_puzzle_hash=b32(0x18),
         trusted_protocol_treasury_puzzle_hash=b32(0x19),
+        company_sgt_sale_treasury_puzzle_hash=b32(0x1D),
+        wusdc_b_asset_id=b32(0x1E),
         trusted_governance_rewards_puzzle_hash=b32(0x1A),
         trusted_governance_rewards_root=b32(0x1B),
         trusted_zkpassport_bridge_policy_hash=b32(0x1C),

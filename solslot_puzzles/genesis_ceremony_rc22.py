@@ -501,6 +501,10 @@ def build_rc22_genesis_ceremony_plan(
         trusted_protocol_treasury_puzzle_hash=(
             trusted_protocol_treasury_puzzle_hash
         ),
+        # RC22 had no separate company-sales destination. This compatibility
+        # builder remains archived; fresh RC23+ plans require the value.
+        company_sgt_sale_treasury_puzzle_hash=faucet_puzzle_hash,
+        wusdc_b_asset_id=faucet_puzzle_hash,
         trusted_governance_rewards_puzzle_hash=(
             trusted_governance_rewards_puzzle_hash
         ),

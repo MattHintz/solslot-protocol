@@ -67,6 +67,13 @@
 ;;;      old_state_hash new_state_hash)                   ; LIQUIDITY VENUE
 ;;;   (U scope_id new_record old_root new_root old_version new_version
 ;;;      old_state_hash new_state_hash)                   ; SCOPED PAUSE
+;;;   (Y sale_id sgt_amount recipient_inner_puzhash payment_rail
+;;;      payment_asset_id payment_amount company_treasury_puzhash expires_at
+;;;      reserve_owner_inner_puzhash purchase_artifact_hash)
+;;;                                                       ; SGT SALE
+;;;   (G grant_id sgt_amount recipient_inner_puzhash reason_hash
+;;;      reserve_owner_inner_puzhash)
+;;;                                                       ; SGT GRANT
 ;;;
 ;;; Spend cases:
 ;;;   1 — PROPOSE : open a new proposal.  Requires:
@@ -155,8 +162,11 @@
     (defconstant BILL_ROUTE 0x52)         ; 'R'
     (defconstant BILL_PAUSE 0x55)         ; 'U'
     (defconstant BILL_LIQUIDITY 0x4c)     ; 'L'
+    (defconstant BILL_SGT_SALE 0x59)      ; 'Y'
+    (defconstant BILL_SGT_GRANT 0x47)     ; 'G'
     (defconstant STATUTE_UPDATE_TAG 0x53544154) ; "STAT"
     (defconstant REDEMPTION_FUND_TAG 0x52444631) ; "RDF1"
+    (defconstant ZERO_B32 0x0000000000000000000000000000000000000000000000000000000000000000)
 
     ;; vault_version_registry_inner.clsp routine-path approval tag ("RT").  The
     ;; registry's SPEND_CODE_ROUTINE asserts a PUZZLE_ANNOUNCEMENT keyed by the
@@ -352,6 +362,53 @@
             (not (= (nth-value 7 bill_op) (nth-value 8 bill_op))))
     )
 
+    (defun-inline valid-sgt-sale-bill (bill_op)
+        (all
+            (= (count-list bill_op) 11)
+            (is-size-b32 (nth-value 1 bill_op))
+            (not (= (nth-value 1 bill_op) ZERO_B32))
+            (is-uint64 (nth-value 2 bill_op))
+            (> (nth-value 2 bill_op) 0)
+            (is-size-b32 (nth-value 3 bill_op))
+            (not (= (nth-value 3 bill_op) ZERO_B32))
+            (any
+                (any (= (nth-value 4 bill_op) 1) (= (nth-value 4 bill_op) 2))
+                (any (= (nth-value 4 bill_op) 3) (= (nth-value 4 bill_op) 4)))
+            (is-size-b32 (nth-value 5 bill_op))
+            (if
+                (any (= (nth-value 4 bill_op) 1) (= (nth-value 4 bill_op) 3))
+                (= (nth-value 5 bill_op) ZERO_B32)
+                (not (= (nth-value 5 bill_op) ZERO_B32)))
+            (is-uint64 (nth-value 6 bill_op))
+            (> (nth-value 6 bill_op) 0)
+            (is-size-b32 (nth-value 7 bill_op))
+            (not (= (nth-value 7 bill_op) ZERO_B32))
+            (is-uint64 (nth-value 8 bill_op))
+            (> (nth-value 8 bill_op) 0)
+            (is-size-b32 (nth-value 9 bill_op))
+            (not (= (nth-value 9 bill_op) ZERO_B32))
+            (is-size-b32 (nth-value 10 bill_op))
+            (if
+                (any (= (nth-value 4 bill_op) 1) (= (nth-value 4 bill_op) 2))
+                (= (nth-value 10 bill_op) ZERO_B32)
+                (not (= (nth-value 10 bill_op) ZERO_B32))))
+    )
+
+    (defun-inline valid-sgt-grant-bill (bill_op)
+        (all
+            (= (count-list bill_op) 6)
+            (is-size-b32 (nth-value 1 bill_op))
+            (not (= (nth-value 1 bill_op) ZERO_B32))
+            (is-uint64 (nth-value 2 bill_op))
+            (> (nth-value 2 bill_op) 0)
+            (is-size-b32 (nth-value 3 bill_op))
+            (not (= (nth-value 3 bill_op) ZERO_B32))
+            (is-size-b32 (nth-value 4 bill_op))
+            (not (= (nth-value 4 bill_op) ZERO_B32))
+            (is-size-b32 (nth-value 5 bill_op))
+            (not (= (nth-value 5 bill_op) ZERO_B32)))
+    )
+
     ;; Reject malformed bills before they can enter OPEN state. A proposal
     ;; that reaches quorum but can never dispatch would otherwise strand the
     ;; singleton because EXECUTE and EXPIRE would both be unavailable.
@@ -397,7 +454,11 @@
                                 (> (nth-value 3 bill_op) 0))
                             (if (statute-bill-tag (f bill_op))
                                 (valid-statute-bill bill_op)
-                                0))))))
+                                (if (= (f bill_op) BILL_SGT_SALE)
+                                    (valid-sgt-sale-bill bill_op)
+                                    (if (= (f bill_op) BILL_SGT_GRANT)
+                                        (valid-sgt-grant-bill bill_op)
+                                        0))))))))
     )
 
     ;; ─────────────────────────────────────────────────────────────────────
@@ -538,7 +599,9 @@
     ;; gov→DID coupling explicit and binds the gov spend to the same
     ;; announcement the launcher asserts.  If the DID puzzle ever changed
     ;; to skip the announcement, gov would fail, preventing rogue mints.
-    (defun dispatch_bill (bill_op did_ph)
+    (defun dispatch_bill
+            (mod_hash singleton_struct sgt_free_mh sgt_locked_mh
+             cat_mh sgt_tail_h bill_op did_ph)
         (if (= (f bill_op) BILL_MINT)
             ;; MINT: SEND to DID, ASSERT DID announces the deed full ph, and
             ;; require the committed property registry state to register the
@@ -589,7 +652,23 @@
                                 (list CREATE_PUZZLE_ANNOUNCEMENT
                                     (concat PROTOCOL_PREFIX REGISTRY_TAG_ROUTINE
                                         (sha256tree (list (f (r bill_op)) (f (r (r bill_op))) (f (r (r (r bill_op)))))))))
-                            (if (statute-bill-tag (f bill_op))
+                            (if (any
+                                    (= (f bill_op) BILL_SGT_SALE)
+                                    (= (f bill_op) BILL_SGT_GRANT))
+                                ;; The tracker must not reset to IDLE unless the
+                                ;; exact governed reserve puzzle is co-spent. The
+                                ;; reserve independently reconstructs this bill
+                                ;; and consumes the generic EXEC announcement.
+                                (list
+                                    (list ASSERT_CONCURRENT_PUZZLE
+                                        (cat_sgt_free_puzhash
+                                            mod_hash singleton_struct
+                                            sgt_free_mh sgt_locked_mh
+                                            cat_mh sgt_tail_h
+                                            (if (= (f bill_op) BILL_SGT_SALE)
+                                                (nth-value 9 bill_op)
+                                                (nth-value 5 bill_op)))))
+                                (if (statute-bill-tag (f bill_op))
                                 ;; Typed statutes update. The canonical statutes
                                 ;; singleton pairs this SEND_MESSAGE and recomputes
                                 ;; the exact one-entry root transition itself.
@@ -598,7 +677,7 @@
                                         (concat PROTOCOL_PREFIX
                                             (sha256tree
                                                 (c STATUTE_UPDATE_TAG bill_op)))))
-                                (x)))))))
+                                (x))))))))
     )
 
     ;; SPEND CASE 3 — EXECUTE
@@ -634,7 +713,10 @@
                         (c
                             (list REMARK PROTOCOL_PREFIX TRK_EXECUTE proposal_hash)
                             (merge-lists
-                                (dispatch_bill bill_op did_ph)
+                                (dispatch_bill
+                                    mod_hash singleton_struct
+                                    sgt_free_mh sgt_locked_mh
+                                    cat_mh sgt_tail_h bill_op did_ph)
                                 (merge-lists
                                     (kos-mint-execute-conditions
                                         kos_mint_execute_pubkey singleton_struct my_id proposal_hash bill_op)

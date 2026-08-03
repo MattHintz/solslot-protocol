@@ -15,7 +15,7 @@
     PAYMENT_ASSET_ID
     OFFER_MOD_HASH
     SINGLETON_MOD_HASH
-    SINGLETON_LAUNCHER_HASH
+    DEED_LAUNCHER_PUZZLE_HASH
     COLLECTION_ID
     SETTLEMENT_ID
     DEED_LAUNCHER_ID
@@ -70,7 +70,7 @@
     (is-size-b32 PAYMENT_ASSET_ID)
     (is-size-b32 OFFER_MOD_HASH)
     (is-size-b32 SINGLETON_MOD_HASH)
-    (is-size-b32 SINGLETON_LAUNCHER_HASH)
+    (is-size-b32 DEED_LAUNCHER_PUZZLE_HASH)
     (is-size-b32 COLLECTION_ID)
     (is-size-b32 SETTLEMENT_ID)
     (is-size-b32 DEED_LAUNCHER_ID)
@@ -87,7 +87,7 @@
       (list ASSERT_PUZZLE_ANNOUNCEMENT
         (sha256
           (deed-settlement-puzzle-hash
-            SINGLETON_MOD_HASH SINGLETON_LAUNCHER_HASH DEED_LAUNCHER_ID
+            SINGLETON_MOD_HASH DEED_LAUNCHER_PUZZLE_HASH DEED_LAUNCHER_ID
             OFFER_MOD_HASH)
           (deed-payment-message
             (payment-nonce my_parent_id my_full_puzzle_hash my_amount)

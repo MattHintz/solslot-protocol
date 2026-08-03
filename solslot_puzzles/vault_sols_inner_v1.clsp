@@ -1,0 +1,113 @@
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; Vault-bound Sols CAT owner for Pool V4.
+;;;
+;;; Pool V4 commits to the vault, quote, destination, and every economic field.
+;;; This owner accepts only that one-time Pool V4 operation announcement, pays
+;;; the exact Offer amount, and returns change to the same vault-bound puzzle.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(mod
+  (MOD_HASH POOL_V4_MOD_HASH POOL_SINGLETON_STRUCT STATUTES_CONFIG
+   MARKET_CONFIG VAULT_LAUNCHER_ID
+   my_id my_amount operation_hash payment_amount quote_expires_at
+   inventory_root bootstrap_complete inventory_nav treasury_assets
+   proven_liabilities deed_count total_sols reserve_sols state_version)
+
+  (include condition_codes.clib)
+  (include utils.clib)
+  (include utility_macros.clib)
+
+  (defconstant SWAP_OPERATION_TAG 0x50534f4c) ;; PSOL
+  (defconstant VAULT_SOLS_PAYMENT_TAG 0x56535059) ;; VSPY, audit remark only
+  (defconstant ZERO_B32 0x0000000000000000000000000000000000000000000000000000000000000000)
+
+  (defun nth (n items)
+    (if n (nth (- n 1) (r items)) (f items)))
+
+  (defun-inline cat-mod () (nth 0 MARKET_CONFIG))
+  (defun-inline offer-mod () (nth 1 MARKET_CONFIG))
+  (defun-inline sols-tail () (nth 5 STATUTES_CONFIG))
+
+  (defun-inline own-inner-hash ()
+    (curry_hashes MOD_HASH
+      (sha256 1 MOD_HASH)
+      (sha256 1 POOL_V4_MOD_HASH)
+      (sha256tree POOL_SINGLETON_STRUCT)
+      (sha256tree STATUTES_CONFIG)
+      (sha256tree MARKET_CONFIG)
+      (sha256 1 VAULT_LAUNCHER_ID)))
+
+  (defun-inline own-full-hash ()
+    (curry_hashes (cat-mod)
+      (sha256 1 (cat-mod))
+      (sha256 1 (sols-tail))
+      (own-inner-hash)))
+
+  (defun-inline pool-inner-hash ()
+    (curry_hashes POOL_V4_MOD_HASH
+      (sha256 1 POOL_V4_MOD_HASH)
+      (sha256tree POOL_SINGLETON_STRUCT)
+      (sha256tree STATUTES_CONFIG)
+      (sha256tree MARKET_CONFIG)
+      (sha256 1 inventory_root)
+      (sha256 1 bootstrap_complete)
+      (sha256 1 inventory_nav)
+      (sha256 1 treasury_assets)
+      (sha256 1 proven_liabilities)
+      (sha256 1 deed_count)
+      (sha256 1 total_sols)
+      (sha256 1 reserve_sols)
+      (sha256 1 state_version)))
+
+  (defun-inline pool-full-hash ()
+    (calculate_full_puzzle_hash POOL_SINGLETON_STRUCT (pool-inner-hash)))
+
+  (defun-inline pool-operation-message ()
+    (concat PROTOCOL_PREFIX
+      (sha256tree (list SWAP_OPERATION_TAG operation_hash))))
+
+  (assert
+    (is-size-b32 MOD_HASH)
+    (is-size-b32 POOL_V4_MOD_HASH)
+    (is-size-b32 VAULT_LAUNCHER_ID)
+    (not (= VAULT_LAUNCHER_ID ZERO_B32))
+    (is-size-b32 my_id)
+    (is-uint64 my_amount)
+    (> my_amount 0)
+    (is-size-b32 operation_hash)
+    (not (= operation_hash ZERO_B32))
+    (is-uint64 payment_amount)
+    (> payment_amount 0)
+    (gte my_amount payment_amount)
+    (is-uint64 quote_expires_at)
+    (> quote_expires_at 0)
+    (is-size-b32 inventory_root)
+    (is-uint64 inventory_nav)
+    (is-uint64 treasury_assets)
+    (is-uint64 proven_liabilities)
+    (is-uint64 deed_count)
+    (is-uint64 total_sols)
+    (is-uint64 reserve_sols)
+    (is-uint64 state_version)
+    (c
+      (list ASSERT_MY_COIN_ID my_id)
+      (c
+        (list ASSERT_MY_PUZZLEHASH (own-full-hash))
+        (c
+          (list ASSERT_MY_AMOUNT my_amount)
+          (c
+            (list ASSERT_BEFORE_SECONDS_ABSOLUTE quote_expires_at)
+            (c
+              (list ASSERT_PUZZLE_ANNOUNCEMENT
+                (sha256 (pool-full-hash) (pool-operation-message)))
+              (c
+                (list CREATE_COIN (offer-mod) payment_amount
+                  (list (offer-mod)))
+                (c
+                  (if (> my_amount payment_amount)
+                    (list CREATE_COIN (own-inner-hash)
+                      (- my_amount payment_amount) (list (own-inner-hash)))
+                    (list REMARK "SOLS_COIN_EXACT_SPEND" my_id))
+                  (list
+                    (list REMARK PROTOCOL_PREFIX VAULT_SOLS_PAYMENT_TAG
+                      operation_hash my_id payment_amount))))))))))
+)

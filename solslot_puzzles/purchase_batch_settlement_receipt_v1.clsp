@@ -1,0 +1,258 @@
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; RC25 authenticated external settlement for one exact SmartDeed batch.
+;;;
+;;; The receipt coin contains one technical mojo per deed. Two of the frozen
+;;; three validators authorize the exact aggregate payment and child list. The
+;;; standard Offer settlement puzzle then exchanges that one N-mojo output for
+;;; every unique deed in a single atomic spend bundle.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(mod
+  (
+    BATCH_HASH
+    BATCH_PURCHASE_ID
+    SETTLEMENT_RECEIPT_HASH
+    EVIDENCE_HASH
+    PAYMENT_ATTESTATION_HASH
+    PAYMENT_RAIL
+    QUANTITY
+    VAULT_LAUNCHER_ID
+    APPROVED_VAULT_P2_PUZZLE_HASH
+    ZKPASSPORT_ROOT
+    TOTAL_TECHNOLOGY_FEE_MINOR
+    TOTAL_SETTLEMENT_AMOUNT
+    COLLECTED_AMOUNT_MINOR
+    PROCESSING_CHARGE_MINOR
+    TRUSTED_PROTOCOL_TREASURY
+    OBSERVED_AT
+    EXPIRES_AT
+    BASE_RESULT_AUTHORIZATION_PUZZLE_HASH
+    CHILDREN
+    VALIDATOR_PUBKEYS
+    OFFER_MOD_HASH
+    ;; solution
+    my_id
+    my_parent_id
+    my_puzzle_hash
+    my_amount
+    signer_indices
+  )
+
+  (include condition_codes.clib)
+  (include utils.clib)
+  (include utility_macros.clib)
+
+  (defconstant VALIDATOR_THRESHOLD 2)
+  (defconstant MAX_BATCH_QUANTITY 100)
+  (defconstant RECEIPT_TTL_SECONDS 172800)
+  (defconstant SIGNATURE_DOMAIN "SOLSLOT_PURCHASE_BATCH_RECEIPT_AUTH_V1")
+  (defconstant SETTLEMENT_DOMAIN "SOLSLOT_EXTERNAL_RECEIPT_SETTLEMENT_V1")
+  (defconstant RAIL_STRIPE 1)
+  (defconstant RAIL_EVM_TEST_USD 2)
+  (defconstant DELIVERY_SMARTDEED 1)
+  (defconstant ZERO_B32 0x0000000000000000000000000000000000000000000000000000000000000000)
+
+  (defun list-length (items)
+    (if items (+ 1 (list-length (r items))) 0)
+  )
+
+  (defun nth (items index)
+    (if (= index 0) (f items) (nth (r items) (- index 1)))
+  )
+
+  (defun is-sorted-strict (items)
+    (if items
+      (if (r items)
+        (if (> (f (r items)) (f items))
+          (is-sorted-strict (r items))
+          ())
+        1)
+      1)
+  )
+
+  (defun all-indices-in-range (indices bound)
+    (if indices
+      (and
+        (not (> 0 (f indices)))
+        (> bound (f indices))
+        (all-indices-in-range (r indices) bound))
+      1)
+  )
+
+  (defun emit-sigs (pubkeys indices message)
+    (if indices
+      (c
+        (list AGG_SIG_ME (nth pubkeys (f indices)) message)
+        (emit-sigs pubkeys (r indices) message))
+      ())
+  )
+
+  (defun child-valid (child)
+    (and
+      (= (list-length child) 4)
+      (is-size-b32 (nth child 0))
+      (not (= (nth child 0) ZERO_B32))
+      (is-size-b32 (nth child 1))
+      (not (= (nth child 1) ZERO_B32))
+      (is-size-b32 (nth child 2))
+      (not (= (nth child 2) ZERO_B32))
+      (is-size-b32 (nth child 3))
+      (not (= (nth child 3) ZERO_B32)))
+  )
+
+  (defun all-children-valid (children)
+    (if children
+      (and (child-valid (f children)) (all-children-valid (r children)))
+      1)
+  )
+
+  (defun child-launchers (children)
+    (if children
+      (c (nth (f children) 2) (child-launchers (r children)))
+      ())
+  )
+
+  (defun-inline child-settlement-message
+      (child receipt_hash payment_rail approved_vault_p2_puzzle_hash
+       base_result_authorization_puzzle_hash evidence_hash
+       payment_attestation_hash)
+    (sha256tree
+      (list
+        SETTLEMENT_DOMAIN
+        (nth child 0)
+        (nth child 1)
+        receipt_hash
+        payment_rail
+        DELIVERY_SMARTDEED
+        (nth child 2)
+        1
+        (nth child 3)
+        approved_vault_p2_puzzle_hash
+        base_result_authorization_puzzle_hash
+        evidence_hash
+        payment_attestation_hash))
+  )
+
+  (defun emit-child-announcements
+      (children receipt_hash payment_rail approved_vault_p2_puzzle_hash
+       base_result_authorization_puzzle_hash evidence_hash
+       payment_attestation_hash)
+    (if children
+      (c
+        (list CREATE_COIN_ANNOUNCEMENT
+          (child-settlement-message
+            (f children) receipt_hash payment_rail
+            approved_vault_p2_puzzle_hash
+            base_result_authorization_puzzle_hash evidence_hash
+            payment_attestation_hash))
+        (c
+          (list REMARK PROTOCOL_PREFIX "PURCHASE_BATCH_CHILD_V1"
+            (nth (f children) 0) (nth (f children) 1)
+            (nth (f children) 2) (nth (f children) 3))
+          (emit-child-announcements
+            (r children) receipt_hash payment_rail
+            approved_vault_p2_puzzle_hash
+            base_result_authorization_puzzle_hash evidence_hash
+            payment_attestation_hash)))
+      ())
+  )
+
+  (defun-inline authorization-message ()
+    (sha256tree
+      (list
+        SIGNATURE_DOMAIN BATCH_HASH BATCH_PURCHASE_ID
+        SETTLEMENT_RECEIPT_HASH EVIDENCE_HASH PAYMENT_ATTESTATION_HASH
+        PAYMENT_RAIL QUANTITY VAULT_LAUNCHER_ID
+        APPROVED_VAULT_P2_PUZZLE_HASH ZKPASSPORT_ROOT
+        TOTAL_TECHNOLOGY_FEE_MINOR TOTAL_SETTLEMENT_AMOUNT
+        COLLECTED_AMOUNT_MINOR PROCESSING_CHARGE_MINOR
+        TRUSTED_PROTOCOL_TREASURY OBSERVED_AT EXPIRES_AT
+        BASE_RESULT_AUTHORIZATION_PUZZLE_HASH CHILDREN))
+  )
+
+  (assert
+    (is-size-b32 BATCH_HASH)
+    (not (= BATCH_HASH ZERO_B32))
+    (is-size-b32 BATCH_PURCHASE_ID)
+    (not (= BATCH_PURCHASE_ID ZERO_B32))
+    (is-size-b32 SETTLEMENT_RECEIPT_HASH)
+    (not (= SETTLEMENT_RECEIPT_HASH ZERO_B32))
+    (is-size-b32 EVIDENCE_HASH)
+    (not (= EVIDENCE_HASH ZERO_B32))
+    (is-size-b32 PAYMENT_ATTESTATION_HASH)
+    (not (= PAYMENT_ATTESTATION_HASH ZERO_B32))
+    (or (= PAYMENT_RAIL RAIL_STRIPE) (= PAYMENT_RAIL RAIL_EVM_TEST_USD))
+    (is-uint64 QUANTITY)
+    (> QUANTITY 0)
+    (not (> QUANTITY MAX_BATCH_QUANTITY))
+    (= (list-length CHILDREN) QUANTITY)
+    (all-children-valid CHILDREN)
+    (is-sorted-strict (child-launchers CHILDREN))
+    (is-size-b32 VAULT_LAUNCHER_ID)
+    (not (= VAULT_LAUNCHER_ID ZERO_B32))
+    (is-size-b32 APPROVED_VAULT_P2_PUZZLE_HASH)
+    (not (= APPROVED_VAULT_P2_PUZZLE_HASH ZERO_B32))
+    (is-size-b32 ZKPASSPORT_ROOT)
+    (not (= ZKPASSPORT_ROOT ZERO_B32))
+    (is-uint64 TOTAL_TECHNOLOGY_FEE_MINOR)
+    (is-uint64 TOTAL_SETTLEMENT_AMOUNT)
+    (> TOTAL_SETTLEMENT_AMOUNT 0)
+    (is-uint64 COLLECTED_AMOUNT_MINOR)
+    (> COLLECTED_AMOUNT_MINOR 0)
+    (is-uint64 PROCESSING_CHARGE_MINOR)
+    (is-size-b32 TRUSTED_PROTOCOL_TREASURY)
+    (not (= TRUSTED_PROTOCOL_TREASURY ZERO_B32))
+    (is-uint64 OBSERVED_AT)
+    (> OBSERVED_AT 0)
+    (is-uint64 EXPIRES_AT)
+    (> EXPIRES_AT OBSERVED_AT)
+    (not (> (- EXPIRES_AT OBSERVED_AT) RECEIPT_TTL_SECONDS))
+    (is-size-b32 BASE_RESULT_AUTHORIZATION_PUZZLE_HASH)
+    (if (= PAYMENT_RAIL RAIL_EVM_TEST_USD)
+      (and
+        (not (= BASE_RESULT_AUTHORIZATION_PUZZLE_HASH ZERO_B32))
+        (= PROCESSING_CHARGE_MINOR 0)
+        (= COLLECTED_AMOUNT_MINOR TOTAL_SETTLEMENT_AMOUNT))
+      (and
+        (= BASE_RESULT_AUTHORIZATION_PUZZLE_HASH ZERO_B32)
+        (= COLLECTED_AMOUNT_MINOR
+          (+ TOTAL_SETTLEMENT_AMOUNT PROCESSING_CHARGE_MINOR))))
+    (is-size-b32 OFFER_MOD_HASH)
+    (= (list-length VALIDATOR_PUBKEYS) 3)
+    (all-bls-g1-pubkeys VALIDATOR_PUBKEYS)
+    (has-no-duplicates VALIDATOR_PUBKEYS ())
+    (is-size-b32 my_id)
+    (is-size-b32 my_parent_id)
+    (is-size-b32 my_puzzle_hash)
+    (= my_amount QUANTITY)
+    (is-sorted-strict signer_indices)
+    (= (list-length signer_indices) VALIDATOR_THRESHOLD)
+    (all-indices-in-range signer_indices 3)
+    (merge-lists
+      (list
+        (list ASSERT_MY_COIN_ID my_id)
+        (list ASSERT_MY_PARENT_ID my_parent_id)
+        (list ASSERT_MY_PUZZLEHASH my_puzzle_hash)
+        (list ASSERT_MY_AMOUNT QUANTITY)
+        (list ASSERT_BEFORE_SECONDS_ABSOLUTE EXPIRES_AT))
+      (merge-lists
+        (emit-sigs VALIDATOR_PUBKEYS signer_indices
+          (authorization-message))
+        (merge-lists
+          (list
+            (list CREATE_COIN OFFER_MOD_HASH QUANTITY
+              (list BATCH_HASH BATCH_PURCHASE_ID
+                SETTLEMENT_RECEIPT_HASH))
+            (list REMARK PROTOCOL_PREFIX
+              "PURCHASE_BATCH_SETTLEMENT_RECEIPT_V1"
+              BATCH_HASH BATCH_PURCHASE_ID SETTLEMENT_RECEIPT_HASH
+              PAYMENT_RAIL QUANTITY APPROVED_VAULT_P2_PUZZLE_HASH
+              TOTAL_SETTLEMENT_AMOUNT COLLECTED_AMOUNT_MINOR
+              PROCESSING_CHARGE_MINOR))
+          (emit-child-announcements
+            CHILDREN SETTLEMENT_RECEIPT_HASH PAYMENT_RAIL
+            APPROVED_VAULT_P2_PUZZLE_HASH
+            BASE_RESULT_AUTHORIZATION_PUZZLE_HASH EVIDENCE_HASH
+            PAYMENT_ATTESTATION_HASH))))
+  )
+)

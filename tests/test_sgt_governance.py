@@ -2,7 +2,7 @@
 
 These two puzzles together implement the SGT governance state machine:
 
-  TRANSFER (free) ──┬──> TRANSFER (free, new owner)
+  PROTOCOL TRANSITION (free) ──┬──> free, protocol-selected owner
                     └──> LOCK ──> LOCKED ──┬──> RELEASE_DEADLINE ──> TRANSFER
                                             └──> RELEASE_EXEC     ──> TRANSFER
 
@@ -48,6 +48,8 @@ ASSERT_MY_AMOUNT = 73
 ASSERT_SECONDS_ABSOLUTE = 81
 ASSERT_BEFORE_SECONDS_ABSOLUTE = 85  # not used in these puzzles
 REMARK = 1
+PROTOCOL_PREFIX = b"\x53"
+SGT_PROTOCOL_TRANSITION_TAG = b"SGTP"
 
 
 # ── Common fixtures ──────────────────────────────────────────────────────────
@@ -137,10 +139,9 @@ def _atom_bytes(prog: Program) -> bytes:
 #                    sgt_free_inner — TRANSFER spend case
 # ─────────────────────────────────────────────────────────────────────────────
 class TestFreeTransfer:
-    def test_transfer_rewraps_create_coin_into_governance(self):
-        """User signs CREATE_COIN(NEW_OWNER, amount).  SGT replaces the puzhash
-        with sgt_free_inner curried around NEW_OWNER's hash."""
+    def test_protocol_transition_rewraps_create_coin(self):
         inner = _trivial_inner_puzzle_emitting([
+            [REMARK, PROTOCOL_PREFIX, SGT_PROTOCOL_TRANSITION_TAG],
             [CREATE_COIN, NEW_OWNER_INNER_PUZHASH, SGT_AMOUNT],
         ])
         curried = _free_curried(inner_hash=inner.get_tree_hash())
@@ -149,8 +150,8 @@ class TestFreeTransfer:
         out = curried.run(sol)
         conds = _conds_to_list(out)
 
-        assert len(conds) == 1
-        cond = conds[0]
+        assert len(conds) == 2
+        cond = next(cond for cond in conds if _atom_int(cond[0]) == CREATE_COIN)
         assert _atom_int(cond[0]) == CREATE_COIN
         # destination is rewrapped into sgt_free_inner curried with NEW_OWNER
         assert _atom_bytes(cond[1]) == _expected_free_puzhash_for(NEW_OWNER_INNER_PUZHASH)
@@ -160,16 +161,25 @@ class TestFreeTransfer:
         memo_list = list(cond[3].as_iter())
         assert _atom_bytes(memo_list[0]) == NEW_OWNER_INNER_PUZHASH
 
-    def test_transfer_rejects_two_create_coins(self):
+    def test_transfer_rewraps_every_split_output(self):
         inner = _trivial_inner_puzzle_emitting([
+            [REMARK, PROTOCOL_PREFIX, SGT_PROTOCOL_TRANSITION_TAG],
             [CREATE_COIN, NEW_OWNER_INNER_PUZHASH, 50_000],
-            [CREATE_COIN, NEW_OWNER_INNER_PUZHASH, 50_000],
+            [CREATE_COIN, OWNER_INNER_PUZHASH, 50_000],
         ])
         curried = _free_curried(inner_hash=inner.get_tree_hash())
         sol = Program.to([SGT_TRANSFER, inner, 0, 0])
 
-        with pytest.raises(PuzzleError):
-            curried.run(sol)
+        conds = _conds_to_list(curried.run(sol))
+        creates = [
+            cond for cond in conds if _atom_int(cond[0]) == CREATE_COIN
+        ]
+        assert len(creates) == 2
+        assert {_atom_bytes(cond[1]) for cond in creates} == {
+            _expected_free_puzhash_for(NEW_OWNER_INNER_PUZHASH),
+            _expected_free_puzhash_for(OWNER_INNER_PUZHASH),
+        }
+        assert sum(_atom_int(cond[2]) for cond in creates) == SGT_AMOUNT
 
     def test_transfer_rejects_zero_create_coins(self):
         """No CREATE_COIN at all means the SGT would vanish — disallowed."""
@@ -185,6 +195,7 @@ class TestFreeTransfer:
     def test_transfer_rejects_protocol_prefix_remark(self):
         """Inner cannot spoof a solslot governance REMARK."""
         inner = _trivial_inner_puzzle_emitting([
+            [REMARK, PROTOCOL_PREFIX, SGT_PROTOCOL_TRANSITION_TAG],
             [CREATE_COIN, NEW_OWNER_INNER_PUZHASH, SGT_AMOUNT],
             [REMARK, b"\x53", b"forged-payload"],
         ])
@@ -196,6 +207,7 @@ class TestFreeTransfer:
 
     def test_transfer_rejects_protocol_prefix_send_message(self):
         inner = _trivial_inner_puzzle_emitting([
+            [REMARK, PROTOCOL_PREFIX, SGT_PROTOCOL_TRANSITION_TAG],
             [CREATE_COIN, NEW_OWNER_INNER_PUZHASH, SGT_AMOUNT],
             [SEND_MESSAGE, 0x10, b"\x53forged", bytes32(b"\xff" * 32)],
         ])
@@ -208,6 +220,7 @@ class TestFreeTransfer:
     def test_transfer_passes_through_innocuous_conditions(self):
         """ASSERT_MY_AMOUNT and friends should pass through untouched."""
         inner = _trivial_inner_puzzle_emitting([
+            [REMARK, PROTOCOL_PREFIX, SGT_PROTOCOL_TRANSITION_TAG],
             [ASSERT_MY_AMOUNT, SGT_AMOUNT],
             [CREATE_COIN, NEW_OWNER_INNER_PUZHASH, SGT_AMOUNT],
         ])
@@ -217,10 +230,19 @@ class TestFreeTransfer:
         out = curried.run(sol)
         conds = _conds_to_list(out)
 
-        assert len(conds) == 2
+        assert len(conds) == 3
         codes = [_atom_int(c[0]) for c in conds]
         assert ASSERT_MY_AMOUNT in codes
         assert CREATE_COIN in codes
+
+    def test_vault_style_transfer_without_protocol_marker_is_rejected(self):
+        inner = _trivial_inner_puzzle_emitting([
+            [CREATE_COIN, NEW_OWNER_INNER_PUZHASH, SGT_AMOUNT],
+        ])
+        curried = _free_curried(inner_hash=inner.get_tree_hash())
+
+        with pytest.raises(PuzzleError):
+            curried.run(Program.to([SGT_TRANSFER, inner, 0, 0]))
 
     def test_transfer_rejects_wrong_inner_reveal(self):
         """The reveal must hash to INNER_PUZZLE_HASH — otherwise the spend fails."""

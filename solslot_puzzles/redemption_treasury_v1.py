@@ -13,7 +13,6 @@ from chia.wallet.cat_wallet.cat_utils import (
 )
 from chia.wallet.lineage_proof import LineageProof
 from chia.wallet.puzzles.singleton_top_layer_v1_1 import (
-    SINGLETON_LAUNCHER_HASH,
     SINGLETON_MOD_HASH,
 )
 from chia.wallet.trading.offer import OFFER_MOD_HASH
@@ -43,6 +42,7 @@ def redemption_treasury_inner_puzzle(
     *,
     governance_singleton_struct: Program,
     payment_asset_id: bytes32,
+    deed_launcher_puzzle_hash: bytes32,
 ) -> Program:
     mod = redemption_treasury_v1_mod()
     return mod.curry(
@@ -53,7 +53,7 @@ def redemption_treasury_inner_puzzle(
         OFFER_MOD_HASH,
         p2_deed_redemption_v1_mod().get_tree_hash(),
         SINGLETON_MOD_HASH,
-        SINGLETON_LAUNCHER_HASH,
+        deed_launcher_puzzle_hash,
     )
 
 
@@ -61,6 +61,7 @@ def redemption_treasury_puzzle(
     *,
     governance_singleton_struct: Program,
     payment_asset_id: bytes32,
+    deed_launcher_puzzle_hash: bytes32,
 ) -> Program:
     return construct_cat_puzzle(
         CAT_MOD,
@@ -68,6 +69,7 @@ def redemption_treasury_puzzle(
         redemption_treasury_inner_puzzle(
             governance_singleton_struct=governance_singleton_struct,
             payment_asset_id=payment_asset_id,
+            deed_launcher_puzzle_hash=deed_launcher_puzzle_hash,
         ),
     )
 
@@ -111,11 +113,13 @@ def fund_redemption_leaves(
     governance_singleton_struct: Program,
     governance_inner_puzzle_hash: bytes32,
     plan: FundedRedemptionPlanV1,
+    deed_launcher_puzzle_hash: bytes32,
 ) -> FundedRedemptionLeaves:
     plan.validate()
     inner = redemption_treasury_inner_puzzle(
         governance_singleton_struct=governance_singleton_struct,
         payment_asset_id=plan.payment_asset_id,
+        deed_launcher_puzzle_hash=deed_launcher_puzzle_hash,
     )
     full = construct_cat_puzzle(CAT_MOD, plan.payment_asset_id, inner)
     if treasury_coin.puzzle_hash != full.get_tree_hash():
@@ -154,6 +158,7 @@ def fund_redemption_leaves(
                     collection_id=plan.collection_id,
                     settlement_id=plan.settlement_id,
                     allocation=allocation,
+                    deed_launcher_puzzle_hash=deed_launcher_puzzle_hash,
                 ).get_tree_hash()
             ),
             uint64(allocation.payment_amount),
