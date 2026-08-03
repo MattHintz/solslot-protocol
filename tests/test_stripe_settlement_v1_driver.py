@@ -138,6 +138,7 @@ def settlement() -> tuple[StripeSettlementReceiptV1, PrimaryMintTermsV3]:
         smart_deed_inner_hash=bytes32(
             load_puzzle("smart_deed_inner_v2.clsp").get_tree_hash()
         ),
+        deed_launcher_puzzle_hash=b32(99),
         protocol_puzhash=b32(12),
         validator_pubkeys=keys,
         provider_id=b32(13),
@@ -208,17 +209,18 @@ def test_receipt_offer_delivers_only_the_committed_deed_to_canonical_vault() -> 
         validator_pubkeys=terms.validator_pubkeys,
         signer_indices=(0, 1),
     )
-    buyer = prepare_stripe_receipt_offer(
-        receipt_spend=receipt_spend,
-        receipt=receipt,
-        terms=terms,
-    )
     inner = make_mint_offer_v5_inner(terms, reservation)
     singleton_struct = Program.to(
         (
             SINGLETON_MOD_HASH,
-            (receipt.artifact.deed_launcher_id, SINGLETON_LAUNCHER_HASH),
+            (receipt.artifact.deed_launcher_id, b32(99)),
         )
+    )
+    buyer = prepare_stripe_receipt_offer(
+        receipt_spend=receipt_spend,
+        receipt=receipt,
+        terms=terms,
+        deed_singleton_struct=singleton_struct,
     )
     deed_coin = Coin(
         b32(16),
@@ -250,6 +252,67 @@ def test_receipt_offer_delivers_only_the_committed_deed_to_canonical_vault() -> 
     assert len(valid_spend.coin_spends) >= 3
 
 
+def test_standard_singleton_launcher_cannot_define_governed_deed_terms() -> None:
+    receipt, terms = settlement()
+    receipt_puzzle = make_stripe_receipt_puzzle(
+        receipt=receipt,
+        validator_pubkeys=terms.validator_pubkeys,
+    )
+    receipt_spend = build_stripe_receipt_spend(
+        receipt_coin=Coin(
+            b32(20),
+            bytes32(receipt_puzzle.get_tree_hash()),
+            uint64(1),
+        ),
+        receipt=receipt,
+        validator_pubkeys=terms.validator_pubkeys,
+        signer_indices=(0, 1),
+    )
+
+    with pytest.raises(
+        PaymentArtifactError,
+        match="governed SmartDeed must use its DID-authorized launcher",
+    ):
+        replace(
+            terms,
+            deed_launcher_puzzle_hash=SINGLETON_LAUNCHER_HASH,
+        )
+
+    standard_struct = Program.to(
+        (
+            SINGLETON_MOD_HASH,
+            (receipt.artifact.deed_launcher_id, SINGLETON_LAUNCHER_HASH),
+        )
+    )
+    with pytest.raises(
+        PaymentArtifactError,
+        match="governed SmartDeed must use its DID-authorized launcher",
+    ):
+        prepare_stripe_receipt_offer(
+            receipt_spend=receipt_spend,
+            receipt=receipt,
+            terms=terms,
+            deed_singleton_struct=standard_struct,
+        )
+
+    mismatched_struct = Program.to(
+        (
+            SINGLETON_MOD_HASH,
+            (receipt.artifact.deed_launcher_id, b32(98)),
+        )
+    )
+    with pytest.raises(
+        PaymentArtifactError,
+        match="deed singleton struct does not match governed mint terms",
+    ):
+        prepare_stripe_receipt_offer(
+            receipt_spend=receipt_spend,
+            receipt=receipt,
+            terms=terms,
+            deed_singleton_struct=mismatched_struct,
+        )
+
+
 def test_deed_must_move_from_available_to_exact_reserved_state() -> None:
     receipt, terms = settlement()
     reservation = InventoryReservationV1(
@@ -259,7 +322,7 @@ def test_deed_must_move_from_available_to_exact_reserved_state() -> None:
     singleton_struct = Program.to(
         (
             SINGLETON_MOD_HASH,
-            (receipt.artifact.deed_launcher_id, SINGLETON_LAUNCHER_HASH),
+            (receipt.artifact.deed_launcher_id, b32(99)),
         )
     )
     available_inner = make_inventory_available_inner(terms)
@@ -321,7 +384,7 @@ def test_reserved_inventory_extends_and_releases_only_to_canonical_states() -> N
     singleton_struct = Program.to(
         (
             SINGLETON_MOD_HASH,
-            (receipt.artifact.deed_launcher_id, SINGLETON_LAUNCHER_HASH),
+            (receipt.artifact.deed_launcher_id, b32(99)),
         )
     )
     available_inner = make_inventory_available_inner(terms)

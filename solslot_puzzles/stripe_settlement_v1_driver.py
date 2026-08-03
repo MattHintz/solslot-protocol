@@ -81,11 +81,59 @@ _PURCHASE_BATCH_RECEIPT_MOD_BYTES = bytes(
 _P2_VAULT_MOD_HASH = bytes32(load_puzzle("p2_vault.clsp").get_tree_hash())
 
 
+def deed_launcher_puzzle_hash_from_struct(
+    deed_singleton_struct: Program,
+    deed_launcher_id: bytes32,
+) -> bytes32:
+    """Return and validate the launcher hash committed by a deed singleton.
+
+    SmartDeeds use the DID-authorized launcher, not Chia's standard singleton
+    launcher.  Offer drivers must carry this exact hash or settlement creates
+    a different, unusable singleton puzzle.
+    """
+
+    try:
+        mod_hash, launcher = deed_singleton_struct.as_python()
+        launcher_id, launcher_puzzle_hash = launcher
+        mod_hash = bytes32(mod_hash)
+        launcher_id = bytes32(launcher_id)
+        launcher_puzzle_hash = bytes32(launcher_puzzle_hash)
+    except (TypeError, ValueError) as exc:
+        raise PaymentArtifactError(
+            "deed singleton struct is malformed"
+        ) from exc
+    if mod_hash != SINGLETON_MOD_HASH or launcher_id != deed_launcher_id:
+        raise PaymentArtifactError(
+            "deed singleton struct does not match its launcher"
+        )
+    if launcher_puzzle_hash in {bytes32.zeros, SINGLETON_LAUNCHER_HASH}:
+        raise PaymentArtifactError(
+            "governed SmartDeed must use its DID-authorized launcher"
+        )
+    return launcher_puzzle_hash
+
+
+def _smart_deed_driver(
+    terms: "PrimaryMintTermsV3",
+    deed_singleton_struct: Program,
+):
+    launcher_hash = deed_launcher_puzzle_hash_from_struct(
+        deed_singleton_struct,
+        terms.deed_launcher_id,
+    )
+    if launcher_hash != terms.deed_launcher_puzzle_hash:
+        raise PaymentArtifactError(
+            "deed singleton struct does not match governed mint terms"
+        )
+    return smart_deed_singleton_driver(terms.deed_launcher_id, launcher_hash)
+
+
 @dataclass(frozen=True)
 class PrimaryMintTermsV3:
     network: str
     smart_deed_inner_hash: bytes32
     deed_launcher_id: bytes32
+    deed_launcher_puzzle_hash: bytes32
     collection_id: bytes32
     metadata_root: bytes32
     metadata_anchor_id: bytes32
@@ -105,6 +153,7 @@ class PrimaryMintTermsV3:
         for name in (
             "smart_deed_inner_hash",
             "deed_launcher_id",
+            "deed_launcher_puzzle_hash",
             "collection_id",
             "metadata_root",
             "metadata_anchor_id",
@@ -113,6 +162,13 @@ class PrimaryMintTermsV3:
             "provider_id",
         ):
             _require_bytes32(getattr(self, name), name)
+        if self.deed_launcher_puzzle_hash in {
+            bytes32.zeros,
+            SINGLETON_LAUNCHER_HASH,
+        }:
+            raise PaymentArtifactError(
+                "governed SmartDeed must use its DID-authorized launcher"
+            )
         if len(self.validator_pubkeys) != PROVIDER_COUNT:
             raise PaymentArtifactError("exactly three validators are required")
         if any(len(key) != 48 for key in self.validator_pubkeys):
@@ -126,6 +182,7 @@ class PrimaryMintTermsV3:
         *,
         artifact: PurchaseArtifactV3,
         smart_deed_inner_hash: bytes32,
+        deed_launcher_puzzle_hash: bytes32,
         protocol_puzhash: bytes32,
         validator_pubkeys: tuple[bytes, bytes, bytes],
         provider_id: bytes32 = PRIMARY_PURCHASE_PROVIDER_ID,
@@ -134,6 +191,7 @@ class PrimaryMintTermsV3:
             network=artifact.network,
             smart_deed_inner_hash=smart_deed_inner_hash,
             deed_launcher_id=artifact.deed_launcher_id,
+            deed_launcher_puzzle_hash=deed_launcher_puzzle_hash,
             collection_id=artifact.collection_id,
             metadata_root=artifact.metadata_root,
             metadata_anchor_id=artifact.metadata_anchor_id,
@@ -488,6 +546,7 @@ def _mint_immutable_args(terms: PrimaryMintTermsV3) -> tuple[object, ...]:
         _P2_VAULT_MOD_HASH,
         SINGLETON_MOD_HASH,
         SINGLETON_LAUNCHER_HASH,
+        terms.deed_launcher_puzzle_hash,
         bytes32(CAT_MOD.get_tree_hash()),
         OFFER_MOD_HASH,
         terms.network.encode("ascii"),
@@ -923,6 +982,7 @@ def prepare_chia_buyer_offer_v3(
     payment_public_key: bytes,
     artifact: PurchaseArtifactV3,
     terms: PrimaryMintTermsV3,
+    deed_singleton_struct: Program,
     cat_lineage_proof: LineageProof | None = None,
 ) -> PreparedChiaBuyerOffer:
     """Build the existing one-signature XCH/CAT offer for a V3 reservation."""
@@ -947,8 +1007,8 @@ def prepare_chia_buyer_offer_v3(
 
     payment_puzzle = puzzle_for_pk(public_key)
     drivers = {
-        artifact.deed_launcher_id: smart_deed_singleton_driver(
-            artifact.deed_launcher_id
+        artifact.deed_launcher_id: _smart_deed_driver(
+            terms, deed_singleton_struct
         )
     }
     requested = {
@@ -1041,6 +1101,7 @@ def prepare_chia_buyer_offer_v3(
         buyer_offer=offer,
         artifact=artifact,
         terms=terms,
+        deed_singleton_struct=deed_singleton_struct,
     )
     return PreparedChiaBuyerOffer(
         offer=offer,
@@ -1055,6 +1116,7 @@ def prepare_chia_buyer_batch_offer_v3(
     payment_public_key: bytes,
     batch: PurchaseBatchV1,
     terms: Sequence[PrimaryMintTermsV3],
+    deed_singleton_structs: Sequence[Program],
     cat_lineage_proof: LineageProof | None = None,
 ) -> PreparedChiaBuyerOffer:
     """Build one wallet signature requesting every deed in a native batch."""
@@ -1064,7 +1126,9 @@ def prepare_chia_buyer_batch_offer_v3(
         raise PaymentArtifactError(
             "native SmartDeed batching cannot be used for fungible SGT"
         )
-    if len(artifacts) != len(terms):
+    if len(artifacts) != len(terms) or len(artifacts) != len(
+        deed_singleton_structs
+    ):
         raise PaymentArtifactError(
             "native batch terms must match every purchase artifact"
         )
@@ -1088,10 +1152,15 @@ def prepare_chia_buyer_batch_offer_v3(
     first = artifacts[0]
     payment_puzzle = puzzle_for_pk(public_key)
     drivers = {
-        artifact.deed_launcher_id: smart_deed_singleton_driver(
-            artifact.deed_launcher_id
+        artifact.deed_launcher_id: _smart_deed_driver(
+            item_terms, deed_singleton_struct
         )
-        for artifact in artifacts
+        for artifact, item_terms, deed_singleton_struct in zip(
+            artifacts,
+            terms,
+            deed_singleton_structs,
+            strict=True,
+        )
     }
     requested = {
         artifact.deed_launcher_id: [
@@ -1178,6 +1247,7 @@ def prepare_chia_buyer_batch_offer_v3(
         buyer_offer=offer,
         batch=batch,
         terms=terms,
+        deed_singleton_structs=deed_singleton_structs,
     )
     return PreparedChiaBuyerOffer(
         offer=offer,
@@ -1191,6 +1261,7 @@ def validate_chia_buyer_batch_offer_v3(
     buyer_offer: Offer,
     batch: PurchaseBatchV1,
     terms: Sequence[PrimaryMintTermsV3],
+    deed_singleton_structs: Sequence[Program],
 ) -> bytes32:
     """Validate all destinations and the exact aggregate native amount."""
 
@@ -1198,6 +1269,7 @@ def validate_chia_buyer_batch_offer_v3(
     if (
         batch.delivery_kind != PurchaseDeliveryKind.SMARTDEED
         or len(artifacts) != len(terms)
+        or len(artifacts) != len(deed_singleton_structs)
     ):
         raise PaymentArtifactError("buyer batch shape is invalid")
     requested = buyer_offer.requested_payments
@@ -1208,7 +1280,12 @@ def validate_chia_buyer_batch_offer_v3(
             "buyer batch must request exactly the committed SmartDeeds"
         )
     nonces: set[bytes32] = set()
-    for artifact, item_terms in zip(artifacts, terms, strict=True):
+    for artifact, item_terms, deed_singleton_struct in zip(
+        artifacts,
+        terms,
+        deed_singleton_structs,
+        strict=True,
+    ):
         assert_artifact_matches_terms(artifact, item_terms)
         payments = requested[artifact.deed_launcher_id]
         if len(payments) != 1:
@@ -1232,8 +1309,8 @@ def validate_chia_buyer_batch_offer_v3(
                 "buyer batch changes a SmartDeed destination or commitment"
             )
         nonces.add(bytes32(payment.nonce))
-        expected_driver = smart_deed_singleton_driver(
-            artifact.deed_launcher_id
+        expected_driver = _smart_deed_driver(
+            item_terms, deed_singleton_struct
         )
         actual_driver = buyer_offer.driver_dict.get(artifact.deed_launcher_id)
         if actual_driver is None or actual_driver.info != expected_driver.info:
@@ -1271,6 +1348,7 @@ def validate_chia_buyer_offer_v3(
     buyer_offer: Offer,
     artifact: PurchaseArtifactV3,
     terms: PrimaryMintTermsV3,
+    deed_singleton_struct: Program,
 ) -> bytes32:
     """Validate the signed native half-offer against its exact reservation."""
 
@@ -1318,9 +1396,7 @@ def validate_chia_buyer_offer_v3(
         raise PaymentArtifactError(
             "buyer offer must contain only the exact quoted XCH or CAT payment"
         )
-    expected_driver = smart_deed_singleton_driver(
-        artifact.deed_launcher_id
-    )
+    expected_driver = _smart_deed_driver(terms, deed_singleton_struct)
     actual_driver = buyer_offer.driver_dict.get(artifact.deed_launcher_id)
     if actual_driver is None or actual_driver.info != expected_driver.info:
         raise PaymentArtifactError(
@@ -1444,6 +1520,7 @@ def build_native_primary_offer_v5(
         buyer_offer=buyer_offer,
         artifact=artifact,
         terms=terms,
+        deed_singleton_struct=deed_singleton_struct,
     )
     deed_spend = build_native_mint_offer_v5_spend(
         deed_coin=deed_coin,
@@ -1461,8 +1538,8 @@ def build_native_primary_offer_v5(
         else artifact.rail_asset_id
     )
     drivers = {
-        artifact.deed_launcher_id: smart_deed_singleton_driver(
-            artifact.deed_launcher_id
+        artifact.deed_launcher_id: _smart_deed_driver(
+            terms, deed_singleton_struct
         )
     }
     if artifact.rail == PaymentRail.CHIA_CAT:
@@ -1529,6 +1606,7 @@ def build_native_primary_batch_offer_v5(
         buyer_offer=buyer_offer,
         batch=batch,
         terms=terms,
+        deed_singleton_structs=deed_singleton_structs,
     )
     issuer_offers: list[Offer] = []
     deed_spends: list[CoinSpend] = []
@@ -1565,8 +1643,8 @@ def build_native_primary_batch_offer_v5(
             reservation=reservation,
         )
         drivers = {
-            artifact.deed_launcher_id: smart_deed_singleton_driver(
-                artifact.deed_launcher_id
+            artifact.deed_launcher_id: _smart_deed_driver(
+                item_terms, singleton_struct
             )
         }
         if first.rail == PaymentRail.CHIA_CAT:
@@ -1711,6 +1789,7 @@ def prepare_stripe_receipt_offer(
     receipt_spend: CoinSpend,
     receipt: ExternalReceiptV1,
     terms: PrimaryMintTermsV3,
+    deed_singleton_struct: Program,
 ) -> Offer:
     artifact = receipt.artifact
     assert_artifact_matches_terms(artifact, terms)
@@ -1740,8 +1819,8 @@ def prepare_stripe_receipt_offer(
         Offer.notarize_payments(requested, [receipt_spend.coin]),
         WalletSpendBundle([receipt_spend], G2Element()),
         {
-            artifact.deed_launcher_id: smart_deed_singleton_driver(
-                artifact.deed_launcher_id
+            artifact.deed_launcher_id: _smart_deed_driver(
+                terms, deed_singleton_struct
             )
         },
     )
@@ -1771,6 +1850,7 @@ def build_stripe_primary_offer_v5(
         receipt_coin=receipt_coin,
         artifact=artifact,
         terms=terms,
+        deed_singleton_struct=deed_singleton_struct,
     )
     deed_spend = build_stripe_mint_offer_v5_spend(
         deed_coin=deed_coin,
@@ -1801,8 +1881,8 @@ def build_stripe_primary_offer_v5(
         ),
         WalletSpendBundle([deed_spend], G2Element()),
         {
-            artifact.deed_launcher_id: smart_deed_singleton_driver(
-                artifact.deed_launcher_id
+            artifact.deed_launcher_id: _smart_deed_driver(
+                terms, deed_singleton_struct
             )
         },
     )
@@ -1824,10 +1904,15 @@ def prepare_purchase_batch_receipt_offer(
     receipt_spend: CoinSpend,
     receipt: PurchaseBatchSettlementReceiptV1,
     terms: Sequence[PrimaryMintTermsV3],
+    deed_singleton_structs: Sequence[Program],
 ) -> Offer:
     """Request every exact deed in exchange for one N-mojo receipt coin."""
 
     item_terms = _validate_purchase_batch_terms(receipt.batch, terms)
+    if len(deed_singleton_structs) != receipt.batch.quantity:
+        raise PaymentArtifactError(
+            "batch singleton structs must match every exact delivery"
+        )
     receipt_terms = PurchaseBatchSettlementTermsV1(
         receipt=receipt,
         validator_pubkeys=item_terms[0].validator_pubkeys,
@@ -1858,10 +1943,15 @@ def prepare_purchase_batch_receipt_offer(
         Offer.notarize_payments(requested, [receipt_spend.coin]),
         WalletSpendBundle([receipt_spend], G2Element()),
         {
-            artifact.deed_launcher_id: smart_deed_singleton_driver(
-                artifact.deed_launcher_id
+            artifact.deed_launcher_id: _smart_deed_driver(
+                term, deed_singleton_struct
             )
-            for artifact in receipt.batch.artifacts
+            for artifact, term, deed_singleton_struct in zip(
+                receipt.batch.artifacts,
+                item_terms,
+                deed_singleton_structs,
+                strict=True,
+            )
         },
     )
     if offer.get_offered_amounts() != {None: receipt.batch.quantity}:
@@ -1992,6 +2082,7 @@ def build_external_primary_batch_offer_v5(
         receipt_coin=receipt_coin,
         receipt=receipt,
         terms=item_terms,
+        deed_singleton_structs=deed_singleton_structs,
     )
     deed_spends: list[CoinSpend] = []
     issuer_offers: list[Offer] = []
@@ -2036,8 +2127,8 @@ def build_external_primary_batch_offer_v5(
                 ),
                 WalletSpendBundle([deed_spend], G2Element()),
                 {
-                    artifact.deed_launcher_id: smart_deed_singleton_driver(
-                        artifact.deed_launcher_id
+                    artifact.deed_launcher_id: _smart_deed_driver(
+                        term, singleton_struct
                     )
                 },
             )
@@ -2192,6 +2283,7 @@ def _validate_stripe_receipt_offer(
     receipt_coin: Coin,
     artifact: PurchaseArtifactV3,
     terms: PrimaryMintTermsV3,
+    deed_singleton_struct: Program,
 ) -> bytes32:
     assert_artifact_matches_terms(artifact, terms)
     requested = receipt_offer.requested_payments
@@ -2229,6 +2321,12 @@ def _validate_stripe_receipt_offer(
         raise PaymentArtifactError(
             "Stripe receipt offer must contain the exact receipt spend"
         )
+    expected_driver = _smart_deed_driver(terms, deed_singleton_struct)
+    actual_driver = receipt_offer.driver_dict.get(artifact.deed_launcher_id)
+    if actual_driver is None or actual_driver.info != expected_driver.info:
+        raise PaymentArtifactError(
+            "Stripe receipt uses the wrong SmartDeed launcher"
+        )
     return bytes32(payment.nonce)
 
 
@@ -2260,9 +2358,14 @@ def _validate_purchase_batch_receipt_offer(
     receipt_coin: Coin,
     receipt: PurchaseBatchSettlementReceiptV1,
     terms: Sequence[PrimaryMintTermsV3],
+    deed_singleton_structs: Sequence[Program],
 ) -> bytes32:
     batch = receipt.batch
     item_terms = _validate_purchase_batch_terms(batch, terms)
+    if len(deed_singleton_structs) != batch.quantity:
+        raise PaymentArtifactError(
+            "batch singleton structs must match every exact delivery"
+        )
     expected_launchers = {
         artifact.deed_launcher_id for artifact in batch.artifacts
     }
@@ -2272,7 +2375,12 @@ def _validate_purchase_batch_receipt_offer(
             "batch receipt must request every committed SmartDeed exactly once"
         )
     nonces: set[bytes32] = set()
-    for artifact, term in zip(batch.artifacts, item_terms, strict=True):
+    for artifact, term, deed_singleton_struct in zip(
+        batch.artifacts,
+        item_terms,
+        deed_singleton_structs,
+        strict=True,
+    ):
         payments = requested[artifact.deed_launcher_id]
         if len(payments) != 1:
             raise PaymentArtifactError(
@@ -2295,6 +2403,14 @@ def _validate_purchase_batch_receipt_offer(
                 "batch receipt does not deliver an exact deed to its vault"
             )
         nonces.add(bytes32(payment.nonce))
+        expected_driver = _smart_deed_driver(term, deed_singleton_struct)
+        actual_driver = receipt_offer.driver_dict.get(
+            artifact.deed_launcher_id
+        )
+        if actual_driver is None or actual_driver.info != expected_driver.info:
+            raise PaymentArtifactError(
+                "batch receipt uses the wrong SmartDeed launcher"
+            )
     if len(nonces) != 1:
         raise PaymentArtifactError(
             "batch receipt deliveries must share one atomic offer nonce"

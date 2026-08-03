@@ -174,8 +174,9 @@ FROZEN_CHECKSUM: Optional[str] = (
     #     exposes no standalone external-payment escrow branch.
     # RC25 preserves RC24's reservation and refundable voucher modules, then
     # adds governed SGT custody and sale while binding direct Base settlement
-    # to a one-use Chia result authorization.
-    "1dd524857ee08656cfcd65121b94f68505f418f4e7edc1809e4a129aa9d09a28"
+    # to a one-use Chia result authorization. Its final pre-genesis purchase
+    # inventory also commits to each SmartDeed's DID-authorized launcher hash.
+    "f2c45372a5f44384ec83918a2cf5b8f8e84a8626a2ab70e3aed7380f78873f69"
 )
 
 # ── Cache ──

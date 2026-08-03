@@ -15,6 +15,7 @@
     P2_VAULT_MOD_HASH
     SINGLETON_MOD_HASH
     SINGLETON_LAUNCHER_HASH
+    DEED_LAUNCHER_PUZZLE_HASH
     CAT_MOD_HASH
     OFFER_MOD_HASH
     NETWORK
@@ -206,6 +207,7 @@
       (sha256 1 P2_VAULT_MOD_HASH)
       (sha256 1 SINGLETON_MOD_HASH)
       (sha256 1 SINGLETON_LAUNCHER_HASH)
+      (sha256 1 DEED_LAUNCHER_PUZZLE_HASH)
       (sha256 1 CAT_MOD_HASH)
       (sha256 1 OFFER_MOD_HASH)
       (sha256 1 NETWORK)
@@ -233,6 +235,7 @@
       (sha256 1 P2_VAULT_MOD_HASH)
       (sha256 1 SINGLETON_MOD_HASH)
       (sha256 1 SINGLETON_LAUNCHER_HASH)
+      (sha256 1 DEED_LAUNCHER_PUZZLE_HASH)
       (sha256 1 CAT_MOD_HASH)
       (sha256 1 OFFER_MOD_HASH)
       (sha256 1 NETWORK)
@@ -295,6 +298,9 @@
     (= (list-length VALIDATOR_PUBKEYS) 3)
     (all-bls-g1-pubkeys VALIDATOR_PUBKEYS)
     (has-no-duplicates VALIDATOR_PUBKEYS ())
+    (is-size-b32 DEED_LAUNCHER_PUZZLE_HASH)
+    (not (= DEED_LAUNCHER_PUZZLE_HASH ZERO_B32))
+    (not (= DEED_LAUNCHER_PUZZLE_HASH SINGLETON_LAUNCHER_HASH))
     (= my_amount 1)
     (= vault_p2_puzzle_hash
       (canonical-p2-vault-hash vault_launcher_id))

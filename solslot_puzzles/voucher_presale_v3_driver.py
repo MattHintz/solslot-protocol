@@ -39,6 +39,7 @@ from solslot_puzzles.stripe_settlement_v1_driver import (
     InventoryReservationV1,
     PrimaryMintTermsV3,
     assert_artifact_matches_terms,
+    deed_launcher_puzzle_hash_from_struct,
     make_mint_offer_v5_inner,
 )
 from solslot_puzzles.vault_driver import puzzle_for_p2_vault
@@ -613,6 +614,7 @@ def prepare_stripe_voucher_redemption_offer(
     receipt_coin: Coin,
     artifact: PurchaseArtifactV3,
     terms: PrimaryMintTermsV3,
+    deed_singleton_struct: Program,
 ) -> Offer:
     assert_artifact_matches_terms(artifact, terms)
     if (
@@ -623,6 +625,14 @@ def prepare_stripe_voucher_redemption_offer(
     spends = terminal.coin_spends
     if len(spends) != 3 or sum(spend.coin == receipt_coin for spend in spends) != 1:
         raise PaymentArtifactError("Stripe voucher offer requires exact terminal spends")
+    deed_launcher_puzzle_hash = deed_launcher_puzzle_hash_from_struct(
+        deed_singleton_struct,
+        artifact.deed_launcher_id,
+    )
+    if deed_launcher_puzzle_hash != terms.deed_launcher_puzzle_hash:
+        raise PaymentArtifactError(
+            "deed singleton struct does not match governed mint terms"
+        )
     requested = {
         artifact.deed_launcher_id: [
             CreateCoin(
@@ -643,7 +653,8 @@ def prepare_stripe_voucher_redemption_offer(
         WalletSpendBundle(list(spends), G2Element()),
         {
             artifact.deed_launcher_id: smart_deed_singleton_driver(
-                artifact.deed_launcher_id
+                artifact.deed_launcher_id,
+                deed_launcher_puzzle_hash,
             )
         },
     )
@@ -723,6 +734,14 @@ def build_stripe_voucher_primary_offer_v5(
     reservation: InventoryReservationV1,
 ) -> ChiaPrimaryOffer:
     artifact = receipt.artifact
+    deed_launcher_puzzle_hash = deed_launcher_puzzle_hash_from_struct(
+        deed_singleton_struct,
+        artifact.deed_launcher_id,
+    )
+    if deed_launcher_puzzle_hash != terms.deed_launcher_puzzle_hash:
+        raise PaymentArtifactError(
+            "deed singleton struct does not match governed mint terms"
+        )
     payments = voucher_offer.requested_payments.get(artifact.deed_launcher_id, [])
     if len(payments) != 1:
         raise PaymentArtifactError("Stripe voucher must request one SmartDeed")
@@ -767,7 +786,8 @@ def build_stripe_voucher_primary_offer_v5(
         WalletSpendBundle([deed_spend], G2Element()),
         {
             artifact.deed_launcher_id: smart_deed_singleton_driver(
-                artifact.deed_launcher_id
+                artifact.deed_launcher_id,
+                deed_launcher_puzzle_hash,
             )
         },
     )

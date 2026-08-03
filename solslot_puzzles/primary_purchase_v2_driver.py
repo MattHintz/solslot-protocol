@@ -555,13 +555,15 @@ def build_universal_mint_offer_v4_spend(
 
 def smart_deed_singleton_driver(
     deed_launcher_id: bytes32,
+    launcher_puzzle_hash: bytes32 = SINGLETON_LAUNCHER_HASH,
 ) -> PuzzleInfo:
     _require_bytes32(deed_launcher_id, "deed_launcher_id")
+    _require_bytes32(launcher_puzzle_hash, "launcher_puzzle_hash")
     return PuzzleInfo(
         {
             "type": "singleton",
             "launcher_id": f"0x{deed_launcher_id.hex()}",
-            "launcher_ph": f"0x{SINGLETON_LAUNCHER_HASH.hex()}",
+            "launcher_ph": f"0x{launcher_puzzle_hash.hex()}",
         }
     )
 

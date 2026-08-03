@@ -748,6 +748,11 @@ def build_mint_publish_artifacts(
                 network=primary_purchase.network,
                 smart_deed_inner_hash=smart_deed_inner_puzhash,
                 deed_launcher_id=deed_launcher_id,
+                deed_launcher_puzzle_hash=deed_launcher_puzzle_hash(
+                    protocol_did_singleton_struct=(
+                        protocol_did_singleton_struct
+                    )
+                ),
                 collection_id=collection_id_canon,
                 metadata_root=metadata_root,
                 metadata_anchor_id=resolved_anchor,

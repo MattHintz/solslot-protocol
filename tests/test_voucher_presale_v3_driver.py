@@ -24,6 +24,7 @@ from solslot_puzzles.payment_artifacts_v2 import (
     PaymentResolution,
     PaymentTransition,
 )
+from solslot_puzzles.mint_publish_driver import deed_singleton_struct
 from solslot_puzzles.payment_artifacts_v3 import (
     STRIPE_PAYMENT_PROVIDER_ID,
     StripeDisputeState,
@@ -39,6 +40,7 @@ from solslot_puzzles.payment_artifacts_v3 import (
 from solslot_puzzles.stripe_settlement_v1_driver import (
     InventoryReservationV1,
     PrimaryMintTermsV3,
+    deed_launcher_puzzle_hash_from_struct,
     make_mint_offer_v5_inner,
 )
 from solslot_puzzles.vault_driver import puzzle_for_p2_vault, puzzle_hash_for_p2_vault
@@ -66,6 +68,19 @@ from solslot_puzzles.voucher_presale_v3_driver import (
 
 def b32(value: int) -> bytes32:
     return bytes32(bytes([value]) * 32)
+
+
+def smart_deed_struct(deed_launcher_id: bytes32) -> Program:
+    protocol_did_struct = Program.to(
+        (
+            SINGLETON_MOD_HASH,
+            (b32(99), SINGLETON_LAUNCHER_HASH),
+        )
+    )
+    return deed_singleton_struct(
+        deed_launcher_id=deed_launcher_id,
+        protocol_did_singleton_struct=protocol_did_struct,
+    )
 
 
 def validator_keys() -> tuple[bytes, bytes, bytes]:
@@ -324,26 +339,26 @@ def test_live_stripe_voucher_atomically_delivers_reserved_smartdeed() -> None:
     mint_terms = PrimaryMintTermsV3.for_artifact(
         artifact=receipt.artifact,
         smart_deed_inner_hash=voucher.smart_deed_inner_hash,
+        deed_launcher_puzzle_hash=deed_launcher_puzzle_hash_from_struct(
+            smart_deed_struct(receipt.artifact.deed_launcher_id),
+            receipt.artifact.deed_launcher_id,
+        ),
         protocol_puzhash=b32(24),
         validator_pubkeys=terms.validator_pubkeys,
     )
+    singleton_struct = smart_deed_struct(receipt.artifact.deed_launcher_id)
     buyer_offer = prepare_stripe_voucher_redemption_offer(
         terminal=terminal,
         receipt_coin=issuance.receipt_coin,
         artifact=receipt.artifact,
         terms=mint_terms,
+        deed_singleton_struct=singleton_struct,
     )
     reservation = InventoryReservationV1(
         artifact=receipt.artifact,
         expires_at=phase.next_series_state.launched_at + 48 * 60 * 60 + 60,
     )
     deed_inner = make_mint_offer_v5_inner(mint_terms, reservation)
-    singleton_struct = Program.to(
-        (
-            SINGLETON_MOD_HASH,
-            (receipt.artifact.deed_launcher_id, SINGLETON_LAUNCHER_HASH),
-        )
-    )
     deed_coin = Coin(
         b32(25),
         bytes32(SINGLETON_MOD.curry(singleton_struct, deed_inner).get_tree_hash()),
@@ -442,6 +457,10 @@ def test_direct_stripe_artifact_cannot_enter_voucher_delivery_mode() -> None:
             terms=PrimaryMintTermsV3.for_artifact(
                 artifact=direct,
                 smart_deed_inner_hash=voucher.smart_deed_inner_hash,
+                deed_launcher_puzzle_hash=deed_launcher_puzzle_hash_from_struct(
+                    smart_deed_struct(direct.deed_launcher_id),
+                    direct.deed_launcher_id,
+                ),
                 protocol_puzhash=b32(24),
                 validator_pubkeys=terms.validator_pubkeys,
             ),

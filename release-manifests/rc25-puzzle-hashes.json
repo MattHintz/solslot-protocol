@@ -16,8 +16,8 @@
     "governance_singleton_inner_v2.clsp": "14380db3a00acd31031a2ff5137cacff975800301358499d90ebaa29c08bc193",
     "vault_singleton_inner_v2.clsp": "34a8ecbe7aa044ca809c04438ad084c439fbfba1714dabaec0e52d206640eb1e",
     "stripe_settlement_receipt_v1.clsp": "f8a8e54b751adb4a569431d9f70b78f9ffa990696faba1fc8525f5917dee7898",
-    "mint_offer_inventory_available_v1.clsp": "c00a76ec5f2f825b73822047273f6362fc2298a0634e24269e7e806ce263c18a",
-    "mint_offer_delegate_v5.clsp": "b535d2644fd584436c0533ee5b92cf3bd442a057738824f95fd53f1be21444df"
+    "mint_offer_inventory_available_v1.clsp": "3e4a9f59c0851d717bda68d52b75527659a9712b0f39de4851f09b01b00d8f2e",
+    "mint_offer_delegate_v5.clsp": "c779d3786c8c2f898784f4031f873e81fb785442a5e8fd8dd6dfb9446328a972"
   },
   "newPuzzleHashes": {
     "sgt_reserve_inner_v1.clsp": "f5ff2492b60f5d049ad91f3ac4822fb54e8815fd67b6fefea172f017526f6c32",
@@ -29,11 +29,11 @@
     "governance_singleton_inner_v2.clsp": "recognize exact SGT sale and grant bills and prevent tracker execution unless the bill-bound governed reserve allocation is co-spent",
     "vault_singleton_inner_v2.clsp": "authorize an exact SGT vote-lock co-spend from the existing approved vault without adding another custody puzzle or permitting an SGT transfer",
     "stripe_settlement_receipt_v1.clsp": "authenticate one exact validator-quorum Stripe or Base USDC settlement receipt; preserve the SmartDeed offer output; and include the one-use Base result authorization in the SmartDeed settlement announcement before EVM escrow payout",
-    "mint_offer_inventory_available_v1.clsp": "preserve RC24 AVAILABLE-to-RESERVED custody while committing each SmartDeed reservation to the extended delivery-bound PurchaseArtifactV3 hash",
-    "mint_offer_delegate_v5.clsp": "deliver one exact already-minted SmartDeed to its artifact-bound approved vault after authenticated Stripe or Base USDC payment and bind the Base offer settlement to the signed one-use result authorization",
+    "mint_offer_inventory_available_v1.clsp": "preserve RC24 AVAILABLE-to-RESERVED custody while committing each SmartDeed reservation to the extended delivery-bound PurchaseArtifactV3 hash and the deed's DID-authorized launcher puzzle hash",
+    "mint_offer_delegate_v5.clsp": "deliver one exact already-minted governed SmartDeed from its DID-authorized singleton lineage to its artifact-bound approved vault after authenticated Stripe or Base USDC payment and bind the Base offer settlement to the signed one-use result authorization",
     "purchase_batch_settlement_receipt_v1.clsp": "authenticate one aggregate Stripe or Base USDC payment and atomically expose one technical offer mojo per exact child SmartDeed while emitting the unchanged V5 child settlement announcement for every vault-bound deed",
     "sgt_reserve_inner_v1.clsp": "hold the fixed SGT issuance in governed custody, reject non-allocation bills at lock time, and independently require each sale or grant bill to name this exact reserve",
     "sgt_sale_inner_v1.clsp": "create a non-discretionary XCH or approved CAT offer, or consume the shared authenticated Stripe/Base receipt, for one exact approved vault, amount, treasury, artifact, and expiry"
   },
-  "canonicalChecksum": "1dd524857ee08656cfcd65121b94f68505f418f4e7edc1809e4a129aa9d09a28"
+  "canonicalChecksum": "f2c45372a5f44384ec83918a2cf5b8f8e84a8626a2ab70e3aed7380f78873f69"
 }

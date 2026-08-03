@@ -16,7 +16,7 @@
     OFFER_MOD_HASH
     REDEMPTION_LEAF_MOD_HASH
     SINGLETON_MOD_HASH
-    SINGLETON_LAUNCHER_HASH
+    DEED_LAUNCHER_PUZZLE_HASH
     ;; solution
     my_id
     my_amount
@@ -111,7 +111,7 @@
     (is-size-b32 OFFER_MOD_HASH)
     (is-size-b32 REDEMPTION_LEAF_MOD_HASH)
     (is-size-b32 SINGLETON_MOD_HASH)
-    (is-size-b32 SINGLETON_LAUNCHER_HASH)
+    (is-size-b32 DEED_LAUNCHER_PUZZLE_HASH)
     (is-size-b32 my_id)
     (is-uint64 my_amount)
     (is-size-b32 governance_inner_puzzle_hash)
@@ -126,7 +126,7 @@
     (= (sha256tree allocations) allocations_root)
     (build-offer-leaves
       REDEMPTION_LEAF_MOD_HASH CAT_MOD_HASH PAYMENT_ASSET_ID OFFER_MOD_HASH
-      SINGLETON_MOD_HASH SINGLETON_LAUNCHER_HASH collection_id settlement_id
+      SINGLETON_MOD_HASH DEED_LAUNCHER_PUZZLE_HASH collection_id settlement_id
       allocations
       (list
         (list RECEIVE_MESSAGE 0x10

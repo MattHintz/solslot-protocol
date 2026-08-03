@@ -16,9 +16,8 @@ from chia.wallet.cat_wallet.cat_utils import (
 from chia.wallet.conditions import CreateCoin
 from chia.wallet.lineage_proof import LineageProof
 from chia.wallet.puzzles.singleton_top_layer_v1_1 import (
-    SINGLETON_LAUNCHER_HASH,
+    SINGLETON_MOD,
     SINGLETON_MOD_HASH,
-    puzzle_for_singleton,
     solution_for_singleton,
 )
 from chia.wallet.trading.offer import OFFER_MOD_HASH, Offer
@@ -31,6 +30,9 @@ from solslot_puzzles import load_puzzle
 from solslot_puzzles.primary_purchase_v2_driver import (
     chia_cat_driver,
     smart_deed_singleton_driver,
+)
+from solslot_puzzles.stripe_settlement_v1_driver import (
+    deed_launcher_puzzle_hash_from_struct,
 )
 from solslot_puzzles.sols_economics_v3 import (
     SHARE_PPM_DENOMINATOR,
@@ -211,6 +213,7 @@ def puzzle_for_deed_redemption_v1(
     collection_id: bytes32,
     settlement_id: bytes32,
     allocation: FundedRedemptionAllocation,
+    deed_launcher_puzzle_hash: bytes32,
 ) -> Program:
     allocation.validate()
     mod = p2_deed_redemption_v1_mod()
@@ -220,7 +223,7 @@ def puzzle_for_deed_redemption_v1(
         payment_asset_id,
         OFFER_MOD_HASH,
         SINGLETON_MOD_HASH,
-        SINGLETON_LAUNCHER_HASH,
+        deed_launcher_puzzle_hash,
         collection_id,
         settlement_id,
         allocation.deed_launcher_id,
@@ -236,6 +239,7 @@ def redemption_funding_puzzle(
     collection_id: bytes32,
     settlement_id: bytes32,
     allocation: FundedRedemptionAllocation,
+    deed_launcher_puzzle_hash: bytes32,
 ) -> Program:
     return construct_cat_puzzle(
         CAT_MOD,
@@ -245,6 +249,7 @@ def redemption_funding_puzzle(
             collection_id=collection_id,
             settlement_id=settlement_id,
             allocation=allocation,
+            deed_launcher_puzzle_hash=deed_launcher_puzzle_hash,
         ),
     )
 
@@ -265,16 +270,22 @@ def build_permanent_redemption_offer(
     funding_lineage_proof: LineageProof,
     plan: FundedRedemptionPlanV1,
     allocation: FundedRedemptionAllocation,
+    deed_singleton_struct: Program,
 ) -> tuple[Offer, CoinSpend]:
     plan.validate()
     allocation.validate()
     if allocation not in plan.allocations:
         raise ValueError("allocation is not part of the governed redemption plan")
+    deed_launcher_puzzle_hash = deed_launcher_puzzle_hash_from_struct(
+        deed_singleton_struct,
+        allocation.deed_launcher_id,
+    )
     inner = puzzle_for_deed_redemption_v1(
         payment_asset_id=plan.payment_asset_id,
         collection_id=plan.collection_id,
         settlement_id=plan.settlement_id,
         allocation=allocation,
+        deed_launcher_puzzle_hash=deed_launcher_puzzle_hash,
     )
     full = construct_cat_puzzle(CAT_MOD, plan.payment_asset_id, inner)
     if funding_coin.puzzle_hash != full.get_tree_hash():
@@ -317,7 +328,8 @@ def build_permanent_redemption_offer(
     drivers = {
         plan.payment_asset_id: chia_cat_driver(plan.payment_asset_id),
         allocation.deed_launcher_id: smart_deed_singleton_driver(
-            allocation.deed_launcher_id
+            allocation.deed_launcher_id,
+            deed_launcher_puzzle_hash,
         ),
     }
     offer = Offer(notarized, bundle, drivers)
@@ -348,6 +360,7 @@ def build_direct_redemption_acceptance(
     deed_coin: Coin,
     deed_lineage_proof: LineageProof,
     deed_current_inner_puzzle_hash: bytes32,
+    deed_singleton_struct: Program,
     payment_recipient_inner_puzzle_hash: bytes32,
     plan: FundedRedemptionPlanV1,
     allocation: FundedRedemptionAllocation,
@@ -371,8 +384,12 @@ def build_direct_redemption_acceptance(
         zkpassport_bridge_policy_hash=zkpassport_bridge_policy_hash,
     )
     p2_vault = puzzle_for_p2_vault(vault_launcher_id)
-    expected_deed_puzzle = puzzle_for_singleton(
+    deed_launcher_puzzle_hash = deed_launcher_puzzle_hash_from_struct(
+        deed_singleton_struct,
         allocation.deed_launcher_id,
+    )
+    expected_deed_puzzle = SINGLETON_MOD.curry(
+        deed_singleton_struct,
         p2_vault,
     )
     if deed_coin.puzzle_hash != expected_deed_puzzle.get_tree_hash():
@@ -465,7 +482,8 @@ def build_direct_redemption_acceptance(
     drivers = {
         plan.payment_asset_id: chia_cat_driver(plan.payment_asset_id),
         allocation.deed_launcher_id: smart_deed_singleton_driver(
-            allocation.deed_launcher_id
+            allocation.deed_launcher_id,
+            deed_launcher_puzzle_hash,
         ),
     }
     taker_offer = Offer(
@@ -499,6 +517,7 @@ def redemption_leaf_conditions(
     funding_coin: Coin,
     plan: FundedRedemptionPlanV1,
     allocation: FundedRedemptionAllocation,
+    deed_singleton_struct: Program,
 ) -> list[list[object]]:
     """Run the inner puzzle for focused consensus fixtures."""
     return puzzle_for_deed_redemption_v1(
@@ -506,6 +525,10 @@ def redemption_leaf_conditions(
         collection_id=plan.collection_id,
         settlement_id=plan.settlement_id,
         allocation=allocation,
+        deed_launcher_puzzle_hash=deed_launcher_puzzle_hash_from_struct(
+            deed_singleton_struct,
+            allocation.deed_launcher_id,
+        ),
     ).run(redemption_leaf_solution(funding_coin)).as_python()
 
 

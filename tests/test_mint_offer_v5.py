@@ -122,9 +122,19 @@ def mint_terms(artifact) -> PrimaryMintTermsV3:
     return PrimaryMintTermsV3.for_artifact(
         artifact=artifact,
         smart_deed_inner_hash=b32(20),
+        deed_launcher_puzzle_hash=b32(23),
         protocol_puzhash=b32(21),
         validator_pubkeys=VALIDATORS,  # type: ignore[arg-type]
         provider_id=b32(22),
+    )
+
+
+def governed_deed_struct(artifact) -> Program:
+    return Program.to(
+        (
+            SINGLETON_MOD_HASH,
+            (artifact.deed_launcher_id, b32(23)),
+        )
     )
 
 
@@ -158,6 +168,7 @@ def base_receipt(result_puzzle_hash: bytes32):
         receipt_spend=receipt_spend,
         receipt=receipt,
         terms=terms,
+        deed_singleton_struct=governed_deed_struct(artifact),
     )
     return artifact, receipt, receipt_terms, receipt_coin, offer, terms
 
@@ -199,12 +210,7 @@ def test_v5_base_offer_delivers_reserved_deed_and_exact_result() -> None:
         expires_at=artifact.quote_expires_at,
     )
     inner = make_mint_offer_v5_inner(terms, reservation)
-    singleton_struct = Program.to(
-        (
-            SINGLETON_MOD_HASH,
-            (artifact.deed_launcher_id, SINGLETON_LAUNCHER_HASH),
-        )
-    )
+    singleton_struct = governed_deed_struct(artifact)
     deed_coin = Coin(
         b32(76),
         bytes32(SINGLETON_MOD.curry(singleton_struct, inner).get_tree_hash()),
@@ -331,11 +337,21 @@ def test_v5_native_batch_bundles_two_exact_smartdeeds_in_one_offer() -> None:
         bytes32(payment_puzzle.get_tree_hash()),
         uint64(batch.total_rail_amount + 1_000),
     )
+    structs = tuple(
+        Program.to(
+            (
+                SINGLETON_MOD_HASH,
+                (item.deed_launcher_id, b32(23)),
+            )
+        )
+        for item in artifacts
+    )
     buyer = prepare_chia_buyer_batch_offer_v3(
         payment_coin=payment_coin,
         payment_public_key=bytes(payment_key.get_g1()),
         batch=batch,
         terms=item_terms,
+        deed_singleton_structs=structs,
     )
     reservations = tuple(
         InventoryReservationV1(
@@ -347,15 +363,6 @@ def test_v5_native_batch_bundles_two_exact_smartdeeds_in_one_offer() -> None:
     inners = tuple(
         make_mint_offer_v5_inner(terms, reservation)
         for terms, reservation in zip(item_terms, reservations, strict=True)
-    )
-    structs = tuple(
-        Program.to(
-            (
-                SINGLETON_MOD_HASH,
-                (item.deed_launcher_id, SINGLETON_LAUNCHER_HASH),
-            )
-        )
-        for item in artifacts
     )
     deed_coins = tuple(
         Coin(
@@ -444,6 +451,15 @@ def test_v5_stripe_batch_delivers_two_exact_smartdeeds_atomically() -> None:
         terms=receipt_terms,
         signer_indices=(0, 2),
     )
+    structs = tuple(
+        Program.to(
+            (
+                SINGLETON_MOD_HASH,
+                (item.deed_launcher_id, b32(23)),
+            )
+        )
+        for item in batch.artifacts
+    )
     conditions = receipt_puzzle.run(
         Program.from_bytes(bytes(receipt_spend.solution))
     ).as_python()
@@ -464,6 +480,7 @@ def test_v5_stripe_batch_delivers_two_exact_smartdeeds_atomically() -> None:
         receipt_spend=receipt_spend,
         receipt=receipt,
         terms=item_terms,
+        deed_singleton_structs=structs,
     )
     reservations = tuple(
         InventoryReservationV1(
@@ -475,15 +492,6 @@ def test_v5_stripe_batch_delivers_two_exact_smartdeeds_atomically() -> None:
     inners = tuple(
         make_mint_offer_v5_inner(term, reservation)
         for term, reservation in zip(item_terms, reservations, strict=True)
-    )
-    structs = tuple(
-        Program.to(
-            (
-                SINGLETON_MOD_HASH,
-                (item.deed_launcher_id, SINGLETON_LAUNCHER_HASH),
-            )
-        )
-        for item in batch.artifacts
     )
     deed_coins = tuple(
         Coin(
