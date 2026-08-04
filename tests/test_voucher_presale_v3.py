@@ -56,7 +56,11 @@ def terms() -> VoucherSeriesTermsV2:
     )
 
 
-def receipt(*, processing_charge: int = 0) -> StripeSettlementReceiptV1:
+def receipt(
+    *,
+    processing_charge: int = 0,
+    quote_expires_at: int = 1_700_010_000,
+) -> StripeSettlementReceiptV1:
     series = terms()
     vault = b32(8)
     artifact = build_stripe_purchase_artifact(
@@ -74,7 +78,7 @@ def receipt(*, processing_charge: int = 0) -> StripeSettlementReceiptV1:
         vault_p2_puzzle_hash=puzzle_hash_for_p2_vault(vault),
         authorization_nonce=b32(11),
         authorization_expires_at=1_800_000_000,
-        quote_expires_at=1_700_010_000,
+        quote_expires_at=quote_expires_at,
         presale_terms_hash=series.terms_hash,
     )
     evidence = StripeSettlementEvidenceV1(
@@ -157,7 +161,7 @@ def test_stripe_voucher_round_trip_rederives_commitment() -> None:
         voucher_commitment_v3_from_json(payload)
 
 
-def test_stripe_voucher_rejects_wrong_receipt_and_closed_series() -> None:
+def test_stripe_voucher_rejects_wrong_receipt_and_late_quote() -> None:
     item, stripe_receipt = voucher()
     validate_stripe_voucher_purchase(
         series=terms(),
@@ -178,16 +182,40 @@ def test_stripe_voucher_rejects_wrong_receipt_and_closed_series() -> None:
             expected_smart_deed_inner_hash=item.smart_deed_inner_hash,
             now_seconds=terms().sale_open,
         )
-    with pytest.raises(VoucherV3Error, match="not open"):
+    late_receipt = receipt(quote_expires_at=terms().sale_close + 1)
+    late_artifact = late_receipt.artifact
+    late_item = build_stripe_voucher_commitment(
+        series=terms(),
+        allocation_root=terms().allocation_root,
+        serial=3,
+        original_payer=b32(14),
+        smart_deed_inner_hash=item.smart_deed_inner_hash,
+        artifact=late_artifact,
+        receipt=late_receipt,
+    )
+    with pytest.raises(VoucherV3Error, match="quote"):
         validate_stripe_voucher_purchase(
             series=terms(),
-            voucher=item,
-            artifact=stripe_receipt.artifact,
-            receipt=stripe_receipt,
+            voucher=late_item,
+            artifact=late_artifact,
+            receipt=late_receipt,
             expected_original_payer=b32(14),
             expected_smart_deed_inner_hash=item.smart_deed_inner_hash,
             now_seconds=terms().sale_close,
         )
+
+
+def test_stripe_voucher_accepts_delayed_ach_settlement_for_live_quote() -> None:
+    item, stripe_receipt = voucher()
+    validate_stripe_voucher_purchase(
+        series=terms(),
+        voucher=item,
+        artifact=stripe_receipt.artifact,
+        receipt=stripe_receipt,
+        expected_original_payer=b32(14),
+        expected_smart_deed_inner_hash=item.smart_deed_inner_hash,
+        now_seconds=terms().sale_close + 5 * 24 * 60 * 60,
+    )
 
 
 def test_direct_stripe_artifact_cannot_become_a_voucher() -> None:

@@ -351,8 +351,12 @@ def validate_stripe_voucher_purchase(
     )
     if expected != voucher:
         raise VoucherV3Error("Stripe voucher differs from canonical commitments")
-    if not series.sale_open <= now_seconds < series.sale_close:
-        raise VoucherV3Error("presale is not open")
+    if now_seconds < series.sale_open:
+        raise VoucherV3Error("Stripe settlement predates the presale")
+    if not series.sale_open < artifact.quote_expires_at <= series.sale_close:
+        raise VoucherV3Error(
+            "Stripe presale quote is outside the governed sale window"
+        )
     if voucher.serial >= series.inventory_cap:
         raise VoucherV3Error("voucher serial exceeds inventory")
 
