@@ -1,0 +1,10 @@
+{
+  "schema": "solslot.puzzle-hashes.v1",
+  "release": "RC27",
+  "preservedRelease": "RC26",
+  "preservedCanonicalChecksum": "cc5807afe5c1a9de082dad2e3f515b3f76f6bfb3e3cb1274bfd589090c6a2e57",
+  "changedPuzzleHashes": {},
+  "newPuzzleHashes": {},
+  "changeReasons": {},
+  "canonicalChecksum": "cc5807afe5c1a9de082dad2e3f515b3f76f6bfb3e3cb1274bfd589090c6a2e57"
+}
