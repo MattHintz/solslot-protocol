@@ -33,10 +33,10 @@ def states():
 def test_manifest_binds_all_nine_release_sources() -> None:
     value = manifest.build_manifest(states())
     assert value["schemaVersion"] == 4
-    assert value["releaseId"] == "solslot-v2-alpha-rc24-20260730"
+    assert value["releaseId"] == "solslot-v2-alpha-rc27-20260804"
     assert {
         source["branch"] for source in value["sources"].values()
-    } == {"release/testnet-alpha-rc24-20260730"}
+    } == {"release/testnet-alpha-rc27-20260804"}
     assert tuple(value["sourceShas"]) == tuple(manifest.SOURCE_REPOSITORIES)
     assert len(value["sources"]) == 9
     dependency = value["dependencies"]["administratorRecovery"]
@@ -76,7 +76,7 @@ def test_manifest_rejects_a_mixed_or_mismatched_release_branch() -> None:
     with pytest.raises(ValueError, match="correspond"):
         manifest.build_manifest(
             states(),
-            release_id="solslot-v2-alpha-rc24-20260731",
+            release_id="solslot-v2-alpha-rc27-20260805",
         )
 
 
@@ -84,7 +84,7 @@ def test_launch_evidence_binds_manifest_puzzles_and_recovery() -> None:
     source_manifest = manifest.build_manifest(states())
     puzzle_inventory = {
         "schema": "solslot.puzzle-hashes.v1",
-        "release": "RC24",
+        "release": "RC27",
         "canonicalChecksum": manifest.FROZEN_CHECKSUM,
     }
     evidence = manifest.build_launch_evidence(
@@ -113,7 +113,7 @@ def test_launch_evidence_refuses_unverified_release_refs() -> None:
             manifest_file_sha256="a" * 64,
             puzzle_inventory={
                 "schema": "solslot.puzzle-hashes.v1",
-                "release": "RC24",
+                "release": "RC27",
                 "canonicalChecksum": manifest.FROZEN_CHECKSUM,
             },
             puzzle_inventory_file_sha256="b" * 64,

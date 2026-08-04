@@ -327,3 +327,24 @@ def test_rc26_manifest_preserves_rc25_and_records_vault_sols_custody():
         for filename, expected_hash in manifest[group].items():
             assert bytes(load_puzzle(filename).get_tree_hash()).hex() == expected_hash
     assert compute_puzzles_checksum() == manifest["canonicalChecksum"]
+
+
+def test_rc27_manifest_preserves_every_rc26_puzzle_hash():
+    root = Path(__file__).resolve().parents[1] / "release-manifests"
+    manifest = json.loads(
+        (root / "rc27-puzzle-hashes.json").read_text(encoding="utf-8")
+    )
+    rc26 = json.loads(
+        (root / "rc26-puzzle-hashes.json").read_text(encoding="utf-8")
+    )
+    assert manifest == {
+        "schema": "solslot.puzzle-hashes.v1",
+        "release": "RC27",
+        "preservedRelease": "RC26",
+        "preservedCanonicalChecksum": rc26["canonicalChecksum"],
+        "changedPuzzleHashes": {},
+        "newPuzzleHashes": {},
+        "changeReasons": {},
+        "canonicalChecksum": rc26["canonicalChecksum"],
+    }
+    assert compute_puzzles_checksum() == manifest["canonicalChecksum"]
