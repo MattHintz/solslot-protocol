@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the deterministic nine-repository RC27 source manifest."""
+"""Build the deterministic nine-repository RC27.2 source manifest."""
 
 from __future__ import annotations
 
@@ -23,8 +23,8 @@ from solslot_puzzles.recovery_dependencies import (
 from solslot_puzzles import FROZEN_CHECKSUM
 
 
-RELEASE_ID = "solslot-v2-alpha-rc27-20260804"
-RELEASE_BRANCH = "release/testnet-alpha-rc27-20260804"
+RELEASE_ID = "solslot-v2-alpha-rc27.2-20260806"
+RELEASE_BRANCH = "release/testnet-alpha-rc27.2-20260806"
 SOURCE_MANIFEST_VERSION = 4
 SOURCE_REPOSITORIES = {
     "protocol": "https://github.com/MattHintz/solslot-protocol",
@@ -149,8 +149,8 @@ def build_manifest(
     by_name = {item.name: item for item in states}
     if set(by_name) != set(SOURCE_REPOSITORIES) or len(states) != len(by_name):
         raise ValueError("release source states must contain each repository exactly once")
-    if not release_id.startswith("solslot-v2-alpha-rc27-"):
-        raise ValueError("release_id must identify an RC27 alpha release")
+    if release_id != RELEASE_ID:
+        raise ValueError("release_id must identify the coordinated RC27.2 alpha release")
     expected_branch = (
         "release/testnet-alpha-"
         + release_id.removeprefix("solslot-v2-alpha-")
@@ -200,7 +200,7 @@ def verify_release_refs(path: Path, commit: str) -> None:
     tag_commit = _git(path, "rev-list", "-n", "1", RELEASE_ID).lower()
     if main_commit != commit or tag_commit != commit:
         raise ValueError(
-            f"{path} must have the exact RC27 commit on origin/main and {RELEASE_ID}"
+            f"{path} must have the exact RC27.2 commit on origin/main and {RELEASE_ID}"
         )
 
 
@@ -218,10 +218,10 @@ def build_launch_evidence(
         or manifest.get("releaseId") != RELEASE_ID
         or manifest.get("manifestHash") != manifest_hash(manifest)
     ):
-        raise ValueError("RC27 source manifest is invalid")
+        raise ValueError("RC27.2 source manifest is invalid")
     if release_refs_verified is not True:
         raise ValueError(
-            "launch evidence requires exact origin/main and RC27 tag verification"
+            "launch evidence requires exact origin/main and RC27.2 tag verification"
         )
     if (
         puzzle_inventory.get("schema") != "solslot.puzzle-hashes.v1"
