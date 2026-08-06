@@ -33,10 +33,10 @@ def states():
 def test_manifest_binds_all_nine_release_sources() -> None:
     value = manifest.build_manifest(states())
     assert value["schemaVersion"] == 4
-    assert value["releaseId"] == "solslot-v2-alpha-rc27-20260804"
+    assert value["releaseId"] == "solslot-v2-alpha-rc27.2-20260806"
     assert {
         source["branch"] for source in value["sources"].values()
-    } == {"release/testnet-alpha-rc27-20260804"}
+    } == {"release/testnet-alpha-rc27.2-20260806"}
     assert tuple(value["sourceShas"]) == tuple(manifest.SOURCE_REPOSITORIES)
     assert len(value["sources"]) == 9
     dependency = value["dependencies"]["administratorRecovery"]
@@ -73,10 +73,10 @@ def test_manifest_rejects_a_mixed_or_mismatched_release_branch() -> None:
     with pytest.raises(ValueError, match="release branch"):
         manifest.build_manifest(changed)
 
-    with pytest.raises(ValueError, match="correspond"):
+    with pytest.raises(ValueError, match="coordinated RC27.2"):
         manifest.build_manifest(
             states(),
-            release_id="solslot-v2-alpha-rc27-20260805",
+            release_id="solslot-v2-alpha-rc27.2-20260807",
         )
 
 
