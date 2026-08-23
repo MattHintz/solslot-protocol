@@ -193,6 +193,7 @@ def build_manifest(
 
 def verify_release_refs(path: Path, commit: str) -> None:
     main_ref = "refs/heads/main"
+    release_branch_ref = f"refs/heads/{RELEASE_BRANCH}"
     tag_ref = f"refs/tags/{RELEASE_ID}"
     peeled_tag_ref = f"{tag_ref}^{{}}"
     remote_output = _git(
@@ -201,6 +202,7 @@ def verify_release_refs(path: Path, commit: str) -> None:
         "--exit-code",
         "origin",
         main_ref,
+        release_branch_ref,
         tag_ref,
         peeled_tag_ref,
     )
@@ -223,32 +225,49 @@ def verify_release_refs(path: Path, commit: str) -> None:
             raise ValueError(f"{path} returned a duplicate remote release ref")
         remote_refs[ref] = value
 
-    expected_refs = {main_ref, tag_ref, peeled_tag_ref}
+    expected_refs = {
+        main_ref,
+        release_branch_ref,
+        tag_ref,
+        peeled_tag_ref,
+    }
     if set(remote_refs) != expected_refs:
         raise ValueError(
-            f"{path} must expose exact live main and annotated RC27.33 tag refs"
+            f"{path} must expose exact live main, release branch, and "
+            "annotated RC27.33 tag refs"
         )
     if (
         remote_refs[main_ref] != commit
+        or remote_refs[release_branch_ref] != commit
         or remote_refs[peeled_tag_ref] != commit
         or remote_refs[tag_ref] == commit
     ):
         raise ValueError(
-            f"{path} live main and annotated {RELEASE_ID} tag must resolve exactly"
+            f"{path} live main, {RELEASE_BRANCH}, and annotated "
+            f"{RELEASE_ID} tag must resolve exactly"
         )
 
     local_main = _git(path, "rev-parse", "origin/main^{commit}").lower()
+    local_release_branch = _git(
+        path,
+        "rev-parse",
+        f"origin/{RELEASE_BRANCH}^{{commit}}",
+    ).lower()
     local_tag_type = _git(path, "cat-file", "-t", tag_ref)
+    local_tag_object = _git(path, "rev-parse", tag_ref).lower()
     local_tag_commit = _git(
         path, "rev-parse", f"{tag_ref}^{{commit}}"
     ).lower()
     if (
         local_main != commit
+        or local_release_branch != commit
         or local_tag_type != "tag"
+        or local_tag_object != remote_refs[tag_ref]
         or local_tag_commit != commit
     ):
         raise ValueError(
-            f"{path} local refs must match live main and the annotated {RELEASE_ID} tag"
+            f"{path} local refs must match live main, {RELEASE_BRANCH}, "
+            f"and the exact annotated {RELEASE_ID} tag object"
         )
 
 
@@ -269,7 +288,8 @@ def build_launch_evidence(
         raise ValueError("RC27.33 source manifest is invalid")
     if release_refs_verified is not True:
         raise ValueError(
-            "launch evidence requires exact origin/main and RC27.33 tag verification"
+            "launch evidence requires exact origin/main, release branch, "
+            "and RC27.33 tag verification"
         )
     if (
         puzzle_inventory.get("schema") != "solslot.puzzle-hashes.v1"

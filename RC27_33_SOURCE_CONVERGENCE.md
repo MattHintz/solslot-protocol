@@ -20,10 +20,11 @@ test suite, dependency audit, compile/import, namespace, and secret gates.
 An independent review of this release tool also found that its historical
 release-ref check trusted local tracking refs and accepted a lightweight tag.
 RC27.33 now requires the canonical repository specifically at `origin`, reads
-live remote `main` and tag refs, requires the annotated tag object's peeled
-commit, rejects missing, duplicate, or unexpected refs, and cross-checks the
-local tracking and tag objects. Release evidence cannot be marked verified
-from stale local refs alone.
+live remote `main`, release-branch, and tag refs, requires the annotated tag
+object's peeled commit, rejects missing, duplicate, or unexpected refs, and
+cross-checks the local tracking refs plus the exact local/remote tag object.
+Release evidence cannot be marked verified from stale or divergent local refs
+alone.
 
 ## Candidate source set
 

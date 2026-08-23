@@ -161,7 +161,10 @@ def _release_ref_git(
     commit: str,
     *,
     remote_main: str | None = None,
+    remote_release_branch: str | None = None,
+    include_release_branch: bool = True,
     annotated: bool = True,
+    local_tag_object: str | None = None,
     extra_ref: bool = False,
     duplicate_main: bool = False,
 ):
@@ -173,6 +176,11 @@ def _release_ref_git(
                 f"{remote_main or commit}\trefs/heads/main",
                 f"{tag_object}\trefs/tags/{manifest.RELEASE_ID}",
             ]
+            if include_release_branch:
+                lines.append(
+                    f"{remote_release_branch or commit}\t"
+                    f"refs/heads/{manifest.RELEASE_BRANCH}"
+                )
             if annotated:
                 lines.append(
                     f"{commit}\trefs/tags/{manifest.RELEASE_ID}^{{}}"
@@ -185,11 +193,21 @@ def _release_ref_git(
         if args == ("rev-parse", "origin/main^{commit}"):
             return commit
         if args == (
+            "rev-parse",
+            f"origin/{manifest.RELEASE_BRANCH}^{{commit}}",
+        ):
+            return commit
+        if args == (
             "cat-file",
             "-t",
             f"refs/tags/{manifest.RELEASE_ID}",
         ):
             return "tag"
+        if args == (
+            "rev-parse",
+            f"refs/tags/{manifest.RELEASE_ID}",
+        ):
+            return local_tag_object or tag_object
         if args == (
             "rev-parse",
             f"refs/tags/{manifest.RELEASE_ID}^{{commit}}",
@@ -216,6 +234,44 @@ def test_release_refs_reject_remote_main_drift(monkeypatch) -> None:
     )
 
     with pytest.raises(ValueError, match="live main"):
+        manifest.verify_release_refs(Path("repo"), commit)
+
+
+def test_release_refs_reject_remote_release_branch_drift(monkeypatch) -> None:
+    commit = "a" * 40
+    monkeypatch.setattr(
+        manifest,
+        "_git",
+        _release_ref_git(commit, remote_release_branch="c" * 40),
+    )
+
+    with pytest.raises(ValueError, match="release/testnet-alpha-rc27.33"):
+        manifest.verify_release_refs(Path("repo"), commit)
+
+
+def test_release_refs_reject_missing_remote_release_branch(monkeypatch) -> None:
+    commit = "a" * 40
+    monkeypatch.setattr(
+        manifest,
+        "_git",
+        _release_ref_git(commit, include_release_branch=False),
+    )
+
+    with pytest.raises(ValueError, match="release branch"):
+        manifest.verify_release_refs(Path("repo"), commit)
+
+
+def test_release_refs_reject_local_remote_tag_object_mismatch(
+    monkeypatch,
+) -> None:
+    commit = "a" * 40
+    monkeypatch.setattr(
+        manifest,
+        "_git",
+        _release_ref_git(commit, local_tag_object="d" * 40),
+    )
+
+    with pytest.raises(ValueError, match="exact annotated"):
         manifest.verify_release_refs(Path("repo"), commit)
 
 
