@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the deterministic nine-repository RC27.32 source manifest."""
+"""Build the deterministic nine-repository RC27.33 source manifest."""
 
 from __future__ import annotations
 
@@ -23,8 +23,8 @@ from solslot_puzzles.recovery_dependencies import (
 from solslot_puzzles import FROZEN_CHECKSUM
 
 
-RELEASE_ID = "solslot-v2-alpha-rc27.32-20260822"
-RELEASE_BRANCH = "release/testnet-alpha-rc27.32-20260822"
+RELEASE_ID = "solslot-v2-alpha-rc27.33-20260823"
+RELEASE_BRANCH = "release/testnet-alpha-rc27.33-20260823"
 SOURCE_MANIFEST_VERSION = 4
 SOURCE_REPOSITORIES = {
     "protocol": "https://github.com/MattHintz/solslot-protocol",
@@ -129,14 +129,10 @@ def inspect_source(
         raise ValueError(f"{name} must be checked out on {release_branch}")
     if _git(path, "status", "--porcelain"):
         raise ValueError(f"{name} worktree is dirty")
-    remotes = {
-        normalize_remote(line.split()[1])
-        for line in _git(path, "remote", "-v").splitlines()
-        if line.endswith("(fetch)") and len(line.split()) >= 2
-    }
     expected = normalize_remote(SOURCE_REPOSITORIES[name])
-    if expected not in remotes:
-        raise ValueError(f"{name} does not have the canonical repository remote")
+    origin = normalize_remote(_git(path, "remote", "get-url", "origin"))
+    if origin != expected:
+        raise ValueError(f"{name} origin is not the canonical repository remote")
     return SourceState(name, expected, commit, branch)
 
 
@@ -150,7 +146,7 @@ def build_manifest(
     if set(by_name) != set(SOURCE_REPOSITORIES) or len(states) != len(by_name):
         raise ValueError("release source states must contain each repository exactly once")
     if release_id != RELEASE_ID:
-        raise ValueError("release_id must identify the coordinated RC27.32 alpha release")
+        raise ValueError("release_id must identify the coordinated RC27.33 alpha release")
     expected_branch = (
         "release/testnet-alpha-"
         + release_id.removeprefix("solslot-v2-alpha-")
@@ -196,11 +192,63 @@ def build_manifest(
 
 
 def verify_release_refs(path: Path, commit: str) -> None:
-    main_commit = _git(path, "rev-parse", "origin/main^{commit}").lower()
-    tag_commit = _git(path, "rev-list", "-n", "1", RELEASE_ID).lower()
-    if main_commit != commit or tag_commit != commit:
+    main_ref = "refs/heads/main"
+    tag_ref = f"refs/tags/{RELEASE_ID}"
+    peeled_tag_ref = f"{tag_ref}^{{}}"
+    remote_output = _git(
+        path,
+        "ls-remote",
+        "--exit-code",
+        "origin",
+        main_ref,
+        tag_ref,
+        peeled_tag_ref,
+    )
+    remote_refs: dict[str, str] = {}
+    for line in remote_output.splitlines():
+        parts = line.split("\t")
+        if len(parts) != 2:
+            raise ValueError(f"{path} returned a malformed remote release ref")
+        value, ref = parts
+        value = value.lower()
+        if len(value) != 40:
+            raise ValueError(f"{path} returned a malformed remote release commit")
+        try:
+            int(value, 16)
+        except ValueError as exc:
+            raise ValueError(
+                f"{path} returned a malformed remote release commit"
+            ) from exc
+        if ref in remote_refs:
+            raise ValueError(f"{path} returned a duplicate remote release ref")
+        remote_refs[ref] = value
+
+    expected_refs = {main_ref, tag_ref, peeled_tag_ref}
+    if set(remote_refs) != expected_refs:
         raise ValueError(
-            f"{path} must have the exact RC27.32 commit on origin/main and {RELEASE_ID}"
+            f"{path} must expose exact live main and annotated RC27.33 tag refs"
+        )
+    if (
+        remote_refs[main_ref] != commit
+        or remote_refs[peeled_tag_ref] != commit
+        or remote_refs[tag_ref] == commit
+    ):
+        raise ValueError(
+            f"{path} live main and annotated {RELEASE_ID} tag must resolve exactly"
+        )
+
+    local_main = _git(path, "rev-parse", "origin/main^{commit}").lower()
+    local_tag_type = _git(path, "cat-file", "-t", tag_ref)
+    local_tag_commit = _git(
+        path, "rev-parse", f"{tag_ref}^{{commit}}"
+    ).lower()
+    if (
+        local_main != commit
+        or local_tag_type != "tag"
+        or local_tag_commit != commit
+    ):
+        raise ValueError(
+            f"{path} local refs must match live main and the annotated {RELEASE_ID} tag"
         )
 
 
@@ -218,10 +266,10 @@ def build_launch_evidence(
         or manifest.get("releaseId") != RELEASE_ID
         or manifest.get("manifestHash") != manifest_hash(manifest)
     ):
-        raise ValueError("RC27.32 source manifest is invalid")
+        raise ValueError("RC27.33 source manifest is invalid")
     if release_refs_verified is not True:
         raise ValueError(
-            "launch evidence requires exact origin/main and RC27.32 tag verification"
+            "launch evidence requires exact origin/main and RC27.33 tag verification"
         )
     if (
         puzzle_inventory.get("schema") != "solslot.puzzle-hashes.v1"

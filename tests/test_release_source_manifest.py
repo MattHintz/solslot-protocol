@@ -33,10 +33,10 @@ def states():
 def test_manifest_binds_all_nine_release_sources() -> None:
     value = manifest.build_manifest(states())
     assert value["schemaVersion"] == 4
-    assert value["releaseId"] == "solslot-v2-alpha-rc27.32-20260822"
+    assert value["releaseId"] == "solslot-v2-alpha-rc27.33-20260823"
     assert {
         source["branch"] for source in value["sources"].values()
-    } == {"release/testnet-alpha-rc27.32-20260822"}
+    } == {"release/testnet-alpha-rc27.33-20260823"}
     assert tuple(value["sourceShas"]) == tuple(manifest.SOURCE_REPOSITORIES)
     assert len(value["sources"]) == 9
     dependency = value["dependencies"]["administratorRecovery"]
@@ -73,10 +73,10 @@ def test_manifest_rejects_a_mixed_or_mismatched_release_branch() -> None:
     with pytest.raises(ValueError, match="release branch"):
         manifest.build_manifest(changed)
 
-    with pytest.raises(ValueError, match="coordinated RC27.32"):
+    with pytest.raises(ValueError, match="coordinated RC27.33"):
         manifest.build_manifest(
             states(),
-            release_id="solslot-v2-alpha-rc27.32-20260823",
+            release_id="solslot-v2-alpha-rc27.33-20260822",
         )
 
 
@@ -136,3 +136,113 @@ def test_remote_normalization(remote: str, expected: str) -> None:
 def test_remote_normalization_rejects_embedded_credentials() -> None:
     with pytest.raises(ValueError, match="credentials"):
         manifest.normalize_remote("https://token@github.com/solslot/Samuel.git")
+
+
+def test_source_inspection_requires_canonical_origin(monkeypatch) -> None:
+    commit = "a" * 40
+
+    def fake_git(_path: Path, *args: str) -> str:
+        responses = {
+            ("rev-parse", "HEAD"): commit,
+            ("branch", "--show-current"): manifest.RELEASE_BRANCH,
+            ("status", "--porcelain"): "",
+            ("remote", "get-url", "origin"): (
+                "https://github.com/attacker/protocol"
+            ),
+        }
+        return responses[args]
+
+    monkeypatch.setattr(manifest, "_git", fake_git)
+    with pytest.raises(ValueError, match="origin is not the canonical"):
+        manifest.inspect_source("protocol", Path("repo"))
+
+
+def _release_ref_git(
+    commit: str,
+    *,
+    remote_main: str | None = None,
+    annotated: bool = True,
+    extra_ref: bool = False,
+    duplicate_main: bool = False,
+):
+    tag_object = "b" * 40
+
+    def fake_git(_path: Path, *args: str) -> str:
+        if args[:3] == ("ls-remote", "--exit-code", "origin"):
+            lines = [
+                f"{remote_main or commit}\trefs/heads/main",
+                f"{tag_object}\trefs/tags/{manifest.RELEASE_ID}",
+            ]
+            if annotated:
+                lines.append(
+                    f"{commit}\trefs/tags/{manifest.RELEASE_ID}^{{}}"
+                )
+            if extra_ref:
+                lines.append(f"{'c' * 40}\trefs/tags/unexpected")
+            if duplicate_main:
+                lines.append(f"{commit}\trefs/heads/main")
+            return "\n".join(lines)
+        if args == ("rev-parse", "origin/main^{commit}"):
+            return commit
+        if args == (
+            "cat-file",
+            "-t",
+            f"refs/tags/{manifest.RELEASE_ID}",
+        ):
+            return "tag"
+        if args == (
+            "rev-parse",
+            f"refs/tags/{manifest.RELEASE_ID}^{{commit}}",
+        ):
+            return commit
+        raise AssertionError(args)
+
+    return fake_git
+
+
+def test_release_refs_require_live_main_and_annotated_tag(monkeypatch) -> None:
+    commit = "a" * 40
+    monkeypatch.setattr(manifest, "_git", _release_ref_git(commit))
+
+    manifest.verify_release_refs(Path("repo"), commit)
+
+
+def test_release_refs_reject_remote_main_drift(monkeypatch) -> None:
+    commit = "a" * 40
+    monkeypatch.setattr(
+        manifest,
+        "_git",
+        _release_ref_git(commit, remote_main="c" * 40),
+    )
+
+    with pytest.raises(ValueError, match="live main"):
+        manifest.verify_release_refs(Path("repo"), commit)
+
+
+def test_release_refs_reject_lightweight_or_unexpected_remote_refs(
+    monkeypatch,
+) -> None:
+    commit = "a" * 40
+    monkeypatch.setattr(
+        manifest,
+        "_git",
+        _release_ref_git(commit, annotated=False),
+    )
+    with pytest.raises(ValueError, match="annotated RC27.33"):
+        manifest.verify_release_refs(Path("repo"), commit)
+
+    monkeypatch.setattr(
+        manifest,
+        "_git",
+        _release_ref_git(commit, duplicate_main=True),
+    )
+    with pytest.raises(ValueError, match="duplicate remote release ref"):
+        manifest.verify_release_refs(Path("repo"), commit)
+
+    monkeypatch.setattr(
+        manifest,
+        "_git",
+        _release_ref_git(commit, extra_ref=True),
+    )
+    with pytest.raises(ValueError, match="annotated RC27.33"):
+        manifest.verify_release_refs(Path("repo"), commit)
