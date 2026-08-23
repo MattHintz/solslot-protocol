@@ -17,6 +17,14 @@ with zero reportable findings. Its focused 64-test set, namespace and
 credential gates passed locally. Pull-request and post-merge CI passed the full
 test suite, dependency audit, compile/import, namespace, and secret gates.
 
+An independent review of this release tool also found that its historical
+release-ref check trusted local tracking refs and accepted a lightweight tag.
+RC27.33 now requires the canonical repository specifically at `origin`, reads
+live remote `main` and tag refs, requires the annotated tag object's peeled
+commit, rejects missing, duplicate, or unexpected refs, and cross-checks the
+local tracking and tag objects. Release evidence cannot be marked verified
+from stale local refs alone.
+
 ## Candidate source set
 
 The final manifest must be generated only after this protocol tooling change
