@@ -1006,6 +1006,36 @@ def compute_prepare_binding_hash(
     )
 
 
+def _authority_state_hash(
+    *,
+    parsed: ParsedAdminAuthorityV3,
+    state: AdminAuthorityV3State,
+) -> bytes32:
+    """Return the state hash emitted by ``admin_authority_v3_inner.clsp``."""
+
+    state.validate()
+    return bytes32(
+        Program.to(
+            [
+                parsed.operational_root_hash,
+                list(parsed.lost_recovery_root_hashes),
+                *parsed.identity_launcher_ids,
+                list(state.current_identity_custody_hashes),
+                parsed.source_manifest_hash,
+                state.authority_version,
+                state.pending_kind,
+                state.pending_slot,
+                state.pending_intent_hash,
+                state.pending_identity_coin_id,
+                state.pending_original_custody_hash,
+                state.pending_replacement_custody_hash,
+                state.pending_replacement_member_hash,
+                state.pending_delay_seconds,
+            ]
+        ).get_tree_hash()
+    )
+
+
 def _compute_completion_message_fields(
     *,
     pending_kind: int,
@@ -1585,6 +1615,13 @@ def build_lost_recovery_identity_solution(
             Program.to(None),
         ],
     )
+    pending_authority = parse_inner_puzzle(
+        transition.authority_pending_inner_puzzle
+    )
+    pending_authority_state_hash = _authority_state_hash(
+        parsed=pending_authority,
+        state=pending_authority.state,
+    )
     recovery_solution = identity.recovery_key_branch.solve(
         [],
         [stack.solve(transition.prepare_delegated_puzzle)],
@@ -1592,7 +1629,8 @@ def build_lost_recovery_identity_solution(
             [
                 bytes32(
                     transition.authority_current_inner_puzzle.get_tree_hash()
-                )
+                ),
+                pending_authority_state_hash,
             ]
         ),
     )

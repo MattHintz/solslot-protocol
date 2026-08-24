@@ -5,10 +5,10 @@
   "preservedCanonicalChecksum": "cc5807afe5c1a9de082dad2e3f515b3f76f6bfb3e3cb1274bfd589090c6a2e57",
   "changedPuzzleHashes": {},
   "newPuzzleHashes": {
-    "admin_recovery_authority_member_v1.clsp": "97b890c0282ef249feaa31689ca9b996b0cfe7af8e70cc5abed710c29b556629"
+    "admin_recovery_authority_member_v1.clsp": "37ee69d130159cf716199c06e455f42d5afeb553029b5aa7e2bde7e1908de898"
   },
   "changeReasons": {
-    "admin_recovery_authority_member_v1.clsp": "Binds a recovery BLS identity spend to the concurrently spent current Authority singleton puzzle, closing independent-review finding H1 without changing historical puzzle bytecode."
+    "admin_recovery_authority_member_v1.clsp": "Binds a recovery BLS identity spend to the concurrently spent current Authority singleton and its exact lost-key prepare state announcement, closing independent-review findings H1 and M-HITCHHIKE without changing historical puzzle bytecode."
   },
-  "canonicalChecksum": "fa25163cb69a464a2f923d0fa8861fde47be095687de7974e74af3ae0c73f2b7"
+  "canonicalChecksum": "5bd24e39994e8806945c657626ee0e9108373fc6d598477cdced905d9ae0c921"
 }

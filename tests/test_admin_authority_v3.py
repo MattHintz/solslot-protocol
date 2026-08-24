@@ -9,7 +9,13 @@ from chia.consensus.default_constants import DEFAULT_CONSTANTS
 from chia.types.blockchain_format.program import Program
 from chia.types.coin_spend import CoinSpend, make_spend
 from chia.types.mempool_inclusion_status import MempoolInclusionStatus
-from chia.wallet.puzzles.custody.custody_architecture import ProvenSpend
+from chia.wallet.puzzles.custody.custody_architecture import (
+    DelegatedPuzzleAndSolution,
+    ProvenSpend,
+)
+from chia.wallet.puzzles.custody.restriction_utilities import (
+    ValidatorStackRestriction,
+)
 from chia.wallet.puzzles.singleton_top_layer_v1_1 import (
     launch_conditions_and_coinsol,
     lineage_proof_for_coinsol,
@@ -36,6 +42,7 @@ from solslot_puzzles.admin_authority_v3_driver import (
     SPEND_OPERATIONAL,
     AdminAuthorityV3State,
     GenesisAdminAuthorityV3,
+    IdentityVaultGenesis,
     IdentityVaultTransition,
     admin_identity_prepare_announcement_v1_mod,
     authority_v3_launcher_ids,
@@ -283,6 +290,80 @@ def _transition(
         ),
     )
     return transition, resolved_daily
+
+
+def _unpaired_recovery_solution_without_authority_assertion(
+    *,
+    identity: IdentityVaultGenesis,
+    transition: IdentityVaultTransition,
+    pending_authority_state_hash: bytes32,
+) -> Program:
+    """Reproduce M-HITCHHIKE: a valid recovery path with opcode 63 omitted."""
+
+    delegated_puzzle = Program.to(
+        (
+            1,
+            [
+                [
+                    51,
+                    transition.intermediate_custody_hash,
+                    identity.launcher_amount,
+                ],
+                [60, transition.target_prepare_message],
+                [70, transition.current_identity_coin_id],
+                [72, identity.full_puzzle_hash],
+                [73, identity.launcher_amount],
+            ],
+        )
+    )
+    stack = identity.recovery_key_branch.restrictions[0]
+    assert isinstance(stack, ValidatorStackRestriction)
+    wrapped = stack.modify_delegated_puzzle_and_solution(
+        DelegatedPuzzleAndSolution(
+            puzzle=delegated_puzzle,
+            solution=Program.to(None),
+        ),
+        [
+            Program.to([transition.finish_member_hash]),
+            Program.to(None),
+            Program.to(None),
+            Program.to(None),
+            Program.to(None),
+            Program.to(None),
+        ],
+    )
+    recovery_solution = identity.recovery_key_branch.solve(
+        [],
+        [stack.solve(delegated_puzzle)],
+        Program.to(
+            [
+                bytes32(
+                    transition.authority_current_inner_puzzle.get_tree_hash()
+                ),
+                pending_authority_state_hash,
+            ]
+        ),
+    )
+    policy_solution = identity.custody_policy.solve(
+        {
+            identity.recovery_key_branch.puzzle_hash(
+                _top_level=False
+            ): ProvenSpend(
+                puzzle_reveal=(
+                    identity.recovery_key_branch.puzzle_reveal(
+                        _top_level=False
+                    )
+                ),
+                solution=recovery_solution,
+            )
+        }
+    )
+    return identity.custody_root.solve(
+        [],
+        [],
+        policy_solution,
+        wrapped,
+    )
 
 
 def _run_approval_identity(
@@ -543,6 +624,73 @@ async def test_routine_rotation_bundle_requires_exact_authority_and_identities()
         assert no_owner_status != MempoolInclusionStatus.SUCCESS
         assert no_owner_error is not None
 
+        # M-HITCHHIKE regression: slot 2's recovery key cannot aggregate an
+        # otherwise valid recovery spend into this unrelated routine prepare.
+        # Its delegated puzzle deliberately omits opcode 63, matching the
+        # independent review's proof. The recovery member itself now requires
+        # the Authority's exact lost-key-prepare state announcement.
+        hitch_identity = authority.identity_vaults[2]
+        hitch_transition, hitch_replacement_key = _transition(
+            fixture,
+            slot=hitch_identity.slot,
+            kind=PENDING_LOST,
+        )
+        hitch_authority_result, _ = _run_authority_prepare(
+            fixture,
+            hitch_transition,
+            hitch_replacement_key,
+        )
+        hitch_state_announcement = next(
+            condition.rest().first().as_atom()
+            for condition in hitch_authority_result.as_iter()
+            if condition.first().as_int() == 62
+            and condition.rest().first().as_atom().startswith(b"\x53\x03")
+        )
+        hitch_inner_solution = (
+            _unpaired_recovery_solution_without_authority_assertion(
+                identity=hitch_identity,
+                transition=hitch_transition,
+                pending_authority_state_hash=bytes32(
+                    hitch_state_announcement[2:]
+                ),
+            )
+        )
+        hitch_spend = _singleton_spend(
+            coin=identity_coins[2],
+            launcher_id=hitch_identity.launcher_id,
+            inner_puzzle=hitch_identity.custody_reveal,
+            launcher_spend=launcher_spends[3],
+            amount=hitch_identity.launcher_amount,
+            inner_solution=hitch_inner_solution,
+        )
+        hitch_conditions = hitch_identity.custody_reveal.run(
+            hitch_inner_solution,
+            flags=RUN_FLAGS,
+        )
+        hitch_signature_condition = _condition_values(
+            hitch_conditions,
+            50,
+        )[0]
+        hitch_signature = AugSchemeMPL.sign(
+            recovery_private_keys[2],
+            hitch_signature_condition[2]
+            + bytes(identity_coins[2].name())
+            + bytes(DEFAULT_CONSTANTS.AGG_SIG_ME_ADDITIONAL_DATA),
+        )
+        hitch_status, hitch_error = await client.push_tx(
+            SpendBundle(
+                [
+                    authority_spend,
+                    owner_spend,
+                    target_spend,
+                    hitch_spend,
+                ],
+                hitch_signature,
+            )
+        )
+        assert hitch_status != MempoolInclusionStatus.SUCCESS
+        assert hitch_error is not None
+
         complete_status, complete_error = await client.push_tx(
             SpendBundle(
                 [authority_spend, owner_spend, target_spend],
@@ -581,11 +729,24 @@ def test_genesis_fixes_owner_plus_one_and_exact_launcher_funding() -> None:
 def test_recovery_member_requires_current_authority_puzzle() -> None:
     fixture = _fixture()
     identity = fixture.authority.identity_vaults[1]
-    transition, _ = _transition(
+    transition, replacement_key = _transition(
         fixture,
         slot=identity.slot,
         kind=PENDING_LOST,
     )
+    authority_result, _ = _run_authority_prepare(
+        fixture,
+        transition,
+        replacement_key,
+    )
+    state_announcement = next(
+        condition.rest().first().as_atom()
+        for condition in authority_result.as_iter()
+        if condition.first().as_int() == 62
+        and condition.rest().first().as_atom().startswith(b"\x53\x03")
+    )
+    assert state_announcement[:2] == b"\x53\x03"
+
     result = identity.custody_reveal.run(
         build_lost_recovery_identity_solution(
             identity=identity,
@@ -597,10 +758,14 @@ def test_recovery_member_requires_current_authority_puzzle() -> None:
     assert _condition(result, 65).rest().first().as_atom() == (
         transition.authority_current_full_puzzle_hash
     )
+    assert _condition(result, 63).rest().first().as_atom() == hashlib.sha256(
+        transition.authority_current_full_puzzle_hash + state_announcement
+    ).digest()
 
     # Abraham's H1 proof used a delegated puzzle that omitted the honest
-    # Authority announcement assertion. The member now emits its own
-    # consensus-level Authority condition independently of delegated content.
+    # Authority announcement assertion. The member emits both consensus-level
+    # Authority conditions independently of delegated content: the live
+    # singleton must be spent, and it must announce a lost-key prepare state.
     malicious_delegated_puzzle = Program.to((1, [[51, b"x" * 32, 5]]))
     member_result = identity.recovery_key_branch.puzzle.puzzle(
         identity.slot
@@ -611,6 +776,7 @@ def test_recovery_member_requires_current_authority_puzzle() -> None:
                 bytes32(
                     transition.authority_current_inner_puzzle.get_tree_hash()
                 ),
+                state_announcement[2:],
             ]
         ),
         flags=RUN_FLAGS,
@@ -619,7 +785,22 @@ def test_recovery_member_requires_current_authority_puzzle() -> None:
     assert _condition(member_result, 65).rest().first().as_atom() == (
         transition.authority_current_full_puzzle_hash
     )
-    assert not _condition_values(member_result, 63)
+    assert _condition(member_result, 63).rest().first().as_atom() == (
+        hashlib.sha256(
+            transition.authority_current_full_puzzle_hash
+            + state_announcement
+        ).digest()
+    )
+
+    unrelated_announcement = (
+        b"\x53\x01" + state_announcement[2:]
+    )
+    assert _condition(member_result, 63).rest().first().as_atom() != (
+        hashlib.sha256(
+            transition.authority_current_full_puzzle_hash
+            + unrelated_announcement
+        ).digest()
+    )
 
 
 def test_inner_parser_round_trips_identity_custody_and_manifest() -> None:
