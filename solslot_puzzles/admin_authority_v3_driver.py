@@ -26,9 +26,6 @@ from chia.wallet.puzzles.custody.custody_architecture import (
     PuzzleWithRestrictions,
     ProvenSpend,
 )
-from chia.wallet.puzzles.custody.member_puzzles import (
-    BLSWithTaprootMember,
-)
 from chia.wallet.puzzles.custody.restriction_utilities import (
     ValidatorStackRestriction,
 )
@@ -91,6 +88,7 @@ _ADMIN_AUTHORITY_ACTION_V1_MOD: Program | None = None
 _ADMIN_IDENTITY_ACTION_V1_MOD: Program | None = None
 _ADMIN_IDENTITY_TERMINAL_ACTION_V1_MOD: Program | None = None
 _ADMIN_IDENTITY_PREPARE_ANNOUNCEMENT_V1_MOD: Program | None = None
+_ADMIN_RECOVERY_AUTHORITY_MEMBER_V1_MOD: Program | None = None
 
 
 def admin_authority_v3_inner_mod() -> Program:
@@ -140,6 +138,15 @@ def admin_identity_prepare_announcement_v1_mod() -> Program:
             "admin_identity_prepare_announcement_v1.clsp"
         )
     return _ADMIN_IDENTITY_PREPARE_ANNOUNCEMENT_V1_MOD
+
+
+def admin_recovery_authority_member_v1_mod() -> Program:
+    global _ADMIN_RECOVERY_AUTHORITY_MEMBER_V1_MOD
+    if _ADMIN_RECOVERY_AUTHORITY_MEMBER_V1_MOD is None:
+        _ADMIN_RECOVERY_AUTHORITY_MEMBER_V1_MOD = load_puzzle(
+            "admin_recovery_authority_member_v1.clsp"
+        )
+    return _ADMIN_RECOVERY_AUTHORITY_MEMBER_V1_MOD
 
 
 @dataclass(frozen=True)
@@ -193,6 +200,35 @@ class _SingletonMemberWithMode:
         return Program.from_bytes(puzzle_mods.SINGLETON_MEMBER_WITH_MODE).curry(
             singleton_struct,
             self.mode,
+        )
+
+    def puzzle_hash(self, nonce: int) -> bytes32:
+        return bytes32(self.puzzle(nonce).get_tree_hash())
+
+
+@dataclass(frozen=True)
+class _RecoveryAuthorityMember:
+    recovery_bls_pubkey: bytes
+    authority_launcher_id: bytes32
+
+    def memo(self, nonce: int) -> Program:
+        return Program.to(
+            [self.recovery_bls_pubkey, self.authority_launcher_id]
+        )
+
+    def puzzle(self, nonce: int) -> Program:
+        singleton_struct = Program.to(
+            (
+                bytes32(SINGLETON_MOD_HASH),
+                (
+                    self.authority_launcher_id,
+                    bytes32(SINGLETON_LAUNCHER_HASH),
+                ),
+            )
+        )
+        return admin_recovery_authority_member_v1_mod().curry(
+            self.recovery_bls_pubkey,
+            singleton_struct,
         )
 
     def puzzle_hash(self, nonce: int) -> bytes32:
@@ -520,8 +556,11 @@ def _identity_policy(
     )
     daily_path_hash = daily_path_branch.puzzle_hash(_top_level=False)
 
-    recovery_key = G1Element.from_bytes(recovery_bls_pubkey)
-    recovery_member = BLSWithTaprootMember(synthetic_key=recovery_key)
+    G1Element.from_bytes(recovery_bls_pubkey)
+    recovery_member = _RecoveryAuthorityMember(
+        recovery_bls_pubkey=recovery_bls_pubkey,
+        authority_launcher_id=authority_launcher_id,
+    )
     recovery_key_branch = _branch(
         nonce=policy_nonce,
         puzzle=recovery_member,
@@ -962,6 +1001,36 @@ def compute_prepare_binding_hash(
                 current_authority_version,
                 new_authority_version,
                 identity_launcher_id,
+            ]
+        ).get_tree_hash()
+    )
+
+
+def _authority_state_hash(
+    *,
+    parsed: ParsedAdminAuthorityV3,
+    state: AdminAuthorityV3State,
+) -> bytes32:
+    """Return the state hash emitted by ``admin_authority_v3_inner.clsp``."""
+
+    state.validate()
+    return bytes32(
+        Program.to(
+            [
+                parsed.operational_root_hash,
+                list(parsed.lost_recovery_root_hashes),
+                *parsed.identity_launcher_ids,
+                list(state.current_identity_custody_hashes),
+                parsed.source_manifest_hash,
+                state.authority_version,
+                state.pending_kind,
+                state.pending_slot,
+                state.pending_intent_hash,
+                state.pending_identity_coin_id,
+                state.pending_original_custody_hash,
+                state.pending_replacement_custody_hash,
+                state.pending_replacement_member_hash,
+                state.pending_delay_seconds,
             ]
         ).get_tree_hash()
     )
@@ -1546,13 +1615,24 @@ def build_lost_recovery_identity_solution(
             Program.to(None),
         ],
     )
-    recovery_member = identity.recovery_key_branch.puzzle
-    if not isinstance(recovery_member, BLSWithTaprootMember):
-        raise ValueError("identity recovery member is not BLS")
+    pending_authority = parse_inner_puzzle(
+        transition.authority_pending_inner_puzzle
+    )
+    pending_authority_state_hash = _authority_state_hash(
+        parsed=pending_authority,
+        state=pending_authority.state,
+    )
     recovery_solution = identity.recovery_key_branch.solve(
         [],
         [stack.solve(transition.prepare_delegated_puzzle)],
-        recovery_member.solve(),
+        Program.to(
+            [
+                bytes32(
+                    transition.authority_current_inner_puzzle.get_tree_hash()
+                ),
+                pending_authority_state_hash,
+            ]
+        ),
     )
     policy_solution = identity.custody_policy.solve(
         {

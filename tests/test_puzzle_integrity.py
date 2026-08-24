@@ -326,7 +326,11 @@ def test_rc26_manifest_preserves_rc25_and_records_vault_sols_custody():
     for group in ("changedPuzzleHashes", "newPuzzleHashes"):
         for filename, expected_hash in manifest[group].items():
             assert bytes(load_puzzle(filename).get_tree_hash()).hex() == expected_hash
-    assert compute_puzzles_checksum() == manifest["canonicalChecksum"]
+    rc26_end = PUZZLE_FILENAMES.index("vault_sols_inner_v1.clsp") + 1
+    checksum = hashlib.sha256()
+    for filename in PUZZLE_FILENAMES[:rc26_end]:
+        checksum.update(bytes(load_puzzle(filename).get_tree_hash()))
+    assert checksum.hexdigest() == manifest["canonicalChecksum"]
 
 
 def test_rc27_manifest_preserves_every_rc26_puzzle_hash():
@@ -347,4 +351,31 @@ def test_rc27_manifest_preserves_every_rc26_puzzle_hash():
         "changeReasons": {},
         "canonicalChecksum": rc26["canonicalChecksum"],
     }
+    # RC27 is a historical prefix of the current additive puzzle inventory.
+    # Recompute that exact prefix so later releases can append puzzles without
+    # rewriting or invalidating RC27 evidence.
+    rc27_end = PUZZLE_FILENAMES.index("vault_sols_inner_v1.clsp") + 1
+    checksum = hashlib.sha256()
+    for filename in PUZZLE_FILENAMES[:rc27_end]:
+        checksum.update(bytes(load_puzzle(filename).get_tree_hash()))
+    assert checksum.hexdigest() == manifest["canonicalChecksum"]
+
+
+def test_rc27_35_manifest_appends_authority_bound_recovery_member():
+    root = Path(__file__).resolve().parents[1] / "release-manifests"
+    manifest = json.loads(
+        (root / "rc27.35-puzzle-hashes.json").read_text(encoding="utf-8")
+    )
+    rc27 = json.loads(
+        (root / "rc27-puzzle-hashes.json").read_text(encoding="utf-8")
+    )
+    filename = "admin_recovery_authority_member_v1.clsp"
+
+    assert manifest["preservedCanonicalChecksum"] == rc27["canonicalChecksum"]
+    assert manifest["changedPuzzleHashes"] == {}
+    assert tuple(manifest["newPuzzleHashes"]) == (filename,)
+    assert set(manifest["changeReasons"]) == {filename}
+    assert bytes(load_puzzle(filename).get_tree_hash()).hex() == (
+        manifest["newPuzzleHashes"][filename]
+    )
     assert compute_puzzles_checksum() == manifest["canonicalChecksum"]
