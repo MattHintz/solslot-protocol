@@ -130,6 +130,9 @@ PUZZLE_FILENAMES = (
     # coin can only satisfy an exact one-time Pool V4 swap and return change to
     # the same vault-bound puzzle. Appended to preserve historical inventories.
     "vault_sols_inner_v1.clsp",
+    # RC27.35 binds every recovery-BLS identity spend to the current Authority
+    # singleton puzzle without changing any historical puzzle bytecode.
+    "admin_recovery_authority_member_v1.clsp",
 )
 
 # ── Frozen checksum — update after every intentional puzzle change ──
@@ -182,7 +185,9 @@ FROZEN_CHECKSUM: Optional[str] = (
     # inventory also commits to each SmartDeed's DID-authorized launcher hash.
     # RC26 adds the exact funded-redemption voting path to the governed SGT
     # reserve and appends vault-bound Sols custody without changing Pool V4.
-    "cc5807afe5c1a9de082dad2e3f515b3f76f6bfb3e3cb1274bfd589090c6a2e57"
+    # RC27.35 appends an Authority-bound recovery member. Every prior puzzle
+    # hash remains byte-for-byte unchanged and separately release-pinned.
+    "fa25163cb69a464a2f923d0fa8861fde47be095687de7974e74af3ae0c73f2b7"
 )
 
 # ── Cache ──

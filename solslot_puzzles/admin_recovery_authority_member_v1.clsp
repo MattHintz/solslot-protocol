@@ -1,0 +1,31 @@
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; Authority V3 recovery member.
+;;;
+;;; A recovery BLS approval is valid only when a coin locked to the current
+;;; Authority singleton puzzle is spent in the same bundle. The singleton
+;;; launcher is curried; the current inner puzzle hash is supplied by the
+;;; recovery solution. A fabricated coin cannot satisfy the concurrent-puzzle
+;;; assertion because the singleton top layer enforces launcher lineage.
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(mod
+  (
+    RECOVERY_PUBLIC_KEY
+    AUTHORITY_SINGLETON_STRUCT
+    Delegated_Puzzle
+    authority_inner_puzzle_hash
+  )
+
+  (include condition_codes.clib)
+  (include utils.clib)
+  (include utility_macros.clib)
+
+  (assert
+    (is-size-b32 authority_inner_puzzle_hash)
+    (list
+      (list AGG_SIG_ME RECOVERY_PUBLIC_KEY Delegated_Puzzle)
+      (list ASSERT_CONCURRENT_PUZZLE
+        (calculate_full_puzzle_hash
+          AUTHORITY_SINGLETON_STRUCT
+          authority_inner_puzzle_hash))))
+)

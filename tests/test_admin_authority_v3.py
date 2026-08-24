@@ -578,6 +578,50 @@ def test_genesis_fixes_owner_plus_one_and_exact_launcher_funding() -> None:
         )
 
 
+def test_recovery_member_requires_current_authority_puzzle() -> None:
+    fixture = _fixture()
+    identity = fixture.authority.identity_vaults[1]
+    transition, _ = _transition(
+        fixture,
+        slot=identity.slot,
+        kind=PENDING_LOST,
+    )
+    result = identity.custody_reveal.run(
+        build_lost_recovery_identity_solution(
+            identity=identity,
+            transition=transition,
+        ),
+        flags=RUN_FLAGS,
+    )
+
+    assert _condition(result, 65).rest().first().as_atom() == (
+        transition.authority_current_full_puzzle_hash
+    )
+
+    # Abraham's H1 proof used a delegated puzzle that omitted the honest
+    # Authority announcement assertion. The member now emits its own
+    # consensus-level Authority condition independently of delegated content.
+    malicious_delegated_puzzle = Program.to((1, [[51, b"x" * 32, 5]]))
+    member_result = identity.recovery_key_branch.puzzle.puzzle(
+        identity.slot
+    ).run(
+        Program.to(
+            [
+                malicious_delegated_puzzle,
+                bytes32(
+                    transition.authority_current_inner_puzzle.get_tree_hash()
+                ),
+            ]
+        ),
+        flags=RUN_FLAGS,
+    )
+
+    assert _condition(member_result, 65).rest().first().as_atom() == (
+        transition.authority_current_full_puzzle_hash
+    )
+    assert not _condition_values(member_result, 63)
+
+
 def test_inner_parser_round_trips_identity_custody_and_manifest() -> None:
     fixture = _fixture()
     parsed = parse_inner_puzzle(fixture.authority.inner_puzzle)
