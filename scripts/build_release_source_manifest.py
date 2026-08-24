@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the deterministic nine-repository RC27.33 source manifest."""
+"""Build the deterministic nine-repository RC27.35 source manifest."""
 
 from __future__ import annotations
 
@@ -23,8 +23,8 @@ from solslot_puzzles.recovery_dependencies import (
 from solslot_puzzles import FROZEN_CHECKSUM
 
 
-RELEASE_ID = "solslot-v2-alpha-rc27.33-20260823"
-RELEASE_BRANCH = "release/testnet-alpha-rc27.33-20260823"
+RELEASE_ID = "solslot-v2-alpha-rc27.35-20260823"
+RELEASE_BRANCH = "release/testnet-alpha-rc27.35-20260823"
 SOURCE_MANIFEST_VERSION = 4
 SOURCE_REPOSITORIES = {
     "protocol": "https://github.com/MattHintz/solslot-protocol",
@@ -146,7 +146,7 @@ def build_manifest(
     if set(by_name) != set(SOURCE_REPOSITORIES) or len(states) != len(by_name):
         raise ValueError("release source states must contain each repository exactly once")
     if release_id != RELEASE_ID:
-        raise ValueError("release_id must identify the coordinated RC27.33 alpha release")
+        raise ValueError("release_id must identify the coordinated RC27.35 alpha release")
     expected_branch = (
         "release/testnet-alpha-"
         + release_id.removeprefix("solslot-v2-alpha-")
@@ -234,7 +234,7 @@ def verify_release_refs(path: Path, commit: str) -> None:
     if set(remote_refs) != expected_refs:
         raise ValueError(
             f"{path} must expose exact live main, release branch, and "
-            "annotated RC27.33 tag refs"
+            "annotated RC27.35 tag refs"
         )
     if (
         remote_refs[main_ref] != commit
@@ -285,15 +285,15 @@ def build_launch_evidence(
         or manifest.get("releaseId") != RELEASE_ID
         or manifest.get("manifestHash") != manifest_hash(manifest)
     ):
-        raise ValueError("RC27.33 source manifest is invalid")
+        raise ValueError("RC27.35 source manifest is invalid")
     if release_refs_verified is not True:
         raise ValueError(
             "launch evidence requires exact origin/main, release branch, "
-            "and RC27.33 tag verification"
+            "and RC27.35 tag verification"
         )
     if (
         puzzle_inventory.get("schema") != "solslot.puzzle-hashes.v1"
-        or puzzle_inventory.get("release") != "RC27"
+        or puzzle_inventory.get("release") != "RC27.35"
         or puzzle_inventory.get("canonicalChecksum") != FROZEN_CHECKSUM
     ):
         raise ValueError("RC27 puzzle inventory is stale")
@@ -352,7 +352,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default=(
             Path(__file__).resolve().parents[1]
             / "release-manifests"
-            / "rc27-puzzle-hashes.json"
+            / "rc27.35-puzzle-hashes.json"
         ),
     )
     parser.add_argument("--generated-at")
