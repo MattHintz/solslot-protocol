@@ -33,10 +33,10 @@ def states():
 def test_manifest_binds_all_nine_release_sources() -> None:
     value = manifest.build_manifest(states())
     assert value["schemaVersion"] == 4
-    assert value["releaseId"] == "solslot-v2-alpha-rc27.35-20260823"
+    assert value["releaseId"] == "solslot-v2-alpha-rc27.36-20260824"
     assert {
         source["branch"] for source in value["sources"].values()
-    } == {"release/testnet-alpha-rc27.35-20260823"}
+    } == {"release/testnet-alpha-rc27.36-20260824"}
     assert tuple(value["sourceShas"]) == tuple(manifest.SOURCE_REPOSITORIES)
     assert len(value["sources"]) == 9
     dependency = value["dependencies"]["administratorRecovery"]
@@ -73,10 +73,10 @@ def test_manifest_rejects_a_mixed_or_mismatched_release_branch() -> None:
     with pytest.raises(ValueError, match="release branch"):
         manifest.build_manifest(changed)
 
-    with pytest.raises(ValueError, match="coordinated RC27.35"):
+    with pytest.raises(ValueError, match="coordinated RC27.36"):
         manifest.build_manifest(
             states(),
-            release_id="solslot-v2-alpha-rc27.35-20260822",
+            release_id="solslot-v2-alpha-rc27.36-20260823",
         )
 
 
@@ -84,7 +84,7 @@ def test_launch_evidence_binds_manifest_puzzles_and_recovery() -> None:
     source_manifest = manifest.build_manifest(states())
     puzzle_inventory = {
         "schema": "solslot.puzzle-hashes.v1",
-        "release": "RC27.35",
+        "release": "RC27.36",
         "canonicalChecksum": manifest.FROZEN_CHECKSUM,
     }
     evidence = manifest.build_launch_evidence(
@@ -113,7 +113,7 @@ def test_launch_evidence_refuses_unverified_release_refs() -> None:
             manifest_file_sha256="a" * 64,
             puzzle_inventory={
                 "schema": "solslot.puzzle-hashes.v1",
-                "release": "RC27.35",
+                "release": "RC27.36",
                 "canonicalChecksum": manifest.FROZEN_CHECKSUM,
             },
             puzzle_inventory_file_sha256="b" * 64,
@@ -245,7 +245,7 @@ def test_release_refs_reject_remote_release_branch_drift(monkeypatch) -> None:
         _release_ref_git(commit, remote_release_branch="c" * 40),
     )
 
-    with pytest.raises(ValueError, match="release/testnet-alpha-rc27.35"):
+    with pytest.raises(ValueError, match="release/testnet-alpha-rc27.36"):
         manifest.verify_release_refs(Path("repo"), commit)
 
 
@@ -284,7 +284,7 @@ def test_release_refs_reject_lightweight_or_unexpected_remote_refs(
         "_git",
         _release_ref_git(commit, annotated=False),
     )
-    with pytest.raises(ValueError, match="annotated RC27.35"):
+    with pytest.raises(ValueError, match="annotated RC27.36"):
         manifest.verify_release_refs(Path("repo"), commit)
 
     monkeypatch.setattr(
@@ -300,5 +300,5 @@ def test_release_refs_reject_lightweight_or_unexpected_remote_refs(
         "_git",
         _release_ref_git(commit, extra_ref=True),
     )
-    with pytest.raises(ValueError, match="annotated RC27.35"):
+    with pytest.raises(ValueError, match="annotated RC27.36"):
         manifest.verify_release_refs(Path("repo"), commit)

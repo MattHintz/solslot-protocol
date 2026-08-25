@@ -379,3 +379,24 @@ def test_rc27_35_manifest_appends_authority_bound_recovery_member():
         manifest["newPuzzleHashes"][filename]
     )
     assert compute_puzzles_checksum() == manifest["canonicalChecksum"]
+
+
+def test_rc27_36_manifest_preserves_every_rc27_35_puzzle_hash():
+    root = Path(__file__).resolve().parents[1] / "release-manifests"
+    manifest = json.loads(
+        (root / "rc27.36-puzzle-hashes.json").read_text(encoding="utf-8")
+    )
+    rc27_35 = json.loads(
+        (root / "rc27.35-puzzle-hashes.json").read_text(encoding="utf-8")
+    )
+    assert manifest == {
+        "schema": "solslot.puzzle-hashes.v1",
+        "release": "RC27.36",
+        "preservedRelease": "RC27.35",
+        "preservedCanonicalChecksum": rc27_35["canonicalChecksum"],
+        "changedPuzzleHashes": {},
+        "newPuzzleHashes": {},
+        "changeReasons": {},
+        "canonicalChecksum": rc27_35["canonicalChecksum"],
+    }
+    assert compute_puzzles_checksum() == manifest["canonicalChecksum"]
