@@ -1219,19 +1219,22 @@ def _validate_release_attestation(
     ):
         findings.append(Finding("error", "release attestation does not match the RC23 testnet artifact"))
     locks = _require_mapping(attestation.get("writeLocks"), "release writeLocks", findings)
-    if locks and locks != {
-        "alphaWritesEnabled": False,
-        "mintingEnabled": False,
-        "ceremonyModeEnabled": False,
-    }:
+    if locks is not None and (
+        locks != {
+            "alphaWritesEnabled": False,
+            "mintingEnabled": False,
+            "ceremonyModeEnabled": False,
+        }
+        or any(value is not False for value in locks.values())
+    ):
         findings.append(Finding("error", "Alpha writes, minting, and ceremony mode must remain locked"))
     consumers = _require_mapping(attestation.get("consumers"), "release consumers", findings)
     sources = artifact.get("sourceShas", {})
-    if consumers:
+    if consumers is not None:
         _require_exact_keys(consumers, CONSUMERS, "release consumers", findings)
         for name in CONSUMERS:
             entry = _require_mapping(consumers.get(name), f"release consumer {name}", findings)
-            if not entry:
+            if entry is None:
                 continue
             if (
                 entry.get("reachable") is not True
