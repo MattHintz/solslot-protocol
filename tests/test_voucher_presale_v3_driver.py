@@ -303,7 +303,8 @@ def test_stripe_voucher_refund_burns_receipt_without_creating_deed_offer() -> No
         )
 
 
-def test_live_stripe_voucher_atomically_delivers_reserved_smartdeed() -> None:
+@pytest.mark.parametrize("inventory_version", [1, 2])
+def test_live_stripe_voucher_atomically_delivers_reserved_smartdeed(inventory_version) -> None:
     terms, voucher, receipt, issuance = issued_voucher()
     phase = build_voucher_series_phase_spend(
         terms=terms,
@@ -337,6 +338,7 @@ def test_live_stripe_voucher_atomically_delivers_reserved_smartdeed() -> None:
         signer_indices=(0, 1),
     )
     mint_terms = PrimaryMintTermsV3.for_artifact(
+        inventory_version=inventory_version,
         artifact=receipt.artifact,
         smart_deed_inner_hash=voucher.smart_deed_inner_hash,
         deed_launcher_puzzle_hash=deed_launcher_puzzle_hash_from_struct(

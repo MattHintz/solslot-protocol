@@ -224,6 +224,7 @@ class RC23GenesisCeremonyPlan:
     canonical_vault_params_hash: bytes32
     retired_coordinates: tuple[bytes32, ...]
     plan_hash: bytes32
+    enrollment_activation: Mapping[str, Any] | None = None
 
     @property
     def statutes(self) -> SingletonSurface:
@@ -546,6 +547,8 @@ def _plan_payload(
             _hex(value) for value in plan.retired_coordinates
         ],
     }
+    if plan.enrollment_activation is not None:
+        payload["enrollmentActivation"] = json.loads(json.dumps(plan.enrollment_activation))
     if include_hash:
         payload["planHash"] = _hex(plan.plan_hash)
     return payload
@@ -620,11 +623,13 @@ def build_rc23_genesis_ceremony_plan(
     admin_authority_version: int = 1,
     vault_version: int = RC23_VAULT_VERSION,
     property_registry_version: int = 0,
+    enrollment_activation: Mapping[str, Any] | None = None,
 ) -> RC23GenesisCeremonyPlan:
     if network != GENESIS_NETWORK:
         raise ValueError("RC23 fresh genesis is restricted to testnet11")
-    if evm_chain_id != GENESIS_EVM_CHAIN_ID:
-        raise ValueError("RC23 fresh genesis requires Base Sepolia")
+    expected_evm_chain = 84532 if enrollment_activation is not None else GENESIS_EVM_CHAIN_ID
+    if type(evm_chain_id) is not int or evm_chain_id != expected_evm_chain:
+        raise ValueError("RC23 genesis chain must match its explicit legacy or permit selection")
     _nonzero(ceremony_id, "ceremony_id")
     _nonzero(faucet_puzzle_hash, "faucet_puzzle_hash")
     if expires_at <= 0:
@@ -712,6 +717,13 @@ def build_rc23_genesis_ceremony_plan(
         GENESIS_VALIDATOR_THRESHOLD,
     )
     bridge_policy_hash = validator_set.policy_hash
+    selected_activation = None
+    if enrollment_activation is not None:
+        from .enrollment_activation import validate_enrollment_activation
+        selected_activation = validate_enrollment_activation(enrollment_activation,
+            source_shas=normalized_sources,ceremony_id=_hex(ceremony_id),
+            emitter=normalized_evm['attestationEmitter'],validator_pubkeys=validator_set.pubkeys)
+        bridge_policy_hash = bytes32.from_hexstr(selected_activation['bridgePolicyHash'])
     resolved_parameters = parameters or ProtocolParameters()
     protocol = build_rc22_protocol_deployment_plan(
         network=network,
@@ -843,6 +855,7 @@ def build_rc23_genesis_ceremony_plan(
         canonical_vault_params_hash=canonical_vault_params_hash,
         retired_coordinates=retired,
         plan_hash=bytes32.zeros,
+        enrollment_activation=selected_activation,
     )
     object.__setattr__(plan, "plan_hash", _compute_plan_hash(plan))
     return plan
@@ -852,10 +865,21 @@ def verify_rc23_genesis_ceremony_plan(
     plan: RC23GenesisCeremonyPlan,
 ) -> None:
     plan.funding.validate()
+    if plan.enrollment_activation is not None:
+        from .enrollment_activation import validate_enrollment_activation
+        selected = validate_enrollment_activation(plan.enrollment_activation,
+            source_shas=plan.source_shas,ceremony_id=_hex(plan.ceremony_id),
+            emitter=plan.evm_addresses['attestationEmitter'],validator_pubkeys=plan.validator_pubkeys)
+        selected_hash = bytes32.from_hexstr(selected['bridgePolicyHash'])
+        if (plan.bridge_batch.policy_hash != selected_hash
+                or plan.protocol.trusted_zkpassport_bridge_policy_hash != selected_hash
+                or any(c.puzzle_hash != selected_hash or c.amount != 1 for c in plan.bridge_batch.bridge_coins)):
+            raise ValueError('enrollment activation is not pinned by genesis vault and bridge outputs')
     if plan.network != GENESIS_NETWORK:
         raise ValueError("ceremony plan network is not testnet11")
-    if plan.evm_chain_id != GENESIS_EVM_CHAIN_ID:
-        raise ValueError("ceremony plan EVM chain is not Base Sepolia")
+    expected_evm_chain = 84532 if plan.enrollment_activation is not None else GENESIS_EVM_CHAIN_ID
+    if type(plan.evm_chain_id) is not int or plan.evm_chain_id != expected_evm_chain:
+        raise ValueError("ceremony plan EVM chain differs from its selected policy")
     expected_dependency_hash = bytes32.from_hexstr(
         RECOVERY_DEPENDENCY_MANIFEST_HASH
     )

@@ -600,8 +600,11 @@ class PrimaryPurchaseMintConfig:
     validator_pubkeys: tuple[bytes, bytes, bytes]
     provider_id: bytes32
     technology_fee_bps: int = 100
+    inventory_version: int = 1
 
     def __post_init__(self) -> None:
+        if type(self.inventory_version) is not int or self.inventory_version not in (1, 2):
+            raise ValueError("unsupported inventory puzzle version")
         if not self.network or len(self.network.encode("ascii")) > 32:
             raise ValueError("primary purchase network must be 1-32 ASCII bytes")
         if self.usd_amount_minor <= 0 or self.usd_amount_minor > 0xFFFFFFFFFFFFFFFF:
@@ -767,6 +770,7 @@ def build_mint_publish_artifacts(
                 protocol_puzhash=primary_purchase.protocol_treasury_puzhash,
                 validator_pubkeys=primary_purchase.validator_pubkeys,
                 provider_id=primary_purchase.provider_id,
+                inventory_version=primary_purchase.inventory_version,
             )
         )
     eve_mint_offer_inner_hash = bytes32(eve_mint_offer_inner.get_tree_hash())

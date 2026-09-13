@@ -705,8 +705,9 @@ def build_vault_deposit_spend(
     AGG_SIG_ME condition, and the wallet signs the resulting SpendBundle.
 
     `lineage_proof` must reflect the PARENT of `vault_coin`:
-      - If the parent is the launcher coin, use the `(launcher_id, launcher_amount)`
-        form (which `LineageProof(parent_name=launcher_id, amount=1)` produces).
+      - If the parent is the launcher coin, use `(launcher_parent_id, launcher_amount)`:
+        `LineageProof(parent_name=launcher_coin.parent_coin_info, amount=1)`.
+        Passing the launcher coin ID itself does not prove eve-singleton lineage.
       - Otherwise use the full `(parent_name, parent_inner_puzhash, parent_amount)`
         form, derived via `lineage_proof_for_coinsol(parent_spend)`.
     """

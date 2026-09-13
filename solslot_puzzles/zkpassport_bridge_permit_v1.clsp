@@ -1,0 +1,182 @@
+(mod
+  (
+    VALIDATOR_PUBKEYS
+    THRESHOLD
+    PERMIT_CONTEXT_HASH
+    my_id
+    my_puzzlehash
+    my_amount
+    vault_launcher_id
+    new_identity_attest_root
+    attestation_leaf_hash
+    scoped_nullifier
+    nullifier_type_b32
+    service_scope_hash
+    service_subscope_hash
+    proof_timestamp_b32
+    signer_indices
+    permit_id
+    current_vault_coin_id
+    owner_auth_type
+    owner_key_hash
+    issued_at
+    expires_at
+  )
+
+  (include condition_codes.clib)
+  (include utils.clib)
+  (include utility_macros.clib)
+
+  (defconstant ZKPASSPORT_ATTEST_DOMAIN 0x736f6c736c6f742d7a6b70617373706f72742d7661756c742d6174746573746174696f6e2d7632)
+  (defconstant ZKPASSPORT_POLICY_VERSION 2)
+  (defconstant ZKPASSPORT_POLICY_VERSION_B32 0x0000000000000000000000000000000000000000000000000000000000000002)
+  (defconstant ZKPASSPORT_EMPTY_ATTEST_ROOT 0x4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a)
+
+  (defconstant PERMIT_DOMAIN 0x736f6c736c6f742d656e726f6c6c6d656e742d7065726d69742d7631)
+  (defconstant VALIDATOR_PERMIT_DOMAIN 0x736f6c736c6f742d656e726f6c6c6d656e742d76616c696461746f722d7631)
+
+  (defun-inline permit-hash (permit_id context vault current_vault owner_type owner bridge issued expires)
+    (sha256tree (list PERMIT_DOMAIN permit_id context vault current_vault owner_type owner bridge issued expires)))
+
+  (defun list-length (lst)
+    (if lst (+ 1 (list-length (r lst))) 0)
+  )
+
+  (defun nth (lst n)
+    (if (= n 0)
+      (f lst)
+      (nth (r lst) (- n 1))
+    )
+  )
+
+  (defun is-sorted-strict (lst)
+    (if lst
+      (if (r lst)
+        (if (> (f (r lst)) (f lst))
+          (is-sorted-strict (r lst))
+          ()
+        )
+        1
+      )
+      1
+    )
+  )
+
+  (defun all-indices-in-range (signer_indices bound)
+    (if signer_indices
+      (if (> 0 (f signer_indices))
+        ()
+        (if (> bound (f signer_indices))
+          (all-indices-in-range (r signer_indices) bound)
+          ()
+        )
+      )
+      1
+    )
+  )
+
+  (defun emit-sigs (pubkeys signer_indices msg)
+    (if signer_indices
+      (c
+        (list AGG_SIG_ME (nth pubkeys (f signer_indices)) msg)
+        (emit-sigs pubkeys (r signer_indices) msg)
+      )
+      ()
+    )
+  )
+
+  (defun-inline bridge-message (vault_launcher_id new_identity_attest_root bridge_policy_hash)
+    (sha256tree
+      (list
+        ZKPASSPORT_ATTEST_DOMAIN
+        ZKPASSPORT_POLICY_VERSION
+        vault_launcher_id
+        new_identity_attest_root
+        bridge_policy_hash
+      )
+    )
+  )
+
+  (defun-inline validator-message (
+      vault_launcher_id new_identity_attest_root bridge_policy_hash bridge_coin_id
+      attestation_leaf_hash scoped_nullifier nullifier_type_b32
+      service_scope_hash service_subscope_hash proof_timestamp_b32)
+    (sha256tree
+      (list
+        ZKPASSPORT_POLICY_VERSION_B32
+        vault_launcher_id
+        new_identity_attest_root
+        bridge_policy_hash
+        bridge_coin_id
+        (bridge-message vault_launcher_id new_identity_attest_root bridge_policy_hash)
+        attestation_leaf_hash
+        scoped_nullifier
+        nullifier_type_b32
+        service_scope_hash
+        service_subscope_hash
+        proof_timestamp_b32
+      )
+    )
+  )
+
+  (assert
+    (is-size-b32 PERMIT_CONTEXT_HASH)
+    (not (= PERMIT_CONTEXT_HASH 0x0000000000000000000000000000000000000000000000000000000000000000))
+    (is-size-b32 permit_id)
+    (not (= permit_id 0x0000000000000000000000000000000000000000000000000000000000000000))
+    (is-size-b32 current_vault_coin_id)
+    (not (= current_vault_coin_id 0x0000000000000000000000000000000000000000000000000000000000000000))
+    (is-size-b32 owner_key_hash)
+    (not (= owner_key_hash 0x0000000000000000000000000000000000000000000000000000000000000000))
+    (any (= owner_auth_type 1) (= owner_auth_type 2))
+    (is-uint64 issued_at)
+    (> issued_at 0)
+    (is-uint64 expires_at)
+    (> expires_at issued_at)
+    (not (> (- expires_at issued_at) 3600))
+    (= THRESHOLD 2)
+    (= (list-length VALIDATOR_PUBKEYS) 3)
+    (is-size-b32 my_id)
+    (is-size-b32 my_puzzlehash)
+    (is-uint64 my_amount)
+    (= my_amount 1)
+    (all-bls-g1-pubkeys VALIDATOR_PUBKEYS)
+    (has-no-duplicates VALIDATOR_PUBKEYS ())
+    (is-uint64 THRESHOLD)
+    (> THRESHOLD 0)
+    (not (> THRESHOLD (list-length VALIDATOR_PUBKEYS)))
+    (is-sorted-strict signer_indices)
+    (not (> THRESHOLD (list-length signer_indices)))
+    (all-indices-in-range signer_indices (list-length VALIDATOR_PUBKEYS))
+    (is-size-b32 vault_launcher_id)
+    (is-size-b32 new_identity_attest_root)
+    (not (= new_identity_attest_root ZKPASSPORT_EMPTY_ATTEST_ROOT))
+    (is-size-b32 attestation_leaf_hash)
+    (is-size-b32 scoped_nullifier)
+    (is-size-b32 nullifier_type_b32)
+    (is-size-b32 service_scope_hash)
+    (is-size-b32 service_subscope_hash)
+    (is-size-b32 proof_timestamp_b32)
+    (merge-lists
+      (emit-sigs VALIDATOR_PUBKEYS signer_indices
+        (sha256tree (list VALIDATOR_PERMIT_DOMAIN
+          (validator-message
+            vault_launcher_id new_identity_attest_root my_puzzlehash my_id
+            attestation_leaf_hash scoped_nullifier nullifier_type_b32
+            service_scope_hash service_subscope_hash proof_timestamp_b32)
+          (permit-hash permit_id PERMIT_CONTEXT_HASH vault_launcher_id current_vault_coin_id
+            owner_auth_type owner_key_hash my_id issued_at expires_at))))
+      (list
+        (list CREATE_COIN_ANNOUNCEMENT
+          (concat PROTOCOL_PREFIX
+            (bridge-message vault_launcher_id new_identity_attest_root my_puzzlehash)))
+        (list ASSERT_MY_COIN_ID my_id)
+        (list ASSERT_MY_PUZZLEHASH my_puzzlehash)
+        (list ASSERT_MY_AMOUNT my_amount)
+        (list ASSERT_SECONDS_ABSOLUTE issued_at)
+        (list ASSERT_BEFORE_SECONDS_ABSOLUTE expires_at)
+        (list ASSERT_CONCURRENT_SPEND current_vault_coin_id)
+      )
+    )
+  )
+)

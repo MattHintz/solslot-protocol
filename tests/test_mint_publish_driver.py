@@ -929,12 +929,14 @@ class TestArtifactsCrossDriver:
 
         assert artifacts.deed_full_puzhash == expected
 
-    def test_collection_mint_uses_native_purchase_eve(self):
+    @pytest.mark.parametrize("inventory_version", [1, 2])
+    def test_collection_mint_uses_native_purchase_eve(self, inventory_version):
         metadata_root = _b(0xD1)
         provider_id = _b(0xD2)
         validators = tuple(bytes([value]) * 48 for value in (0x11, 0x22, 0x33))
         config = PrimaryPurchaseMintConfig(
             network="testnet11",
+            inventory_version=inventory_version,
             usd_amount_minor=125_000,
             protocol_treasury_puzhash=_b(0xD4),
             validator_pubkeys=validators,
@@ -969,6 +971,7 @@ class TestArtifactsCrossDriver:
         expected_inner = make_inventory_available_inner(
             PrimaryMintTermsV3(
                 network="testnet11",
+            inventory_version=inventory_version,
                 smart_deed_inner_hash=bytes32(smart.get_tree_hash()),
                 deed_launcher_id=artifacts.deed_launcher_id,
                 deed_launcher_puzzle_hash=deed_launcher_puzzle_hash(

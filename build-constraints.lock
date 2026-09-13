@@ -1,0 +1,4 @@
+# PEP 517 build backends for the pinned upstream archive and editable packages.
+poetry-core==2.4.1
+setuptools==83.0.0
+wheel==0.47.0

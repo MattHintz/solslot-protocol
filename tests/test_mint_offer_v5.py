@@ -578,3 +578,14 @@ def test_v5_settlement_announcement_cannot_drop_base_result() -> None:
     prepare_purchase_batch_receipt_offer,
     purchase_batch_child_settlement_message,
     purchase_batch_settlement_authorization_message,
+
+
+@pytest.fixture(autouse=True, params=[1, 2])
+def inventory_version_coverage(request, monkeypatch):
+    import sys
+    from dataclasses import replace
+    original = mint_terms
+    def selected(*args, **kwargs):
+        result = original(*args, **kwargs)
+        return replace(result, inventory_version=request.param)
+    monkeypatch.setattr(sys.modules[__name__], "mint_terms", selected)
