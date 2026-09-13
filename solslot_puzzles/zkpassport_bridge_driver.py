@@ -12,6 +12,7 @@ from chia_rs.sized_bytes import bytes32
 from chia_rs.sized_ints import uint64
 
 from solslot_puzzles import load_puzzle
+from solslot_puzzles.enrollment_permit import EnrollmentPermit, permit_owner_from_native
 from solslot_puzzles.vault_driver import build_vault_update_identity_spend
 from solslot_puzzles.zkpassport_attestation import (
     compute_attestation_bridge_message,
@@ -206,23 +207,53 @@ def build_bridge_and_vault_update_identity_bundle(
     current_timestamp: int,
     lineage_proof: LineageProof,
     signature_data: bytes | None = None,
+    enrollment_permit: EnrollmentPermit | None = None,
 ) -> BridgeVaultEnrollmentBundle:
-    bridge_policy_hash = make_bridge_policy_hash(validator_pubkeys, threshold)
-    bridge_coin = Coin(bridge_parent_id, bridge_policy_hash, uint64(bridge_amount))
-    bridge = build_bridge_spend(
-        bridge_coin=bridge_coin,
-        validator_pubkeys=validator_pubkeys,
-        threshold=threshold,
-        signer_indices=signer_indices,
-        vault_launcher_id=vault_launcher_id,
-        new_identity_attest_root=new_identity_attest_root,
-        attestation_leaf_hash=attestation_leaf_hash,
-        scoped_nullifier=scoped_nullifier,
-        nullifier_type=nullifier_type,
-        service_scope_hash=service_scope_hash,
-        service_subscope_hash=service_subscope_hash,
-        proof_timestamp=proof_timestamp,
-    )
+    if enrollment_permit is None:
+        bridge_policy_hash = make_bridge_policy_hash(validator_pubkeys, threshold)
+        bridge_coin = Coin(bridge_parent_id, bridge_policy_hash, uint64(bridge_amount))
+        bridge = build_bridge_spend(
+            bridge_coin=bridge_coin,
+            validator_pubkeys=validator_pubkeys,
+            threshold=threshold,
+            signer_indices=signer_indices,
+            vault_launcher_id=vault_launcher_id,
+            new_identity_attest_root=new_identity_attest_root,
+            attestation_leaf_hash=attestation_leaf_hash,
+            scoped_nullifier=scoped_nullifier,
+            nullifier_type=nullifier_type,
+            service_scope_hash=service_scope_hash,
+            service_subscope_hash=service_subscope_hash,
+            proof_timestamp=proof_timestamp,
+        )
+    else:
+        from .enrollment_permit_driver import make_permit_bridge_puzzle, build_permit_bridge_spend
+        if not isinstance(enrollment_permit, EnrollmentPermit):
+            raise ValueError("enrollment_permit must be a canonical permit")
+        require_genesis_validator_set(validator_pubkeys, threshold)
+        enrollment_permit.require_live(current_timestamp)
+        owner_key = owner_pubkey_bytes
+        if auth_type == 3:
+            from cryptography.hazmat.primitives.asymmetric import ec
+            from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+            from .vault_driver import _keccak256
+            point = ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256K1(), owner_key)
+            owner_key = _keccak256(point.public_bytes(Encoding.X962, PublicFormat.UncompressedPoint)[1:])[-20:]
+        owner_type, owner_hash = permit_owner_from_native(auth_type, owner_key)
+        if (enrollment_permit.vault_launcher_id != vault_launcher_id
+                or enrollment_permit.current_vault_coin_id != vault_coin.name()
+                or enrollment_permit.owner_auth_type != owner_type
+                or enrollment_permit.owner_key_hash != owner_hash):
+            raise ValueError("permit does not bind the vault input and owner")
+        bridge_policy_hash = make_permit_bridge_puzzle(validator_pubkeys, enrollment_permit.context_hash).get_tree_hash()
+        bridge_coin = Coin(bridge_parent_id, bridge_policy_hash, uint64(bridge_amount))
+        bridge = build_permit_bridge_spend(
+            permit=enrollment_permit, bridge_coin=bridge_coin, validator_pubkeys=validator_pubkeys,
+            signer_indices=signer_indices, new_identity_attest_root=new_identity_attest_root,
+            attestation_leaf_hash=attestation_leaf_hash, scoped_nullifier=scoped_nullifier,
+            nullifier_type=nullifier_type, service_scope_hash=service_scope_hash,
+            service_subscope_hash=service_subscope_hash, proof_timestamp=proof_timestamp,
+        )
     vault_spend = build_vault_update_identity_spend(
         vault_coin=vault_coin,
         vault_launcher_id=vault_launcher_id,

@@ -1,7 +1,7 @@
 """RC25 governed-asset receipt and primary SmartDeed delivery drivers."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import hashlib
 from typing import Sequence
 
@@ -69,6 +69,9 @@ _STRIPE_SETTLEMENT_DOMAIN = b"SOLSLOT_STRIPE_RECEIPT_SETTLEMENT_V1"
 # only immutable serialized puzzle bytes at module scope and reconstruct the
 # Program in the calling thread.
 _MINT_OFFER_V5_MOD_BYTES = bytes(load_puzzle("mint_offer_delegate_v5.clsp"))
+_INVENTORY_AVAILABLE_V2_MOD_BYTES = bytes(
+    load_puzzle("mint_offer_inventory_available_v2.clsp")
+)
 _INVENTORY_AVAILABLE_MOD_BYTES = bytes(
     load_puzzle("mint_offer_inventory_available_v1.clsp")
 )
@@ -146,8 +149,11 @@ class PrimaryMintTermsV3:
     protocol_puzhash: bytes32
     validator_pubkeys: tuple[bytes, bytes, bytes]
     provider_id: bytes32 = PRIMARY_PURCHASE_PROVIDER_ID
+    inventory_version: int = 1
 
     def __post_init__(self) -> None:
+        if type(self.inventory_version) is not int or self.inventory_version not in (1, 2):
+            raise PaymentArtifactError("unsupported inventory puzzle version")
         if not self.network or len(self.network.encode("ascii")) > 32:
             raise PaymentArtifactError("network must be 1-32 ASCII bytes")
         for name in (
@@ -186,6 +192,7 @@ class PrimaryMintTermsV3:
         protocol_puzhash: bytes32,
         validator_pubkeys: tuple[bytes, bytes, bytes],
         provider_id: bytes32 = PRIMARY_PURCHASE_PROVIDER_ID,
+        inventory_version: int = 1,
     ) -> "PrimaryMintTermsV3":
         return cls(
             network=artifact.network,
@@ -206,6 +213,7 @@ class PrimaryMintTermsV3:
             protocol_puzhash=protocol_puzhash,
             validator_pubkeys=validator_pubkeys,
             provider_id=provider_id,
+            inventory_version=inventory_version,
         )
 
 
@@ -567,7 +575,8 @@ def _mint_immutable_args(terms: PrimaryMintTermsV3) -> tuple[object, ...]:
 
 
 def make_inventory_available_inner(terms: PrimaryMintTermsV3) -> Program:
-    mod = mint_offer_inventory_available_v1_mod()
+    mod = (mint_offer_inventory_available_v1_mod() if terms.inventory_version == 1
+           else Program.from_bytes(_INVENTORY_AVAILABLE_V2_MOD_BYTES))
     return mod.curry(
         bytes32(mod.get_tree_hash()),
         mint_offer_delegate_v5_mod_hash(),
@@ -630,6 +639,28 @@ def assert_artifact_matches_terms(
         raise PaymentArtifactError(
             "purchase artifact vault puzzle hash is not canonical"
         )
+
+
+def inventory_terms_for_puzzle_hash(
+    terms: PrimaryMintTermsV3,
+    deed_singleton_struct: Program,
+    puzzle_hash: bytes32,
+    *,
+    reservation: InventoryReservationV1 | None = None,
+) -> PrimaryMintTermsV3:
+    """Select only a canonical version matching the chain-committed coin.
+
+    Callers must independently authenticate the coin, governed terms and
+    singleton lineage. This never migrates a coin or accepts a custom module.
+    """
+    _smart_deed_driver(terms, deed_singleton_struct)
+    for version in (1, 2):
+        candidate = replace(terms, inventory_version=version)
+        inner = (make_inventory_available_inner(candidate) if reservation is None
+                 else make_mint_offer_v5_inner(candidate, reservation))
+        if SINGLETON_MOD.curry(deed_singleton_struct, inner).get_tree_hash() == puzzle_hash:
+            return candidate
+    raise PaymentArtifactError("coin does not match a supported governed inventory puzzle")
 
 
 def inventory_reservation_message(
@@ -2471,6 +2502,7 @@ __all__ = [
     "inventory_extension_message",
     "inventory_release_message",
     "inventory_reservation_message",
+    "inventory_terms_for_puzzle_hash",
     "make_inventory_available_inner",
     "make_mint_offer_v5_inner",
     "make_stripe_receipt_puzzle",

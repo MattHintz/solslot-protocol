@@ -33,7 +33,8 @@
       "voting_deadline",
       "metadata_root",
       "metadata_anchor_id",
-      "primary_purchase_usd_amount_minor"
+      "primary_purchase_usd_amount_minor",
+      "inventory_puzzle_version"
     ],
     "protocol_context": [
       {

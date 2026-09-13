@@ -85,6 +85,8 @@ def _projection(plan: RC23GenesisCeremonyPlan) -> dict[str, Any]:
     projection["adminRecoveryKits"] = list(
         canonical["adminRecoveryKits"]
     )
+    if plan.enrollment_activation is not None:
+        projection["enrollmentActivation"] = canonical["enrollmentActivation"]
     return projection
 
 
@@ -335,6 +337,7 @@ def _rebuild_plan(
             _bytes32(value, "retiredCoordinate")
             for value in plan["retiredCoordinates"]
         ],
+        enrollment_activation=plan.get("enrollmentActivation"),
         parameters=resolved_parameters,
         network=str(plan["network"]),
         evm_chain_id=int(plan["evmChainId"]),
@@ -358,8 +361,9 @@ def _verify_artifact_content(payload: Mapping[str, Any]) -> None:
         raise ValueError("unsupported or retired protocolVersion")
     if payload.get("network") != GENESIS_NETWORK:
         raise ValueError("artifact network is not testnet11")
-    if payload.get("evmChainId") != GENESIS_EVM_CHAIN_ID:
-        raise ValueError("artifact EVM chain is not Base Sepolia")
+    expected_chain = 84532 if payload.get('enrollmentActivation') is not None else GENESIS_EVM_CHAIN_ID
+    if type(payload.get("evmChainId")) is not int or payload.get("evmChainId") != expected_chain:
+        raise ValueError("artifact EVM chain differs from its enrollment activation selection")
     review_class = payload.get("reviewClass")
     if review_class not in REVIEW_CLASSES:
         raise ValueError("artifact reviewClass is unsupported")
@@ -418,6 +422,11 @@ def _verify_artifact_content(payload: Mapping[str, Any]) -> None:
         )
 
     projection = _projection(rebuilt)
+    from .inventory_activation import validate_inventory_activation, validate_inventory_recovery
+    validate_inventory_activation(payload)
+    validate_inventory_recovery(payload)
+    from .enrollment_activation import activation_from_artifact
+    activation_from_artifact(payload)
     for key, value in projection.items():
         if payload.get(key) != value:
             raise ValueError(

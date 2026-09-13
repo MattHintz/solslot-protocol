@@ -134,6 +134,9 @@ PUZZLE_FILENAMES = (
     # singleton's exact lost-key prepare transition without changing any
     # historical puzzle bytecode.
     "admin_recovery_authority_member_v1.clsp",
+    # Additive reservation execution repair. Historical modules remain exact.
+    "mint_offer_inventory_available_v2.clsp",
+    "zkpassport_bridge_permit_v1.clsp",
 )
 
 # ── Frozen checksum — update after every intentional puzzle change ──
@@ -189,7 +192,7 @@ FROZEN_CHECKSUM: Optional[str] = (
     # RC27.35 appends an Authority-lost-prepare-bound recovery member. Every
     # prior puzzle hash remains byte-for-byte unchanged and separately
     # release-pinned.
-    "5bd24e39994e8806945c657626ee0e9108373fc6d598477cdced905d9ae0c921"
+    "6203daaf64c965e328c4e98df5e3d41ed68624a45980a35a122247f68d647a25"
 )
 
 # ── Cache ──

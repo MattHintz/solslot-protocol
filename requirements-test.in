@@ -1,6 +1,8 @@
 aiosqlite==0.21.0
 aiohttp==3.14.3
 chia-blockchain==2.7.2
+# Official upstream metadata fix; executable Python/puzzle bytes match PyPI 0.20.3.
+chia-puzzles-py @ https://codeload.github.com/Chia-Network/chia_puzzles/tar.gz/8ac1b8f794b6de159a74af334d562f71f4883798#sha256=b30f696398995845888f950d86351e203de534fec697a78710eec0758bf8ad64
 cryptography==50.0.0
 # Chia 2.7.2 requires this exact release. It is yanked upstream for
 # thread-safety concerns, but no compatible non-yanked build exists.
@@ -9,7 +11,6 @@ zstd @ https://files.pythonhosted.org/packages/11/c4/db4807d6a68b4628c74fd379de7
 eth-keys==0.7.0
 pip-audit==2.9.0
 pycryptodome==3.23.0
-# chia-puzzles-py 0.20.3 requires pytest <9. PYSEC-2026-1845 has no
-# compatible fixed release; protocol CI runs only trusted repository tests.
-pytest==8.4.2
+# Patched temporary-directory handling; no advisory waiver.
+pytest==9.0.3
 pytest-asyncio==1.3.0

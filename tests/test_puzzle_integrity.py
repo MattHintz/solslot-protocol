@@ -378,7 +378,10 @@ def test_rc27_35_manifest_appends_authority_bound_recovery_member():
     assert bytes(load_puzzle(filename).get_tree_hash()).hex() == (
         manifest["newPuzzleHashes"][filename]
     )
-    assert compute_puzzles_checksum() == manifest["canonicalChecksum"]
+    # Verify this historical prefix; the current release appends inventory V2.
+    end = PUZZLE_FILENAMES.index("admin_recovery_authority_member_v1.clsp") + 1
+    assert hashlib.sha256(b"".join(bytes(load_puzzle(name).get_tree_hash())
+                                  for name in PUZZLE_FILENAMES[:end])).hexdigest() == manifest["canonicalChecksum"]
 
 
 def test_rc27_36_manifest_preserves_every_rc27_35_puzzle_hash():
@@ -399,4 +402,7 @@ def test_rc27_36_manifest_preserves_every_rc27_35_puzzle_hash():
         "changeReasons": {},
         "canonicalChecksum": rc27_35["canonicalChecksum"],
     }
-    assert compute_puzzles_checksum() == manifest["canonicalChecksum"]
+    # Verify this historical prefix; the current release appends inventory V2.
+    end = PUZZLE_FILENAMES.index("admin_recovery_authority_member_v1.clsp") + 1
+    assert hashlib.sha256(b"".join(bytes(load_puzzle(name).get_tree_hash())
+                                  for name in PUZZLE_FILENAMES[:end])).hexdigest() == manifest["canonicalChecksum"]

@@ -47,8 +47,8 @@ def _domain(
     *,
     version: str = EIP712_DOMAIN_VERSION,
 ) -> dict[str, Any]:
-    if chain_id != GENESIS_EVM_CHAIN_ID:
-        raise ValueError("genesis administrator signatures are restricted to Sepolia")
+    if type(chain_id) is not int or chain_id not in (GENESIS_EVM_CHAIN_ID,84532):
+        raise ValueError("genesis administrator signatures require explicit Ethereum Sepolia or Base Sepolia")
     return {
         "name": EIP712_DOMAIN_NAME,
         "version": version,
@@ -157,8 +157,9 @@ def genesis_artifact_signing_typed_data(
         raise ValueError("unsupported artifact protocolVersion")
     if payload.get("network") != GENESIS_NETWORK:
         raise ValueError("genesis artifact is restricted to testnet11")
-    if payload.get("evmChainId") != GENESIS_EVM_CHAIN_ID:
-        raise ValueError("genesis artifact is restricted to Sepolia")
+    expected_chain = 84532 if schema_version == 4 and payload.get('enrollmentActivation') is not None else GENESIS_EVM_CHAIN_ID
+    if type(payload.get("evmChainId")) is not int or payload.get("evmChainId") != expected_chain:
+        raise ValueError("genesis artifact chain differs from its explicit enrollment policy")
     ceremony = payload.get("ceremony")
     if not isinstance(ceremony, Mapping):
         raise ValueError("artifact ceremony metadata is missing")

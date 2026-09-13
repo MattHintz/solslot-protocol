@@ -531,3 +531,15 @@ def test_receipt_and_mint_fail_closed_on_vault_or_roster_drift() -> None:
         )
 
         assert_artifact_matches_terms(altered, terms)
+
+
+@pytest.fixture(autouse=True, params=[1, 2])
+def inventory_version_coverage(request, monkeypatch):
+    import sys
+    from dataclasses import replace
+    original = settlement
+    def selected(*args, **kwargs):
+        result = original(*args, **kwargs)
+        receipt, terms = result
+        return receipt, replace(terms, inventory_version=request.param)
+    monkeypatch.setattr(sys.modules[__name__], "settlement", selected)
