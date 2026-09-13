@@ -35,10 +35,9 @@ def test_upstream_archive_and_installed_python_bytes_are_pinned():
         assert hashlib.sha256(dist.locate_file(files[name]).read_bytes()).hexdigest() == expected
 
 
-def test_upstream_pytest_is_optional_and_patched_runner_is_selected():
+def test_upstream_does_not_require_pytest_and_patched_runner_is_selected():
     requirements = [Requirement(r) for r in importlib.metadata.requires("chia-puzzles-py")]
     runner = [r for r in requirements if r.name == "pytest"]
-    assert len(runner) == 1
-    assert runner[0].marker is not None
-    assert not runner[0].marker.evaluate({"extra": ""})
+    # Poetry omits optional dependencies that are not assigned to an extra.
+    assert runner == []
     assert importlib.metadata.version("pytest") == "9.0.3"
