@@ -1197,7 +1197,7 @@ def build_base_voucher_terminal_spends(
     custodian and settles only after the resulting Chia evidence is confirmed.
     """
     _assert_voucher_matches_terms(terms, voucher)
-    _assert_base_voucher_matches_purchase(voucher, purchase)
+    _assert_base_voucher_matches_purchase(voucher, purchase, terms)
     if voucher.state != VoucherState.ESCROWED:
         raise VoucherV2Error("only an ESCROWED voucher can settle on chain")
     if action not in {
@@ -1675,35 +1675,10 @@ def _assert_voucher_matches_terms(
 def _assert_base_voucher_matches_purchase(
     voucher: VoucherCommitmentV2,
     purchase: PurchaseArtifactV2,
+    terms: VoucherSeriesTermsV2,
 ) -> None:
-    if (
-        voucher.payment_rail != VoucherPaymentRail.BASE_SEPOLIA_USDC
-        or purchase.rail != PaymentRail.EVM_TEST_USD
-        or voucher.payment_chain_id != 84532
-        or purchase.rail_chain_id != 84532
-        or voucher.payment_asset_id != BASE_SEPOLIA_USDC_ASSET_ID
-        or purchase.rail_asset_id != BASE_SEPOLIA_USDC_ASSET_ID
-        or voucher.payment_asset_decimals != 6
-        or purchase.rail_asset_decimals != 6
-    ):
-        raise PaymentArtifactError(
-            "Base voucher requires official six-decimal Base Sepolia USDC"
-        )
-    comparisons = (
-        (purchase.collection_id, voucher.collection_id),
-        (purchase.deed_launcher_id, voucher.deed_launcher_id),
-        (purchase.metadata_root, voucher.metadata_root),
-        (purchase.vault_launcher_id, voucher.approved_vault_launcher_id),
-        (purchase.vault_p2_puzzle_hash, voucher.approved_vault_p2_puzzle_hash),
-    )
-    if any(left != right for left, right in comparisons):
-        raise PaymentArtifactError("purchase artifact differs from voucher commitments")
-    if (
-        purchase.usd_amount_minor != voucher.gross_price_minor
-        or purchase.rail_amount != voucher.payment_principal
-        or purchase.artifact_hash != voucher.purchase_artifact_hash
-    ):
-        raise PaymentArtifactError("purchase price differs from voucher commitments")
+    from solslot_puzzles.voucher_purchase import validate_base_voucher_purchase
+    validate_base_voucher_purchase(voucher, purchase, terms)
 
 
 def _signer_indices(values: Sequence[int]) -> tuple[int, ...]:
