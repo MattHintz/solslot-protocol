@@ -1,5 +1,6 @@
 """Executed offline conditions and synthetic BLS controls, not live receipts."""
 from dataclasses import replace
+from tests.historical_puzzles import historical_puzzle, historical_source_path
 import hashlib
 import json
 from pathlib import Path
@@ -156,10 +157,10 @@ def test_all_historical_puzzle_source_bytes_and_hashes_preserved():
     # additive modules are appended; do not rewrite its original checksum.
     historical = tuple(r['filename'] for r in manifest['preserved']) + (manifest['newPuzzle']['filename'],)
     assert PUZZLE_FILENAMES[:len(historical)] == historical
-    assert hashlib.sha256(b''.join(bytes(load_puzzle(name).get_tree_hash()) for name in historical)).hexdigest() == manifest['canonicalChecksum']
+    assert hashlib.sha256(b''.join(bytes(historical_puzzle(name).get_tree_hash()) for name in historical)).hexdigest() == manifest['canonicalChecksum']
     for row in manifest['preserved']:
         name = row['filename']
-        assert hashlib.sha256((root/'solslot_puzzles'/name).read_bytes()).hexdigest() == row['sourceSha256']
-        assert hashlib.sha256((root/'solslot_puzzles'/(name+'.hex')).read_bytes()).hexdigest() == row['hexSha256']
-        assert load_puzzle(name).get_tree_hash().hex() == row['treeHash']
-    assert load_puzzle(manifest['newPuzzle']['filename']).get_tree_hash().hex() == manifest['newPuzzle']['treeHash']
+        assert hashlib.sha256(historical_source_path(name).read_bytes()).hexdigest() == row['sourceSha256']
+        assert hashlib.sha256(historical_source_path(name+'.hex').read_bytes()).hexdigest() == row['hexSha256']
+        assert historical_puzzle(name).get_tree_hash().hex() == row['treeHash']
+    assert historical_puzzle(manifest['newPuzzle']['filename']).get_tree_hash().hex() == manifest['newPuzzle']['treeHash']

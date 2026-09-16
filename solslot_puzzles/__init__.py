@@ -192,7 +192,7 @@ FROZEN_CHECKSUM: Optional[str] = (
     # RC27.35 appends an Authority-lost-prepare-bound recovery member. Every
     # prior puzzle hash remains byte-for-byte unchanged and separately
     # release-pinned.
-    "6203daaf64c965e328c4e98df5e3d41ed68624a45980a35a122247f68d647a25"
+    "2e8dec8ef4101598c25bc408990b3946f1193b6e8d86b4a64f3592ef4946f3df"
 )
 
 # ── Cache ──

@@ -104,28 +104,64 @@ def vault_sols_operation_announcement(
     )
 
 
-def eip712_typed_data_for_sols_swap(
+def _sols_swap_intent(
     operation_hash: bytes32,
     vault_coin_id: bytes32,
+    *,
+    pool_coin_id: bytes32,
+    pool_inner_puzzle_hash: bytes32,
+    quote_expires_at: int,
+    deed_launcher_id: bytes32 | None = None,
+    p2_vault_coin_id: bytes32 | None = None,
+    smart_deed_inner_puzzle_hash: bytes32 | None = None,
+) -> list[object]:
+    for name, value in (
+        ("operation_hash", operation_hash), ("vault_coin_id", vault_coin_id),
+        ("pool_coin_id", pool_coin_id), ("pool_inner_puzzle_hash", pool_inner_puzzle_hash),
+    ):
+        if not isinstance(value, bytes32) or value == bytes32.zeros:
+            raise ValueError(f"{name} must be a non-zero bytes32")
+    if pool_coin_id == vault_coin_id:
+        raise ValueError("pool input must differ from the vault input")
+    if type(quote_expires_at) is not int or not 0 < quote_expires_at < 2**64:
+        raise ValueError("quote_expires_at must be a positive uint64")
+    fields = (deed_launcher_id, p2_vault_coin_id, smart_deed_inner_puzzle_hash)
+    transfer = []
+    if any(value is not None for value in fields):
+        if not all(isinstance(value, bytes32) and value != bytes32.zeros for value in fields):
+            raise ValueError("deed transfer fields must be non-zero bytes32 values supplied together")
+        if p2_vault_coin_id in (vault_coin_id, pool_coin_id):
+            raise ValueError("held input must differ from vault and pool inputs")
+        transfer = list(fields)
+    return [VAULT_SOLS_SWAP_TAG, operation_hash, vault_coin_id,
+            [pool_coin_id, pool_inner_puzzle_hash], quote_expires_at, transfer]
+
+
+def sols_swap_authorization_hash(
+    operation_hash: bytes32, vault_coin_id: bytes32, **intent: object,
+) -> bytes32:
+    """Consensus commitment to the complete vault action, including no transfer."""
+    return bytes32(Program.to(_sols_swap_intent(operation_hash, vault_coin_id, **intent)).get_tree_hash())
+
+
+def eip712_typed_data_for_sols_swap(
+    operation_hash: bytes32, vault_coin_id: bytes32, **intent: object,
 ) -> dict:
     return eip712_typed_data_for_vault_spend(
         bytes([SPEND_AUTHORIZE_SOLS_SWAP]),
-        operation_hash,
+        sols_swap_authorization_hash(operation_hash, vault_coin_id, **intent),
         vault_coin_id,
     )
 
 
 def signing_digest_for_sols_swap(
-    operation_hash: bytes32,
-    vault_coin_id: bytes32,
+    operation_hash: bytes32, vault_coin_id: bytes32, **intent: object,
 ) -> bytes32:
-    return bytes32(
-        signing_message_for_vault_spend(
-            bytes([SPEND_AUTHORIZE_SOLS_SWAP]),
-            operation_hash,
-            vault_coin_id,
-        )
-    )
+    return bytes32(signing_message_for_vault_spend(
+        bytes([SPEND_AUTHORIZE_SOLS_SWAP]),
+        sols_swap_authorization_hash(operation_hash, vault_coin_id, **intent),
+        vault_coin_id,
+    ))
 
 
 def sgt_lock_operation_hash(
@@ -506,29 +542,21 @@ def inner_solution_for_sols_swap(
     vault_inner_puzzle_hash: bytes32,
     vault_amount: int,
     operation_hash: bytes32,
+    pool_coin_id: bytes32,
+    pool_inner_puzzle_hash: bytes32,
     quote_expires_at: int,
     signature_data: Optional[bytes] = None,
     deed_launcher_id: bytes32 | None = None,
     p2_vault_coin_id: bytes32 | None = None,
     smart_deed_inner_puzzle_hash: bytes32 | None = None,
 ) -> Program:
-    if vault_amount <= 0:
-        raise ValueError("vault_amount must be positive")
-    if quote_expires_at <= 0:
-        raise ValueError("quote_expires_at must be positive")
-    deed_fields = (
-        deed_launcher_id,
-        p2_vault_coin_id,
-        smart_deed_inner_puzzle_hash,
-    )
-    if any(value is not None for value in deed_fields) and not all(
-        value is not None for value in deed_fields
-    ):
-        raise ValueError("deed transfer fields must be supplied together")
-    deed_transfer = (
-        list(deed_fields)
-        if deed_launcher_id is not None
-        else []
+    if type(vault_amount) is not int or not 0 < vault_amount < 2**64:
+        raise ValueError("vault_amount must be a positive uint64")
+    intent = _sols_swap_intent(
+        operation_hash, vault_coin_id, pool_coin_id=pool_coin_id,
+        pool_inner_puzzle_hash=pool_inner_puzzle_hash, quote_expires_at=quote_expires_at,
+        deed_launcher_id=deed_launcher_id, p2_vault_coin_id=p2_vault_coin_id,
+        smart_deed_inner_puzzle_hash=smart_deed_inner_puzzle_hash,
     )
     return Program.to(
         [
@@ -540,7 +568,8 @@ def inner_solution_for_sols_swap(
                 operation_hash,
                 quote_expires_at,
                 signature_data or b"",
-                deed_transfer,
+                intent[5],
+                intent[3],
             ],
         ]
     )
@@ -557,6 +586,8 @@ def build_vault_sols_swap_spend(
     identity_attest_root: bytes32,
     zkpassport_bridge_policy_hash: bytes32,
     operation_hash: bytes32,
+    pool_coin_id: bytes32,
+    pool_inner_puzzle_hash: bytes32,
     quote_expires_at: int,
     lineage_proof: LineageProof,
     signature_data: Optional[bytes] = None,
@@ -581,11 +612,15 @@ def build_vault_sols_swap_spend(
         zkpassport_bridge_policy_hash=zkpassport_bridge_policy_hash,
     )
     full = puzzle_for_singleton(vault_launcher_id, inner)
+    if vault_coin.puzzle_hash != full.get_tree_hash():
+        raise ValueError("vault coin does not match the reviewed vault")
     inner_solution = inner_solution_for_sols_swap(
         vault_coin_id=vault_coin.name(),
         vault_inner_puzzle_hash=bytes32(inner.get_tree_hash()),
         vault_amount=int(vault_coin.amount),
         operation_hash=operation_hash,
+        pool_coin_id=pool_coin_id,
+        pool_inner_puzzle_hash=pool_inner_puzzle_hash,
         quote_expires_at=quote_expires_at,
         signature_data=signature_data,
         deed_launcher_id=deed_launcher_id,
@@ -601,6 +636,7 @@ def build_vault_sols_swap_spend(
 
 
 __all__ = [
+    "sols_swap_authorization_hash",
     "SPEND_AUTHORIZE_SOLS_SWAP",
     "SPEND_ACCEPT_REDEMPTION",
     "SPEND_AUTHORIZE_SGT_LOCK",

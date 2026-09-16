@@ -400,6 +400,37 @@ def _fixture() -> SwapFixture:
     )
 
 
+def _assert_signed_consensus(bundle):
+    import chia_rs
+    from chia.consensus.default_constants import DEFAULT_CONSTANTS
+    from chia.consensus.condition_tools import conditions_dict_for_solution, pkm_pairs_for_conditions_dict
+    from chia.wallet.puzzles.p2_delegated_puzzle_or_hidden_puzzle import calculate_synthetic_secret_key, DEFAULT_HIDDEN_PUZZLE_HASH
+    synthetic = calculate_synthetic_secret_key(OWNER_SK, DEFAULT_HIDDEN_PUZZLE_HASH)
+    keys = {bytes(key.get_g1()): key for key in (OWNER_SK, synthetic)}
+    # Fresh CAT issuance needs matching XCH backing. Supply that separately,
+    # as a synthetic funding control, before validating the complete bundle.
+    spends = list(bundle.coin_spends)
+    output_amount = sum(max(0, c.rest().rest().first().as_int())
+        for spend in spends
+        for c in Program.from_bytes(bytes(spend.puzzle_reveal)).run(Program.from_bytes(bytes(spend.solution))).as_iter()
+        if c.first().as_int() == 51)
+    backing = max(0, output_amount - sum(spend.coin.amount for spend in spends))
+    if backing:
+        from chia.types.coin_spend import make_spend
+        from chia.wallet.puzzles.p2_delegated_puzzle_or_hidden_puzzle import solution_for_conditions
+        funding_puzzle = puzzle_for_pk(OWNER_SK.get_g1())
+        funding_coin = Coin(b32(199), funding_puzzle.get_tree_hash(), backing + 1)
+        spends.append(make_spend(funding_coin, funding_puzzle,
+            solution_for_conditions([[51, funding_puzzle.get_tree_hash(), 1]])))
+    signatures = []
+    for spend in spends:
+        conditions = conditions_dict_for_solution(spend.puzzle_reveal, spend.solution, 11_000_000_000)
+        for key, message in pkm_pairs_for_conditions_dict(conditions, spend.coin, DEFAULT_CONSTANTS.AGG_SIG_ME_ADDITIONAL_DATA):
+            signatures.append(AugSchemeMPL.sign(keys[bytes(key)], message))
+    signed = chia_rs.SpendBundle(spends, AugSchemeMPL.aggregate(signatures))
+    chia_rs.validate_clvm_and_signature(signed, 11_000_000_000, DEFAULT_CONSTANTS, chia_rs.MEMPOOL_MODE | chia_rs.ENABLE_SECP_OPS | chia_rs.ENABLE_KECCAK_OPS_OUTSIDE_GUARD)
+
+
 def test_sols_to_deed_offer_balances_exact_protocol_spends() -> None:
     fixture = _fixture()
     buyer = prepare_vault_sols_buyer_offer(
@@ -444,6 +475,7 @@ def test_sols_to_deed_offer_balances_exact_protocol_spends() -> None:
         vault_launcher_id=VAULT_LAUNCHER,
     )
     assert aggregate.aggregate_offer.is_valid()
+    _assert_signed_consensus(aggregate.aggregate_offer.to_valid_spend())
     assert len(aggregate.aggregate_offer.to_valid_spend().coin_spends) == 6
     assert len(
         (
@@ -742,6 +774,7 @@ def test_deed_to_sols_offer_bootstraps_atomically_and_preserves_anchor() -> None
     assert receipt.next_state.economics.reserve_sols_mojos == 1
     assert protocol.offer.is_valid()
     spend = protocol.offer.to_valid_spend()
+    _assert_signed_consensus(spend)
     assert len(spend.coin_spends) == 7
     assert protocol.reserve_cat_spend.coin == reserve_coin
     assert set(protocol.offer.requested_payments) == {RULES.sols_tail_hash}

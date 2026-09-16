@@ -649,8 +649,6 @@
           (list ASSERT_BEFORE_SECONDS_ABSOLUTE quote-expires)
           (list CREATE_PUZZLE_ANNOUNCEMENT
             (concat PROTOCOL_PREFIX (sha256tree (list SWAP_OPERATION_TAG op-hash))))
-          (list CREATE_COIN_ANNOUNCEMENT
-            (concat PROTOCOL_PREFIX (sha256tree (list SWAP_OPERATION_TAG op-hash))))
           (list REMARK PROTOCOL_PREFIX SWAP_OPERATION_TAG DEED_TO_SOLS op-hash
                 seller-amount reserve-paid fresh-mint))
         (merge-lists
@@ -770,8 +768,6 @@
           (list ASSERT_SECONDS_ABSOLUTE (nth 4 collection))
           (list ASSERT_BEFORE_SECONDS_ABSOLUTE quote-expires)
           (list CREATE_PUZZLE_ANNOUNCEMENT
-            (concat PROTOCOL_PREFIX (sha256tree (list SWAP_OPERATION_TAG op-hash))))
-          (list CREATE_COIN_ANNOUNCEMENT
             (concat PROTOCOL_PREFIX (sha256tree (list SWAP_OPERATION_TAG op-hash))))
           (list REMARK PROTOCOL_PREFIX SWAP_OPERATION_TAG SOLS_TO_DEED op-hash
                 principal protocol-amount rewards-amount))

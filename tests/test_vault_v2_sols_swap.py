@@ -17,6 +17,7 @@ from solslot_puzzles.vault_driver import (
 )
 from solslot_puzzles.vault_v2_driver import (
     SPEND_AUTHORIZE_SOLS_SWAP,
+    sols_swap_authorization_hash,
     inner_solution_for_sols_swap,
     puzzle_for_vault_v2_inner,
     signing_digest_for_sols_swap,
@@ -37,6 +38,7 @@ BRIDGE_POLICY = b32(0x15)
 OPERATION_HASH = b32(0x16)
 VAULT_COIN_ID = b32(0x17)
 QUOTE_EXPIRES = 1_900_000_000
+POOL_INTENT = dict(pool_coin_id=b32(0x19), pool_inner_puzzle_hash=b32(0x20))
 EIP712_RUN_FLAGS = (
     chia_rs.MEMPOOL_MODE
     | chia_rs.ENABLE_SECP_OPS
@@ -106,6 +108,7 @@ def test_bls_vault_authorizes_one_exact_sols_operation() -> None:
         vault_amount=1,
         operation_hash=OPERATION_HASH,
         quote_expires_at=QUOTE_EXPIRES,
+        **POOL_INTENT,
     )
     conditions = list(inner.run(solution).as_iter())
     agg_sig = next(
@@ -113,7 +116,9 @@ def test_bls_vault_authorizes_one_exact_sols_operation() -> None:
         for condition in conditions
         if condition.first().as_int() == 50
     )
-    assert agg_sig.rest().rest().first().as_atom() == OPERATION_HASH
+    assert agg_sig.rest().rest().first().as_atom() == sols_swap_authorization_hash(
+        OPERATION_HASH, VAULT_COIN_ID, quote_expires_at=QUOTE_EXPIRES, **POOL_INTENT,
+    )
     announcement = next(
         condition
         for condition in conditions
@@ -131,6 +136,8 @@ def test_evm_signature_is_bound_to_operation_and_current_vault_coin() -> None:
     digest = signing_digest_for_sols_swap(
         OPERATION_HASH,
         VAULT_COIN_ID,
+        quote_expires_at=QUOTE_EXPIRES,
+        **POOL_INTENT,
     )
     public_key, signature = _secp256k1_keypair_and_sign(digest)
     inner = _inner(public_key, AUTH_TYPE_SECP256K1)
@@ -140,6 +147,7 @@ def test_evm_signature_is_bound_to_operation_and_current_vault_coin() -> None:
         vault_amount=1,
         operation_hash=OPERATION_HASH,
         quote_expires_at=QUOTE_EXPIRES,
+        **POOL_INTENT,
         signature_data=signature,
     )
     conditions = inner.run(solution, flags=EIP712_RUN_FLAGS).as_python()
@@ -156,6 +164,7 @@ def test_evm_signature_is_bound_to_operation_and_current_vault_coin() -> None:
         vault_amount=1,
         operation_hash=OPERATION_HASH,
         quote_expires_at=QUOTE_EXPIRES,
+        **POOL_INTENT,
         signature_data=signature,
     )
     with pytest.raises(Exception):

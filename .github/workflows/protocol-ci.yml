@@ -25,7 +25,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: MattHintz/solslot-portal
-          ref: 40cb45a016bb294291785dc8baa80247b1895eae
+          ref: 4fc251319e44641a9e82287a99100b19258a4d1c
           path: admin-portal
           persist-credentials: false
 

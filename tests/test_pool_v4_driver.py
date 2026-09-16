@@ -284,7 +284,9 @@ def test_sols_to_deed_solution_pays_reserve_and_fees_without_melt() -> None:
     conditions = inner.run(solution).as_python()
     assert any(condition[0] == b"\x3d" for condition in conditions)
     assert any(condition[0] == b"\x3e" for condition in conditions)
-    assert not any(condition[0] == b"\x3c" for condition in conditions)
+    assert [condition[1] for condition in conditions if condition[0] == b"\x3c"] == [
+        b"S" + bytes(Program.to([b"PSOL", receipt.operation_hash]).get_tree_hash())
+    ]
     assert receipt.next_state.inventory_root == inventory_root(())
 
     altered_fee = solution.as_python()

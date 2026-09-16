@@ -1,7 +1,7 @@
 """
 vault_driver.py — Driver for creating and spending user vault singletons.
 
-A user vault is a standard Chia singleton wrapping vault_singleton_inner.clsp.
+A user vault is a standard Chia singleton wrapping vault_singleton_inner_v2.clsp.
 It is identified by its launcher ID (vault_launcher_id) which is fixed at deploy
 time and never changes.  The p2_vault puzzle is derived deterministically from
 vault_launcher_id and holds deed NFTs on the user's behalf.
@@ -74,11 +74,11 @@ logger = logging.getLogger(__name__)
 
 SINGLETON_AMOUNT = uint64(1)
 
-VAULT_INNER_MOD: Program = load_puzzle("vault_singleton_inner.clsp")
+VAULT_INNER_MOD: Program = load_puzzle("vault_singleton_inner_v2.clsp")
 P2_VAULT_MOD: Program = load_puzzle("p2_vault.clsp")
 P2_VAULT_MOD_HASH: bytes32 = bytes32(P2_VAULT_MOD.get_tree_hash())
 
-# Auth type constants — mirror vault_singleton_inner.clsp
+# Auth type constants — mirror vault_singleton_inner_v2.clsp
 AUTH_TYPE_BLS = 1        # Chia-native BLS (Goby, Sage)
 AUTH_TYPE_SECP256R1 = 2  # Passkey / WebAuthn secp256r1
 AUTH_TYPE_SECP256K1 = 3  # EVM wallet secp256k1 (EIP-712)
@@ -163,7 +163,7 @@ def vault_discovery_hint(auth_type: int, owner_pubkey: bytes) -> bytes32:
 # EIP-712 domain declaration — single source of truth.
 #
 # Any change to these three values requires regenerating PREFIX_AND_DOMAIN_SEPARATOR
-# in solslot_puzzles/vault_singleton_inner.clsp to match.  See the eip712 audit
+# in solslot_puzzles/vault_singleton_inner_v2.clsp to match.  See the eip712 audit
 # helper `eip712_prefix_and_domain_separator()` below — it is the generator.
 #
 # chainId = 11155111 (Ethereum Sepolia) matches the Solslot alpha EVM deployment.
@@ -175,7 +175,7 @@ EIP712_DOMAIN_VERSION: str = "2"
 EIP712_DOMAIN_CHAIN_ID: int = 11155111
 
 # Typehash: keccak256("SolslotVaultSpend(bytes32 spend_case,bytes32 deed_launcher_id,bytes32 vault_coin_id)")
-# Mirrors SOLSLOT_VAULT_TYPEHASH in vault_singleton_inner.clsp.
+# Mirrors SOLSLOT_VAULT_TYPEHASH in vault_singleton_inner_v2.clsp.
 SOLSLOT_VAULT_TYPEHASH_STRING: bytes = (
     b"SolslotVaultSpend(bytes32 spend_case,bytes32 deed_launcher_id,bytes32 vault_coin_id)"
 )
@@ -229,7 +229,7 @@ def parse_vault_inner_puzzle(curried_inner_puzzle: Program) -> VaultInnerState:
         raise ValueError("puzzle is not curried; cannot parse state")
     mod, args = uncurried
     if bytes32(mod.get_tree_hash()) != bytes32(VAULT_INNER_MOD.get_tree_hash()):
-        raise ValueError("puzzle reveal does not instantiate vault_singleton_inner.clsp")
+        raise ValueError("puzzle reveal does not instantiate vault_singleton_inner_v2.clsp")
     args_list = list(args.as_iter())
     if len(args_list) != 9:
         raise ValueError(f"vault_singleton_inner expects 9 curried args, got {len(args_list)}")
@@ -353,7 +353,7 @@ def eip712_prefix_and_domain_separator() -> bytes:
     """Return the 34-byte `0x1901 || DOMAIN_SEPARATOR` bytestring.
 
     This is the exact value of `PREFIX_AND_DOMAIN_SEPARATOR` in
-    `vault_singleton_inner.clsp`.  The puzzle uses it as a raw concatenation
+    `vault_singleton_inner_v2.clsp`.  The puzzle uses it as a raw concatenation
     prefix to `keccak256(typehash || struct_fields...)` to produce the final
     EIP-712 digest.
 
@@ -419,7 +419,7 @@ def signing_message_for_vault_spend(
 ) -> bytes:
     """Compute the 32-byte EIP-712 digest that an EVM wallet produces for a vault spend.
 
-    Matches `verify_secp256k1` inside `vault_singleton_inner.clsp` byte-for-byte
+    Matches `verify_secp256k1` inside `vault_singleton_inner_v2.clsp` byte-for-byte
     AND matches `eth_signTypedData_v4(typed_data)` on any standard EVM wallet
     where `typed_data = eip712_typed_data_for_vault_spend(...)`.
 
@@ -521,7 +521,7 @@ def launcher_coin_for_parent(parent_coin: Coin) -> Coin:
 # SpendBundle.  The caller is responsible for co-spending the pool / p2_vault /
 # deed coins in the same bundle.
 #
-# Solution shapes (inner puzzle `vault_singleton_inner.clsp`):
+# Solution shapes (inner puzzle `vault_singleton_inner_v2.clsp`):
 #   'o' deposit: (my_id my_inner_puzhash my_amount SPEND_CASE
 #                  (deed_launcher_id current_timestamp signature_data))
 #   'i' receive: (my_id my_inner_puzhash my_amount SPEND_CASE
@@ -532,7 +532,7 @@ def launcher_coin_for_parent(parent_coin: Coin) -> Coin:
 # from both 'o' and 'i' — the puzzle never consumed it.  See SECURITY_AUDIT_2026_04_19.md.
 # ---------------------------------------------------------------------------
 
-# Spend-case byte literals — mirror `vault_singleton_inner.clsp`.
+# Spend-case byte literals — mirror `vault_singleton_inner_v2.clsp`.
 SPEND_DEPOSIT_TO_POOL: int = 0x6F   # b'o'
 SPEND_RECEIVE_FROM_POOL: int = 0x69  # b'i'
 SPEND_ACCEPT_OFFER: int = 0x61      # b'a' (BLS-only; secp deferred — see CRIT-2 residual)
@@ -904,7 +904,7 @@ def migrate_bls_signing_tree(
     """Return the inner of the AGG_SIG_ME message a BLS owner signs for a 'm' spend.
 
     Matches `(sha256tree (list SPEND_MIGRATE deed_launcher_id new_p2_vault_puzzlehash my_id))`
-    inside `vault_singleton_inner.clsp`.  The network appends the coin id and
+    inside `vault_singleton_inner_v2.clsp`.  The network appends the coin id and
     genesis challenge to form the full AGG_SIG_ME message; this is the puzzle's
     contribution to it.
     """

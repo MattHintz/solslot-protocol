@@ -172,7 +172,7 @@ def test_rc23_plan_replaces_nav_registry_with_statutes() -> None:
         "purpose": "permanent-cat-lineage-anchor",
     }
     assert payload["puzzleHashes"]["poolInnerMod"] == (
-        "0x1d4be5fec4d196e6920d8e04f7680e813e310040348ce153b49191e633650768"
+        "0xe01e8cb71b9612ba01ac9678e45e6cae6915cebffff6795f6809c081d973e27d"
     )
 
 
