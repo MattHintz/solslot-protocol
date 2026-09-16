@@ -9,8 +9,10 @@ balance.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 from typing import Sequence
 
+from chia.consensus.default_constants import DEFAULT_CONSTANTS
 from chia.types.blockchain_format.coin import Coin
 from chia.types.blockchain_format.program import Program
 from chia.types.coin_spend import CoinSpend, make_spend
@@ -26,6 +28,8 @@ from chia.wallet.conditions import (
     CreateCoin,
 )
 from chia.wallet.lineage_proof import LineageProof
+from chia.wallet.puzzle_drivers import PuzzleInfo
+from chia.wallet.util.compute_hints import compute_spend_hints_and_additions
 from chia.wallet.puzzles.p2_delegated_puzzle_or_hidden_puzzle import (
     puzzle_for_pk,
     solution_for_conditions,
@@ -72,6 +76,8 @@ from solslot_puzzles.sols_pool_v4 import (
     SwapReceipt,
 )
 from solslot_puzzles.vault_driver import (
+    AUTH_TYPE_BLS,
+    AUTH_TYPE_SECP256K1,
     puzzle_for_p2_vault,
     puzzle_hash_for_p2_vault,
 )
@@ -89,6 +95,112 @@ from solslot_puzzles.vault_sols_v1 import (
 
 class SolsSwapOfferError(ValueError):
     """Raised when a Sols swap offer does not match the governed operation."""
+
+
+@dataclass(frozen=True)
+class _SolsSwapComponents:
+    coin_spends: tuple[CoinSpend, ...]
+    requested_payments: dict[bytes32 | None, list[NotarizedPayment]]
+    driver_dict: dict[bytes32, PuzzleInfo]
+    reserve_signing_conditions: Program | None = None
+
+
+@dataclass(frozen=True)
+class UnsignedSolsSwapEvidence:
+    """Exact protocol candidate, never a signed or funded transaction.
+
+    The EVM vault solution deliberately retains its empty authorization slot.
+    Its successor is an expectation from the pinned vault template, not an
+    executed output. The candidate hash is not a transaction ID or authority
+    to sign; all owner signatures and the fountain fee/backing spend are absent.
+    """
+
+    direction: str
+    coin_spends: tuple[CoinSpend, ...]
+    spend_roles: tuple[str, ...]
+    vault_coin_id: bytes32
+    expected_vault_successor: Coin
+    required_backing_mojos: int
+
+    @property
+    def candidate_hash(self) -> bytes32:
+        return bytes32(hashlib.sha256(bytes(Program.to([
+            b"solslot/unsigned-protocol-swap/v1", self.direction,
+            list(zip(self.spend_roles, [bytes(s) for s in self.coin_spends])),
+            self.vault_coin_id, bytes(self.expected_vault_successor),
+            self.required_backing_mojos,
+        ]))).digest())
+
+
+def _unsigned_swap_evidence(
+    *, parts: _SolsSwapComponents, base: tuple[CoinSpend, ...], roles: tuple[str, ...],
+    producer: CoinSpend, auth_type: int, direction: str, backing: int,
+) -> UnsignedSolsSwapEvidence:
+    """Complete only the exact CAT producer; do not execute an unsigned EVM vault.
+
+    Components come exclusively from the canonical assemblers below. Ordinary
+    Offer construction silently omits execution failures; explicitly execute
+    every authorization-independent input before using its settlement helper.
+    """
+    if auth_type not in (AUTH_TYPE_BLS, AUTH_TYPE_SECP256K1):
+        raise SolsSwapOfferError("unsigned evidence requires a BLS or EVM owner")
+    vault = parts.coin_spends[1]
+    inner_solution = list(Program.from_bytes(bytes(vault.solution)).as_iter())[2]
+    inner_fields = list(inner_solution.as_iter())
+    authorization = list(inner_fields[4].as_iter())
+    if (len(inner_fields) != 5 or inner_fields[3].as_int() != 0x73
+            or len(authorization) != 5 or authorization[2].as_atom() != b""):
+        raise SolsSwapOfferError("unsigned evidence requires the empty vault swap authorization")
+    if (len(base) != len(roles) or roles.count("vault") != 1
+            or base[roles.index("vault")] != vault or producer not in base
+            or len({s.coin.name() for s in base}) != len(base)):
+        raise SolsSwapOfferError("unsigned protocol inputs are inconsistent")
+
+    remaining = int(DEFAULT_CONSTANTS.MAX_BLOCK_COST_CLVM)
+    additions: list[Coin] = []
+    expected_successor = Coin(vault.coin.name(), vault.coin.puzzle_hash, vault.coin.amount)
+    for spend in base:
+        if Program.from_bytes(bytes(spend.puzzle_reveal)).get_tree_hash() != spend.coin.puzzle_hash:
+            raise SolsSwapOfferError("unsigned protocol puzzle does not match its input")
+        if spend == vault and auth_type == AUTH_TYPE_SECP256K1:
+            additions.append(expected_successor)
+            continue
+        outputs, cost = _unsigned_additions(spend, remaining)
+        remaining -= cost
+        current = [output.coin for output in outputs.values()]
+        if spend == vault and current != [expected_successor]:
+            raise SolsSwapOfferError("vault successor does not match the pinned swap template")
+        additions.extend(current)
+    # The producer contains the exact settlement CAT. Other components provide
+    # authorization/announcements, not additional settlement payments.
+    settlement = Offer(parts.requested_payments,
+        WalletSpendBundle([producer], G2Element()), parts.driver_dict).to_valid_spend()
+    completions = tuple(s for s in settlement.coin_spends if s != producer)
+    if len(completions) != 1:
+        raise SolsSwapOfferError("unsigned swap requires exactly one CAT settlement")
+    completion = completions[0]
+    if (completion.coin not in additions or completion.coin.parent_coin_info != producer.coin.name()
+            or completion.coin.name() in {s.coin.name() for s in base}):
+        raise SolsSwapOfferError("unsigned settlement is not the producer's unique child")
+    outputs, cost = _unsigned_additions(completion, remaining)
+    if remaining - cost < 0:
+        raise SolsSwapOfferError("unsigned protocol exceeds the condition cost budget")
+    additions.extend(output.coin for output in outputs.values())
+    spends = (*completions, *base)
+    if sum(int(s.coin.amount) for s in spends) - sum(int(c.amount) for c in additions) != -backing:
+        raise SolsSwapOfferError("unsigned protocol backing does not balance")
+    return UnsignedSolsSwapEvidence(direction, spends, ("sols_settlement", *roles),
+        vault.coin.name(), expected_successor, backing)
+
+
+def _unsigned_additions(spend: CoinSpend, remaining: int):
+    try:
+        outputs, cost = compute_spend_hints_and_additions(spend, max_cost=remaining)
+        if cost > remaining:
+            raise ValueError("condition cost budget exceeded")
+        return outputs, cost
+    except Exception as exc:
+        raise SolsSwapOfferError("unsigned protocol spend cannot execute within its cost budget") from exc
 
 
 @dataclass(frozen=True)
@@ -592,7 +704,7 @@ def validate_sols_buyer_offer(
         raise SolsSwapOfferError(
             "buyer offer contains unexpected asset drivers"
         )
-def build_sols_to_deed_protocol_offer(
+def _assemble_sols_to_deed_protocol(
     *,
     receipt: SwapReceipt,
     config: PoolV4Config,
@@ -619,7 +731,7 @@ def build_sols_to_deed_protocol_offer(
     custody_coin: Coin,
     custody_lineage_proof: LineageProof,
     quote_expires_at: int,
-) -> SolsToDeedProtocolOffer:
+) -> _SolsSwapComponents:
     """Build the protocol half from live singleton coins and reviewed state."""
     _assert_driver_config(config)
     quote = _quote(receipt)
@@ -782,33 +894,17 @@ def build_sols_to_deed_protocol_offer(
         ),
     }
     notarized = _pool_payments(requested, pool_coin.name())
-    offer = Offer(
-        notarized,
-        WalletSpendBundle(
-            [
-                statutes_spend,
-                vault_spend,
-                pool_spend,
-                custody_spend,
-            ],
-            G2Element(),
-        ),
-        drivers,
-    )
     if sum(int(item.amount) for item in requested[
         config.permanent_rules.sols_tail_hash
     ]) != quote.buyer_total_sols_mojos:
         raise SolsSwapOfferError("protocol payment split does not balance")
-    return SolsToDeedProtocolOffer(
-        offer=offer,
-        statutes_spend=statutes_spend,
-        vault_spend=vault_spend,
-        pool_spend=pool_spend,
-        custody_spend=custody_spend,
+    return _SolsSwapComponents(
+        coin_spends=(statutes_spend, vault_spend, pool_spend, custody_spend),
+        requested_payments=notarized, driver_dict=drivers,
     )
 
 
-def build_deed_to_sols_protocol_offer(
+def _assemble_deed_to_sols_protocol(
     *,
     receipt: SwapReceipt,
     config: PoolV4Config,
@@ -842,7 +938,7 @@ def build_deed_to_sols_protocol_offer(
     reserve_cat_lineage_proof: LineageProof,
     reserve_inner_puzzle: Program,
     quote_expires_at: int,
-) -> DeedToSolsProtocolOffer:
+) -> _SolsSwapComponents:
     """Build one self-balancing protocol Offer for a deed deposit and Sols payout."""
     _assert_driver_config(config)
     quote = _reverse_quote(receipt)
@@ -1188,33 +1284,10 @@ def build_deed_to_sols_protocol_offer(
             config.permanent_rules.sols_tail_hash
         ),
     }
-    offer = Offer(
-        _pool_payments(requested, pool_coin.name()),
-        WalletSpendBundle(
-            [
-                statutes_spend,
-                vault_spend,
-                p2_vault_spend,
-                smart_deed_spend,
-                pool_spend,
-                *reserve_bundle.coin_spends,
-            ],
-            G2Element(),
-        ),
-        drivers,
-    )
-    if not offer.is_valid():
-        raise SolsSwapOfferError(
-            "deed-to-Sols protocol offer does not balance"
-        )
-    return DeedToSolsProtocolOffer(
-        offer=offer,
-        statutes_spend=statutes_spend,
-        vault_spend=vault_spend,
-        p2_vault_spend=p2_vault_spend,
-        smart_deed_spend=smart_deed_spend,
-        pool_spend=pool_spend,
-        reserve_cat_spend=reserve_bundle.coin_spends[0],
+    return _SolsSwapComponents(
+        coin_spends=(statutes_spend, vault_spend, p2_vault_spend, smart_deed_spend,
+                     pool_spend, reserve_bundle.coin_spends[0]),
+        requested_payments=_pool_payments(requested, pool_coin.name()), driver_dict=drivers,
         reserve_signing_conditions=reserve_conditions,
     )
 
@@ -1243,8 +1316,295 @@ def aggregate_sols_to_deed_swap(
     )
 
 
+def build_sols_to_deed_protocol_offer(
+    *,
+    receipt: SwapReceipt,
+    config: PoolV4Config,
+    parameters: ProtocolParameters,
+    collection: CollectionStatute,
+    pause: ScopedPause | None,
+    statutes_state: StatutesState,
+    statutes_coin: Coin,
+    statutes_launcher_id: bytes32,
+    statutes_lineage_proof: LineageProof,
+    collections: Sequence[CollectionStatute],
+    pauses: Sequence[ScopedPause],
+    vault_coin: Coin,
+    vault_launcher_id: bytes32,
+    vault_lineage_proof: LineageProof,
+    vault_owner_pubkey: bytes,
+    vault_auth_type: int,
+    vault_members_merkle_root: bytes32,
+    identity_attest_root: bytes32,
+    zkpassport_bridge_policy_hash: bytes32,
+    vault_signature_data: bytes | None,
+    pool_coin: Coin,
+    pool_lineage_proof: LineageProof,
+    custody_coin: Coin,
+    custody_lineage_proof: LineageProof,
+    quote_expires_at: int,
+) -> SolsToDeedProtocolOffer:
+    """Construct the existing strict Offer from canonical protocol components."""
+    parts = _assemble_sols_to_deed_protocol(
+        receipt=receipt,
+        config=config,
+        parameters=parameters,
+        collection=collection,
+        pause=pause,
+        statutes_state=statutes_state,
+        statutes_coin=statutes_coin,
+        statutes_launcher_id=statutes_launcher_id,
+        statutes_lineage_proof=statutes_lineage_proof,
+        collections=collections,
+        pauses=pauses,
+        vault_coin=vault_coin,
+        vault_launcher_id=vault_launcher_id,
+        vault_lineage_proof=vault_lineage_proof,
+        vault_owner_pubkey=vault_owner_pubkey,
+        vault_auth_type=vault_auth_type,
+        vault_members_merkle_root=vault_members_merkle_root,
+        identity_attest_root=identity_attest_root,
+        zkpassport_bridge_policy_hash=zkpassport_bridge_policy_hash,
+        vault_signature_data=vault_signature_data,
+        pool_coin=pool_coin,
+        pool_lineage_proof=pool_lineage_proof,
+        custody_coin=custody_coin,
+        custody_lineage_proof=custody_lineage_proof,
+        quote_expires_at=quote_expires_at,
+    )
+    offer = Offer(parts.requested_payments, WalletSpendBundle(list(parts.coin_spends), G2Element()), parts.driver_dict)
+    return SolsToDeedProtocolOffer(offer=offer, statutes_spend=parts.coin_spends[0],
+        vault_spend=parts.coin_spends[1], pool_spend=parts.coin_spends[2],
+        custody_spend=parts.coin_spends[3])
+
+
+def prepare_unsigned_sols_to_deed_swap(
+    *,
+    buyer_offer: Offer,
+    receipt: SwapReceipt,
+    config: PoolV4Config,
+    parameters: ProtocolParameters,
+    collection: CollectionStatute,
+    pause: ScopedPause | None,
+    statutes_state: StatutesState,
+    statutes_coin: Coin,
+    statutes_launcher_id: bytes32,
+    statutes_lineage_proof: LineageProof,
+    collections: Sequence[CollectionStatute],
+    pauses: Sequence[ScopedPause],
+    vault_coin: Coin,
+    vault_launcher_id: bytes32,
+    vault_lineage_proof: LineageProof,
+    vault_owner_pubkey: bytes,
+    vault_auth_type: int,
+    vault_members_merkle_root: bytes32,
+    identity_attest_root: bytes32,
+    zkpassport_bridge_policy_hash: bytes32,
+    pool_coin: Coin,
+    pool_lineage_proof: LineageProof,
+    custody_coin: Coin,
+    custody_lineage_proof: LineageProof,
+    quote_expires_at: int,
+) -> UnsignedSolsSwapEvidence:
+    """Prepare protocol evidence only; owner authorization and funding remain pending."""
+    parts = _assemble_sols_to_deed_protocol(
+        receipt=receipt,
+        config=config,
+        parameters=parameters,
+        collection=collection,
+        pause=pause,
+        statutes_state=statutes_state,
+        statutes_coin=statutes_coin,
+        statutes_launcher_id=statutes_launcher_id,
+        statutes_lineage_proof=statutes_lineage_proof,
+        collections=collections,
+        pauses=pauses,
+        vault_coin=vault_coin,
+        vault_launcher_id=vault_launcher_id,
+        vault_lineage_proof=vault_lineage_proof,
+        vault_owner_pubkey=vault_owner_pubkey,
+        vault_auth_type=vault_auth_type,
+        vault_members_merkle_root=vault_members_merkle_root,
+        identity_attest_root=identity_attest_root,
+        zkpassport_bridge_policy_hash=zkpassport_bridge_policy_hash,
+        vault_signature_data=None,
+        pool_coin=pool_coin,
+        pool_lineage_proof=pool_lineage_proof,
+        custody_coin=custody_coin,
+        custody_lineage_proof=custody_lineage_proof,
+        quote_expires_at=quote_expires_at,
+    )
+    validate_sols_buyer_offer(buyer_offer=buyer_offer, receipt=receipt, config=config,
+        vault_launcher_id=vault_launcher_id)
+    producer = buyer_offer.coin_spends()[0]
+    base = (producer, *parts.coin_spends)
+    roles = ("sols_payment", "statutes", "vault", "pool", "deed_custody")
+    backing = 0
+    return _unsigned_swap_evidence(parts=parts, base=base, roles=roles, producer=producer,
+        auth_type=vault_auth_type, direction="SOLS_TO_DEED", backing=backing)
+
+
+def build_deed_to_sols_protocol_offer(
+    *,
+    receipt: SwapReceipt,
+    config: PoolV4Config,
+    parameters: ProtocolParameters,
+    collection: CollectionStatute,
+    pause: ScopedPause | None,
+    statutes_state: StatutesState,
+    statutes_coin: Coin,
+    statutes_launcher_id: bytes32,
+    statutes_lineage_proof: LineageProof,
+    collections: Sequence[CollectionStatute],
+    pauses: Sequence[ScopedPause],
+    vault_coin: Coin,
+    vault_launcher_id: bytes32,
+    vault_lineage_proof: LineageProof,
+    vault_owner_pubkey: bytes,
+    vault_auth_type: int,
+    vault_members_merkle_root: bytes32,
+    identity_attest_root: bytes32,
+    zkpassport_bridge_policy_hash: bytes32,
+    vault_signature_data: bytes | None,
+    pool_coin: Coin,
+    pool_lineage_proof: LineageProof,
+    p2_vault_deed_coin: Coin,
+    p2_vault_deed_lineage_proof: LineageProof,
+    smart_deed_inner: Program,
+    par_value: int,
+    asset_class: int,
+    property_id: bytes32,
+    reserve_cat_coin: Coin,
+    reserve_cat_lineage_proof: LineageProof,
+    reserve_inner_puzzle: Program,
+    quote_expires_at: int,
+) -> DeedToSolsProtocolOffer:
+    """Construct the existing strict Offer from canonical protocol components."""
+    parts = _assemble_deed_to_sols_protocol(
+        receipt=receipt,
+        config=config,
+        parameters=parameters,
+        collection=collection,
+        pause=pause,
+        statutes_state=statutes_state,
+        statutes_coin=statutes_coin,
+        statutes_launcher_id=statutes_launcher_id,
+        statutes_lineage_proof=statutes_lineage_proof,
+        collections=collections,
+        pauses=pauses,
+        vault_coin=vault_coin,
+        vault_launcher_id=vault_launcher_id,
+        vault_lineage_proof=vault_lineage_proof,
+        vault_owner_pubkey=vault_owner_pubkey,
+        vault_auth_type=vault_auth_type,
+        vault_members_merkle_root=vault_members_merkle_root,
+        identity_attest_root=identity_attest_root,
+        zkpassport_bridge_policy_hash=zkpassport_bridge_policy_hash,
+        vault_signature_data=vault_signature_data,
+        pool_coin=pool_coin,
+        pool_lineage_proof=pool_lineage_proof,
+        p2_vault_deed_coin=p2_vault_deed_coin,
+        p2_vault_deed_lineage_proof=p2_vault_deed_lineage_proof,
+        smart_deed_inner=smart_deed_inner,
+        par_value=par_value,
+        asset_class=asset_class,
+        property_id=property_id,
+        reserve_cat_coin=reserve_cat_coin,
+        reserve_cat_lineage_proof=reserve_cat_lineage_proof,
+        reserve_inner_puzzle=reserve_inner_puzzle,
+        quote_expires_at=quote_expires_at,
+    )
+    offer = Offer(parts.requested_payments, WalletSpendBundle(list(parts.coin_spends), G2Element()), parts.driver_dict)
+    if not offer.is_valid():
+        raise SolsSwapOfferError("deed-to-Sols protocol offer does not balance")
+    return DeedToSolsProtocolOffer(offer=offer, statutes_spend=parts.coin_spends[0],
+        vault_spend=parts.coin_spends[1], p2_vault_spend=parts.coin_spends[2],
+        smart_deed_spend=parts.coin_spends[3], pool_spend=parts.coin_spends[4],
+        reserve_cat_spend=parts.coin_spends[5], reserve_signing_conditions=parts.reserve_signing_conditions)
+
+
+def prepare_unsigned_deed_to_sols_swap(
+    *,
+    receipt: SwapReceipt,
+    config: PoolV4Config,
+    parameters: ProtocolParameters,
+    collection: CollectionStatute,
+    pause: ScopedPause | None,
+    statutes_state: StatutesState,
+    statutes_coin: Coin,
+    statutes_launcher_id: bytes32,
+    statutes_lineage_proof: LineageProof,
+    collections: Sequence[CollectionStatute],
+    pauses: Sequence[ScopedPause],
+    vault_coin: Coin,
+    vault_launcher_id: bytes32,
+    vault_lineage_proof: LineageProof,
+    vault_owner_pubkey: bytes,
+    vault_auth_type: int,
+    vault_members_merkle_root: bytes32,
+    identity_attest_root: bytes32,
+    zkpassport_bridge_policy_hash: bytes32,
+    pool_coin: Coin,
+    pool_lineage_proof: LineageProof,
+    p2_vault_deed_coin: Coin,
+    p2_vault_deed_lineage_proof: LineageProof,
+    smart_deed_inner: Program,
+    par_value: int,
+    asset_class: int,
+    property_id: bytes32,
+    reserve_cat_coin: Coin,
+    reserve_cat_lineage_proof: LineageProof,
+    reserve_inner_puzzle: Program,
+    quote_expires_at: int,
+) -> UnsignedSolsSwapEvidence:
+    """Prepare protocol evidence only; owner authorization and funding remain pending."""
+    parts = _assemble_deed_to_sols_protocol(
+        receipt=receipt,
+        config=config,
+        parameters=parameters,
+        collection=collection,
+        pause=pause,
+        statutes_state=statutes_state,
+        statutes_coin=statutes_coin,
+        statutes_launcher_id=statutes_launcher_id,
+        statutes_lineage_proof=statutes_lineage_proof,
+        collections=collections,
+        pauses=pauses,
+        vault_coin=vault_coin,
+        vault_launcher_id=vault_launcher_id,
+        vault_lineage_proof=vault_lineage_proof,
+        vault_owner_pubkey=vault_owner_pubkey,
+        vault_auth_type=vault_auth_type,
+        vault_members_merkle_root=vault_members_merkle_root,
+        identity_attest_root=identity_attest_root,
+        zkpassport_bridge_policy_hash=zkpassport_bridge_policy_hash,
+        vault_signature_data=None,
+        pool_coin=pool_coin,
+        pool_lineage_proof=pool_lineage_proof,
+        p2_vault_deed_coin=p2_vault_deed_coin,
+        p2_vault_deed_lineage_proof=p2_vault_deed_lineage_proof,
+        smart_deed_inner=smart_deed_inner,
+        par_value=par_value,
+        asset_class=asset_class,
+        property_id=property_id,
+        reserve_cat_coin=reserve_cat_coin,
+        reserve_cat_lineage_proof=reserve_cat_lineage_proof,
+        reserve_inner_puzzle=reserve_inner_puzzle,
+        quote_expires_at=quote_expires_at,
+    )
+    producer = parts.coin_spends[-1]
+    base = parts.coin_spends
+    roles = ("statutes", "vault", "held_deed", "smart_deed", "pool", "sols_reserve")
+    backing = int(_reverse_quote(receipt).fresh_sols_mojos_minted)
+    return _unsigned_swap_evidence(parts=parts, base=base, roles=roles, producer=producer,
+        auth_type=vault_auth_type, direction="DEED_TO_SOLS", backing=backing)
+
+
 __all__ = [
     "SolsSwapOfferError",
+    "UnsignedSolsSwapEvidence",
+    "prepare_unsigned_sols_to_deed_swap",
+    "prepare_unsigned_deed_to_sols_swap",
     "PreparedSolsBuyerOffer",
     "SolsToDeedProtocolOffer",
     "AtomicSolsToDeedSwap",

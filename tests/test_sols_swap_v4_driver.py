@@ -54,7 +54,7 @@ from solslot_puzzles.sols_swap_v4_driver import (
     prepare_vault_sols_buyer_offer,
     validate_sols_buyer_offer,
 )
-from solslot_puzzles.vault_driver import AUTH_TYPE_BLS, puzzle_hash_for_p2_vault
+from solslot_puzzles.vault_driver import AUTH_TYPE_BLS, puzzle_hash_for_p2_vault, one_leaf_merkle_root
 from solslot_puzzles.vault_v2_driver import (
     puzzle_for_vault_v2_full,
     vault_v2_inner_mod_hash,
@@ -256,7 +256,7 @@ def _deed_singleton_child(
     )
 
 
-def _fixture() -> SwapFixture:
+def _fixture(*, auth_type=AUTH_TYPE_BLS, owner_pubkey=OWNER_PK) -> SwapFixture:
     empty_pool_inner = make_pool_v4_full(CONFIG, EMPTY_POOL).uncurry()
     assert empty_pool_inner is not None
     _, empty_pool_args = empty_pool_inner
@@ -315,9 +315,9 @@ def _fixture() -> SwapFixture:
     assert parent_pool_coin == empty_pool_coin
     vault_full = puzzle_for_vault_v2_full(
         vault_launcher_id=VAULT_LAUNCHER,
-        owner_pubkey=OWNER_PK,
-        auth_type=AUTH_TYPE_BLS,
-        members_merkle_root=MEMBERS_ROOT,
+        owner_pubkey=owner_pubkey,
+        auth_type=auth_type,
+        members_merkle_root=(MEMBERS_ROOT if owner_pubkey == OWNER_PK else one_leaf_merkle_root(owner_pubkey)),
         pool_launcher_id=POOL_LAUNCHER,
         identity_attest_root=IDENTITY_ROOT,
         zkpassport_bridge_policy_hash=RULES.zkpassport_policy_hash,
@@ -602,6 +602,59 @@ def test_protocol_offer_rejects_stale_pool_coin() -> None:
 
 
 def test_deed_to_sols_offer_bootstraps_atomically_and_preserves_anchor() -> None:
+    arguments = _reverse_arguments()
+    receipt = arguments["receipt"]
+    reserve_coin = arguments["reserve_cat_coin"]
+    seller_inner_hash = receipt.counterparty_puzzle_hash
+    protocol = build_deed_to_sols_protocol_offer(**arguments, vault_signature_data=None)
+    quote = receipt.deed_to_sols_quote
+    assert quote is not None
+    assert quote.reserve_sols_mojos_paid == 0
+    assert quote.fresh_sols_mojos_minted == quote.seller_sols_mojos
+    assert receipt.next_state.economics.reserve_sols_mojos == 1
+    assert protocol.offer.is_valid()
+    spend = protocol.offer.to_valid_spend()
+    _assert_signed_consensus(spend)
+    assert len(spend.coin_spends) == 7
+    assert protocol.reserve_cat_spend.coin == reserve_coin
+    assert set(protocol.offer.requested_payments) == {RULES.sols_tail_hash}
+    seller_payment = protocol.offer.requested_payments[
+        RULES.sols_tail_hash
+    ][0]
+    assert seller_payment.puzzle_hash == seller_inner_hash
+    assert int(seller_payment.amount) == quote.seller_sols_mojos
+
+
+def _forward_arguments(fixture, *, auth_type=AUTH_TYPE_BLS, owner_pubkey=OWNER_PK):
+    return {
+        'receipt': fixture.receipt,
+        'config': CONFIG,
+        'parameters': PARAMETERS,
+        'collection': COLLECTION,
+        'pause': None,
+        'statutes_state': STATUTES_STATE,
+        'statutes_coin': fixture.statutes_coin,
+        'statutes_launcher_id': STATUTES_LAUNCHER,
+        'statutes_lineage_proof': fixture.statutes_lineage,
+        'collections': [COLLECTION],
+        'pauses': [],
+        'vault_coin': fixture.vault_coin,
+        'vault_launcher_id': VAULT_LAUNCHER,
+        'vault_lineage_proof': fixture.vault_lineage,
+        'vault_owner_pubkey': owner_pubkey,
+        'vault_auth_type': auth_type,
+        'vault_members_merkle_root': (MEMBERS_ROOT if owner_pubkey == OWNER_PK else one_leaf_merkle_root(owner_pubkey)),
+        'identity_attest_root': IDENTITY_ROOT,
+        'zkpassport_bridge_policy_hash': RULES.zkpassport_policy_hash,
+        'pool_coin': fixture.pool_coin,
+        'pool_lineage_proof': fixture.pool_lineage,
+        'custody_coin': fixture.custody_coin,
+        'custody_lineage_proof': fixture.custody_lineage,
+        'quote_expires_at': QUOTE_EXPIRES,
+    }
+
+
+def _reverse_arguments(*, auth_type=AUTH_TYPE_BLS, owner_pubkey=OWNER_PK):
     empty_pool_full = make_pool_v4_full(CONFIG, EMPTY_POOL)
     uncurried_pool = empty_pool_full.uncurry()
     assert uncurried_pool is not None
@@ -616,9 +669,9 @@ def test_deed_to_sols_offer_bootstraps_atomically_and_preserves_anchor() -> None
 
     vault_full = puzzle_for_vault_v2_full(
         vault_launcher_id=VAULT_LAUNCHER,
-        owner_pubkey=OWNER_PK,
-        auth_type=AUTH_TYPE_BLS,
-        members_merkle_root=MEMBERS_ROOT,
+        owner_pubkey=owner_pubkey,
+        auth_type=auth_type,
+        members_merkle_root=(MEMBERS_ROOT if owner_pubkey == OWNER_PK else one_leaf_merkle_root(owner_pubkey)),
         pool_launcher_id=POOL_LAUNCHER,
         identity_attest_root=IDENTITY_ROOT,
         zkpassport_bridge_policy_hash=RULES.zkpassport_policy_hash,
@@ -733,53 +786,150 @@ def test_deed_to_sols_offer_bootstraps_atomically_and_preserves_anchor() -> None
         RESERVE_INNER,
     )
     reserve_coin = Coin(b32(127), bytes32(reserve_cat.get_tree_hash()), 1)
-    protocol = build_deed_to_sols_protocol_offer(
-        receipt=receipt,
-        config=CONFIG,
-        parameters=PARAMETERS,
-        collection=COLLECTION,
-        pause=None,
-        statutes_state=STATUTES_STATE,
-        statutes_coin=statutes_coin,
-        statutes_launcher_id=STATUTES_LAUNCHER,
-        statutes_lineage_proof=statutes_lineage,
-        collections=[COLLECTION],
-        pauses=[],
-        vault_coin=vault_coin,
-        vault_launcher_id=VAULT_LAUNCHER,
-        vault_lineage_proof=vault_lineage,
-        vault_owner_pubkey=OWNER_PK,
-        vault_auth_type=AUTH_TYPE_BLS,
-        vault_members_merkle_root=MEMBERS_ROOT,
-        identity_attest_root=IDENTITY_ROOT,
-        zkpassport_bridge_policy_hash=RULES.zkpassport_policy_hash,
-        vault_signature_data=None,
-        pool_coin=pool_coin,
-        pool_lineage_proof=pool_lineage,
-        p2_vault_deed_coin=held_deed_coin,
-        p2_vault_deed_lineage_proof=held_deed_lineage,
-        smart_deed_inner=smart_deed_inner,
-        par_value=PAR_VALUE,
-        asset_class=1,
-        property_id=PROPERTY_ID,
-        reserve_cat_coin=reserve_coin,
-        reserve_cat_lineage_proof=LineageProof(),
-        reserve_inner_puzzle=RESERVE_INNER,
-        quote_expires_at=QUOTE_EXPIRES,
+    return {
+        'receipt': receipt,
+        'config': CONFIG,
+        'parameters': PARAMETERS,
+        'collection': COLLECTION,
+        'pause': None,
+        'statutes_state': STATUTES_STATE,
+        'statutes_coin': statutes_coin,
+        'statutes_launcher_id': STATUTES_LAUNCHER,
+        'statutes_lineage_proof': statutes_lineage,
+        'collections': [COLLECTION],
+        'pauses': [],
+        'vault_coin': vault_coin,
+        'vault_launcher_id': VAULT_LAUNCHER,
+        'vault_lineage_proof': vault_lineage,
+        'vault_owner_pubkey': owner_pubkey,
+        'vault_auth_type': auth_type,
+        'vault_members_merkle_root': (MEMBERS_ROOT if owner_pubkey == OWNER_PK else one_leaf_merkle_root(owner_pubkey)),
+        'identity_attest_root': IDENTITY_ROOT,
+        'zkpassport_bridge_policy_hash': RULES.zkpassport_policy_hash,
+        'pool_coin': pool_coin,
+        'pool_lineage_proof': pool_lineage,
+        'p2_vault_deed_coin': held_deed_coin,
+        'p2_vault_deed_lineage_proof': held_deed_lineage,
+        'smart_deed_inner': smart_deed_inner,
+        'par_value': PAR_VALUE,
+        'asset_class': 1,
+        'property_id': PROPERTY_ID,
+        'reserve_cat_coin': reserve_coin,
+        'reserve_cat_lineage_proof': LineageProof(),
+        'reserve_inner_puzzle': RESERVE_INNER,
+        'quote_expires_at': QUOTE_EXPIRES,
+    }
+
+
+def _unsigned_case(evm, reverse):
+    from eth_keys import keys
+    from solslot_puzzles.sols_swap_v4_driver import (
+        prepare_unsigned_deed_to_sols_swap, prepare_unsigned_sols_to_deed_swap,
     )
-    quote = receipt.deed_to_sols_quote
-    assert quote is not None
-    assert quote.reserve_sols_mojos_paid == 0
-    assert quote.fresh_sols_mojos_minted == quote.seller_sols_mojos
-    assert receipt.next_state.economics.reserve_sols_mojos == 1
-    assert protocol.offer.is_valid()
-    spend = protocol.offer.to_valid_spend()
-    _assert_signed_consensus(spend)
-    assert len(spend.coin_spends) == 7
-    assert protocol.reserve_cat_spend.coin == reserve_coin
-    assert set(protocol.offer.requested_payments) == {RULES.sols_tail_hash}
-    seller_payment = protocol.offer.requested_payments[
-        RULES.sols_tail_hash
-    ][0]
-    assert seller_payment.puzzle_hash == seller_inner_hash
-    assert int(seller_payment.amount) == quote.seller_sols_mojos
+    evm_key = keys.PrivateKey(bytes([91]) * 32)
+    owner = evm_key.public_key.to_compressed_bytes() if evm else OWNER_PK
+    auth = 3 if evm else AUTH_TYPE_BLS
+    if reverse:
+        arguments = _reverse_arguments(auth_type=auth, owner_pubkey=owner)
+        buyer = None
+        evidence = prepare_unsigned_deed_to_sols_swap(**arguments)
+    else:
+        fixture = _fixture(auth_type=auth, owner_pubkey=owner)
+        arguments = _forward_arguments(fixture, auth_type=auth, owner_pubkey=owner)
+        buyer = prepare_vault_sols_buyer_offer(payment_coin=fixture.payment_coin,
+            payment_lineage_proof=fixture.payment_lineage, receipt=fixture.receipt,
+            config=CONFIG, vault_launcher_id=VAULT_LAUNCHER).offer
+        evidence = prepare_unsigned_sols_to_deed_swap(buyer_offer=buyer, **arguments)
+    return arguments, buyer, evidence, evm_key
+
+
+@pytest.mark.parametrize("evm", [False, True])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_unsigned_protocol_package_matches_real_signed_construction(evm, reverse):
+    import chia_rs
+    from chia.consensus.default_constants import DEFAULT_CONSTANTS
+    from chia.types.coin_spend import make_spend
+    from solslot_puzzles.vault_v2_driver import signing_digest_for_sols_swap
+    args, buyer, evidence, evm_key = _unsigned_case(evm, reverse)
+    assert len(evidence.coin_spends) == (7 if reverse else 6)
+    assert len({s.coin.name() for s in evidence.coin_spends}) == len(evidence.coin_spends)
+    assert evidence.spend_roles.count("sols_settlement") == 1
+    assert all(s.coin.parent_coin_info != bytes32.zeros for s in evidence.coin_spends)
+    assert evidence.required_backing_mojos == (args['receipt'].deed_to_sols_quote.fresh_sols_mojos_minted if reverse else 0)
+    vault = next(s for s in evidence.coin_spends if s.coin.name() == evidence.vault_coin_id)
+    outer = list(Program.from_bytes(bytes(vault.solution)).as_iter())
+    inner = list(outer[2].as_iter()); intent = list(inner[4].as_iter())
+    assert intent[2].as_atom() == b''
+    signature = None
+    if evm:
+        pool = list(intent[4].as_iter()); transfer = list(intent[3].as_iter())
+        digest_args = dict(pool_coin_id=bytes32(pool[0].as_atom()),
+            pool_inner_puzzle_hash=bytes32(pool[1].as_atom()), quote_expires_at=intent[1].as_int())
+        if transfer:
+            digest_args.update(deed_launcher_id=bytes32(transfer[0].as_atom()),
+                p2_vault_coin_id=bytes32(transfer[1].as_atom()), smart_deed_inner_puzzle_hash=bytes32(transfer[2].as_atom()))
+        signature = evm_key.sign_msg_hash(signing_digest_for_sols_swap(
+            args['receipt'].operation_hash, evidence.vault_coin_id, **digest_args)).to_bytes()[:64]
+    if reverse:
+        signed_protocol = build_deed_to_sols_protocol_offer(**args, vault_signature_data=signature)
+        bundle = signed_protocol.offer.to_valid_spend()
+    else:
+        signed_protocol = build_sols_to_deed_protocol_offer(**args, vault_signature_data=signature)
+        bundle = aggregate_sols_to_deed_swap(buyer_offer=buyer, protocol_offer=signed_protocol,
+            receipt=args['receipt'], config=CONFIG, vault_launcher_id=VAULT_LAUNCHER).aggregate_offer.to_valid_spend()
+    _assert_signed_consensus(bundle)
+    assert evidence.expected_vault_successor in bundle.additions()
+    normalized = []
+    for spend in bundle.coin_spends:
+        if spend.coin.name() == evidence.vault_coin_id:
+            out = list(Program.from_bytes(bytes(spend.solution)).as_iter())
+            fields = list(out[2].as_iter()); auth = list(fields[4].as_iter())
+            auth[2] = b''; fields[4] = auth; out[2] = fields
+            spend = make_spend(spend.coin, spend.puzzle_reveal, Program.to(out))
+        normalized.append(spend)
+    assert tuple(normalized) == evidence.coin_spends
+    assert evidence.candidate_hash == _unsigned_case(evm, reverse)[2].candidate_hash
+    assert evidence.candidate_hash != bundle.name()
+    with pytest.raises(Exception):
+        chia_rs.validate_clvm_and_signature(chia_rs.SpendBundle(list(evidence.coin_spends), chia_rs.G2Element()),
+            11_000_000_000, DEFAULT_CONSTANTS,
+            chia_rs.MEMPOOL_MODE | chia_rs.ENABLE_SECP_OPS | chia_rs.ENABLE_KECCAK_OPS_OUTSIDE_GUARD)
+
+
+@pytest.mark.parametrize("evm", [False, True])
+@pytest.mark.parametrize("field", ["quote_expires_at", "vault_coin", "statutes_coin", "vault_owner_pubkey"])
+def test_unsigned_builder_rejects_changed_authoritative_inputs(evm, field):
+    from solslot_puzzles.sols_swap_v4_driver import prepare_unsigned_sols_to_deed_swap
+    args, buyer, _, _ = _unsigned_case(evm, False)
+    if field == 'quote_expires_at': args[field] += 1
+    elif field == 'vault_owner_pubkey': args[field] = bytes([0]) * len(args[field])
+    else:
+        coin = args[field]; args[field] = Coin(coin.parent_coin_info, b32(201), coin.amount)
+    with pytest.raises((ValueError, SolsSwapOfferError)):
+        prepare_unsigned_sols_to_deed_swap(buyer_offer=buyer, **args)
+
+
+@pytest.mark.parametrize("fault", ["extra", "duplicate", "missing", "invalid_non_vault", "authorized_vault"])
+def test_unsigned_package_never_discards_invalid_or_extra_components(monkeypatch, fault):
+    import solslot_puzzles.sols_swap_v4_driver as driver
+    from chia.types.coin_spend import make_spend
+    args, buyer, _, _ = _unsigned_case(True, False)
+    original = driver._assemble_sols_to_deed_protocol
+    def modified(**kwargs):
+        parts = original(**kwargs); spends = list(parts.coin_spends)
+        if fault == 'duplicate': spends.append(spends[0])
+        elif fault == 'extra':
+            puzzle = Program.to((1, [[51, b32(222), 1]]))
+            spends.append(make_spend(Coin(b32(221), puzzle.get_tree_hash(), 1), puzzle, Program.to([])))
+        elif fault == 'missing': spends.pop()
+        elif fault == 'invalid_non_vault':
+            spends[0] = make_spend(spends[0].coin, spends[0].puzzle_reveal, Program.to([]))
+        else:
+            out = list(Program.from_bytes(bytes(spends[1].solution)).as_iter())
+            fields = list(out[2].as_iter()); intent = list(fields[4].as_iter())
+            intent[2] = b'not-an-authorization'; fields[4] = intent; out[2] = fields
+            spends[1] = make_spend(spends[1].coin, spends[1].puzzle_reveal, Program.to(out))
+        return replace(parts, coin_spends=tuple(spends))
+    monkeypatch.setattr(driver, '_assemble_sols_to_deed_protocol', modified)
+    with pytest.raises(SolsSwapOfferError):
+        driver.prepare_unsigned_sols_to_deed_swap(buyer_offer=buyer, **args)
