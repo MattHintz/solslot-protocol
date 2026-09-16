@@ -6,6 +6,7 @@ chainId change to Base Sepolia) silently drift the compiled puzzles away from
 accompanied by a refreeze, or ``test_frozen_checksum_matches_compiled_puzzles``
 fails loudly in CI.
 """
+from tests.historical_puzzles import historical_puzzle
 import hashlib
 import json
 from pathlib import Path
@@ -95,7 +96,7 @@ def test_rc20_manifest_records_every_new_puzzle_hash():
         preserved_count : preserved_count + len(additions)
     ]
     for filename, expected_hash in additions.items():
-        assert bytes(load_puzzle(filename).get_tree_hash()).hex() == expected_hash
+        assert bytes(historical_puzzle(filename).get_tree_hash()).hex() == expected_hash
 
 
 def test_rc22_manifest_records_every_replacement_and_additive_module():
@@ -157,7 +158,7 @@ def test_rc23_manifest_preserves_rc22_and_records_authority_v3():
     ]
     assert set(manifest["changeReasons"]) == set(additions)
     for filename, expected_hash in additions.items():
-        assert bytes(load_puzzle(filename).get_tree_hash()).hex() == expected_hash
+        assert bytes(historical_puzzle(filename).get_tree_hash()).hex() == expected_hash
     rc20_manifest = json.loads(
         (
             Path(__file__).resolve().parents[1]
@@ -207,7 +208,7 @@ def test_rc24_manifest_preserves_rc23_and_records_stripe_settlement():
             "mint_offer_inventory_available_v1.clsp",
             "mint_offer_delegate_v5.clsp",
         }:
-            assert bytes(load_puzzle(filename).get_tree_hash()).hex() == expected_hash
+            assert bytes(historical_puzzle(filename).get_tree_hash()).hex() == expected_hash
 
 
 def test_rc25_manifest_records_base_binding_and_governed_sgt_changes():
@@ -268,7 +269,7 @@ def test_rc25_manifest_records_base_binding_and_governed_sgt_changes():
     for group in ("changedPuzzleHashes", "newPuzzleHashes"):
         for filename, expected_hash in manifest[group].items():
             if filename != "sgt_reserve_inner_v1.clsp":
-                assert bytes(load_puzzle(filename).get_tree_hash()).hex() == expected_hash
+                assert bytes(historical_puzzle(filename).get_tree_hash()).hex() == expected_hash
     assert set(manifest["changeReasons"]) == {
         *manifest["changedPuzzleHashes"],
         *manifest["newPuzzleHashes"],
@@ -325,11 +326,11 @@ def test_rc26_manifest_preserves_rc25_and_records_vault_sols_custody():
     }
     for group in ("changedPuzzleHashes", "newPuzzleHashes"):
         for filename, expected_hash in manifest[group].items():
-            assert bytes(load_puzzle(filename).get_tree_hash()).hex() == expected_hash
+            assert bytes(historical_puzzle(filename).get_tree_hash()).hex() == expected_hash
     rc26_end = PUZZLE_FILENAMES.index("vault_sols_inner_v1.clsp") + 1
     checksum = hashlib.sha256()
     for filename in PUZZLE_FILENAMES[:rc26_end]:
-        checksum.update(bytes(load_puzzle(filename).get_tree_hash()))
+        checksum.update(bytes(historical_puzzle(filename).get_tree_hash()))
     assert checksum.hexdigest() == manifest["canonicalChecksum"]
 
 
@@ -357,7 +358,7 @@ def test_rc27_manifest_preserves_every_rc26_puzzle_hash():
     rc27_end = PUZZLE_FILENAMES.index("vault_sols_inner_v1.clsp") + 1
     checksum = hashlib.sha256()
     for filename in PUZZLE_FILENAMES[:rc27_end]:
-        checksum.update(bytes(load_puzzle(filename).get_tree_hash()))
+        checksum.update(bytes(historical_puzzle(filename).get_tree_hash()))
     assert checksum.hexdigest() == manifest["canonicalChecksum"]
 
 
@@ -375,12 +376,12 @@ def test_rc27_35_manifest_appends_authority_bound_recovery_member():
     assert manifest["changedPuzzleHashes"] == {}
     assert tuple(manifest["newPuzzleHashes"]) == (filename,)
     assert set(manifest["changeReasons"]) == {filename}
-    assert bytes(load_puzzle(filename).get_tree_hash()).hex() == (
+    assert bytes(historical_puzzle(filename).get_tree_hash()).hex() == (
         manifest["newPuzzleHashes"][filename]
     )
     # Verify this historical prefix; the current release appends inventory V2.
     end = PUZZLE_FILENAMES.index("admin_recovery_authority_member_v1.clsp") + 1
-    assert hashlib.sha256(b"".join(bytes(load_puzzle(name).get_tree_hash())
+    assert hashlib.sha256(b"".join(bytes(historical_puzzle(name).get_tree_hash())
                                   for name in PUZZLE_FILENAMES[:end])).hexdigest() == manifest["canonicalChecksum"]
 
 
@@ -404,5 +405,5 @@ def test_rc27_36_manifest_preserves_every_rc27_35_puzzle_hash():
     }
     # Verify this historical prefix; the current release appends inventory V2.
     end = PUZZLE_FILENAMES.index("admin_recovery_authority_member_v1.clsp") + 1
-    assert hashlib.sha256(b"".join(bytes(load_puzzle(name).get_tree_hash())
+    assert hashlib.sha256(b"".join(bytes(historical_puzzle(name).get_tree_hash())
                                   for name in PUZZLE_FILENAMES[:end])).hexdigest() == manifest["canonicalChecksum"]

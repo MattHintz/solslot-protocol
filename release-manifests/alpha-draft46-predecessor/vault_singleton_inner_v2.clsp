@@ -100,8 +100,6 @@
   (defconst POOL_SPEND_GENERATE_OFFER 5)
   (defconst POOL_SPEND_V2_SPECIFIC_DEED_SWAP 6)
   (defconstant VAULT_SOLS_SWAP_TAG 0x56534f4c) ;; "VSOL"
-  (defconstant VAULT_SWAP_TRANSFER_TAG 0x56535831) ;; "VSX1"
-  (defconstant POOL_SOLS_SWAP_TAG 0x50534f4c) ;; "PSOL"
   (defconstant VAULT_REDEMPTION_ACCEPT_TAG 0x52444131) ;; "RDA1"
   (defconstant VAULT_SGT_LOCK_TAG 0x56534754) ;; "VSGT"
   (defconstant OFFER_MOD_HASH 0xcfbfdeed5c4ca2de3d0bf520b9cb4bb7743a359bd2e6a188d19ce7dffc21d3e7)
@@ -234,7 +232,7 @@
   (defun verify_secp256r1 (pubkey spend_case deed_launcher_id my_id signature_data)
     (if
       (softfork
-        (q . 1851862)
+        (q . 1303090)
         (q . 1)
         (mod (pubkey signature sc_padded deed_id mid)
           (if (= (secp256r1_verify pubkey (sha256 sc_padded deed_id mid) signature) 0)
@@ -656,99 +654,70 @@
     )
   )
 
-  ;; SPEND CASE 's' — authorize a complete, coin-bound pool swap.
-  ;; p = (operation_hash quote_expires_at signature_data deed_transfer pool)
-  ;; pool = (pool_coin_id pool_inner_hash); deed_transfer is exactly () or
-  ;; (deed_launcher_id held_coin_id destination_inner_hash). The empty transfer
-  ;; is signed too. VSX1 cannot be consumed by the legacy custody branches.
-  (defun spend_authorize_sols_swap_values
+  ;; SPEND CASE 's' — AUTHORIZE SMARTDEED/SOLS SWAP
+  ;; p = (operation_hash quote_expires_at signature_data deed_transfer)
+  ;; deed_transfer is () for Sols-to-deed, or
+  ;; (deed_launcher_id p2_vault_coin_id smart_deed_inner_hash) for
+  ;; deed-to-Sols. The latter moves the held deed into its immutable
+  ;; SmartDeed inner in the same approval; that ephemeral SmartDeed then
+  ;; performs the protocol-bound pool deposit.
+  ;;
+  ;; pool_singleton_inner_v4 constructs operation_hash from the exact deed,
+  ;; direction, live pool coin, payout or destination, quote, and statutes
+  ;; evidence. This spend proves the current enrolled owner approved exactly
+  ;; that operation. It never moves a deed or Sols by itself.
+  (defun spend_authorize_sols_swap
       (SINGLETON_STRUCT OWNER_PUBKEY AUTH_TYPE IDENTITY_ATTEST_ROOT
-       ZKPASSPORT_BRIDGE_POLICY_HASH POOL_SINGLETON_MOD_HASH
-       POOL_SINGLETON_LAUNCHER_ID POOL_SINGLETON_LAUNCHER_PUZZLE_HASH
-       my_id my_inner_puzzlehash my_amount
-       operation_hash quote_expires_at signature_data deed_transfer pool)
+       ZKPASSPORT_BRIDGE_POLICY_HASH my_id my_inner_puzzlehash my_amount
+       operation_hash quote_expires_at signature_data deed_transfer)
     (assert
       (is-size-b32 operation_hash)
-      (not (= operation_hash ZERO_B32))
       (is-uint64 quote_expires_at)
       (> quote_expires_at 0)
       (not (= IDENTITY_ATTEST_ROOT ZKPASSPORT_EMPTY_ATTEST_ROOT))
       (not (= ZKPASSPORT_BRIDGE_POLICY_HASH ZERO_B32))
-      (= (list-length pool) 2)
-      (is-size-b32 (f pool))
-      (not (= (f pool) ZERO_B32))
-      (not (= (f pool) my_id))
-      (is-size-b32 (f (r pool)))
-      (not (= (f (r pool)) ZERO_B32))
       (if deed_transfer
         (assert
-          (= (list-length deed_transfer) 3)
           (is-size-b32 (f deed_transfer))
-          (not (= (f deed_transfer) ZERO_B32))
           (is-size-b32 (f (r deed_transfer)))
-          (not (= (f (r deed_transfer)) ZERO_B32))
-          (not (= (f (r deed_transfer)) my_id))
-          (not (= (f (r deed_transfer)) (f pool)))
           (is-size-b32 (f (r (r deed_transfer))))
           (not (= (f (r (r deed_transfer))) ZERO_B32))
           1)
         1)
-      (merge-lists
-        (list
-          (authenticate_operation
-            AUTH_TYPE OWNER_PUBKEY SPEND_AUTHORIZE_SOLS_SWAP
-            (sha256tree (list VAULT_SOLS_SWAP_TAG operation_hash my_id
-                             pool quote_expires_at deed_transfer))
-            my_id signature_data)
-          (list ASSERT_COIN_ANNOUNCEMENT
-            (sha256 (f pool)
-              (concat PROTOCOL_PREFIX
-                (sha256tree (list POOL_SOLS_SWAP_TAG operation_hash)))))
-          (list ASSERT_PUZZLE_ANNOUNCEMENT
-            (sha256
-              (calculate_full_puzzle_hash
-                (c POOL_SINGLETON_MOD_HASH
-                  (c POOL_SINGLETON_LAUNCHER_ID POOL_SINGLETON_LAUNCHER_PUZZLE_HASH))
-                (f (r pool)))
-              (concat PROTOCOL_PREFIX
-                (sha256tree (list POOL_SOLS_SWAP_TAG operation_hash)))))
+      (c
+        (authenticate_operation
+          AUTH_TYPE OWNER_PUBKEY SPEND_AUTHORIZE_SOLS_SWAP
+          operation_hash my_id signature_data)
+        (c
           (list CREATE_PUZZLE_ANNOUNCEMENT
             (concat PROTOCOL_PREFIX
-              (sha256tree (list VAULT_SOLS_SWAP_TAG operation_hash my_id))))
-          (list CREATE_COIN my_inner_puzzlehash my_amount (list my_inner_puzzlehash))
-          (list ASSERT_BEFORE_SECONDS_ABSOLUTE quote_expires_at)
-          (list REMARK PROTOCOL_PREFIX SPEND_AUTHORIZE_SOLS_SWAP operation_hash))
-        (merge-lists
-          (if deed_transfer
-            (list
-              (list CREATE_PUZZLE_ANNOUNCEMENT
-                (concat PROTOCOL_PREFIX
-                  (sha256tree (list VAULT_SWAP_TRANSFER_TAG my_id
-                    (f (r deed_transfer)) (f deed_transfer)
-                    (f (r (r deed_transfer)))))))
-              (list ASSERT_COIN_ANNOUNCEMENT
-                (sha256 (f (r deed_transfer))
-                  (concat PROTOCOL_PREFIX
-                    (sha256tree (list VAULT_SWAP_TRANSFER_TAG my_id
-                      (f (r deed_transfer)) (f deed_transfer)
-                      (f (r (r deed_transfer)))))))))
-            ())
-          (base_conditions SINGLETON_STRUCT my_id my_amount my_inner_puzzlehash)))))
-
-  (defun spend_authorize_sols_swap
-      (SINGLETON_STRUCT OWNER_PUBKEY AUTH_TYPE IDENTITY_ATTEST_ROOT
-       ZKPASSPORT_BRIDGE_POLICY_HASH POOL_SINGLETON_MOD_HASH
-       POOL_SINGLETON_LAUNCHER_ID POOL_SINGLETON_LAUNCHER_PUZZLE_HASH
-       my_id my_inner_puzzlehash my_amount p)
-    (assert
-      (= (list-length p) 5)
-      (spend_authorize_sols_swap_values
-        SINGLETON_STRUCT OWNER_PUBKEY AUTH_TYPE IDENTITY_ATTEST_ROOT
-        ZKPASSPORT_BRIDGE_POLICY_HASH POOL_SINGLETON_MOD_HASH
-        POOL_SINGLETON_LAUNCHER_ID POOL_SINGLETON_LAUNCHER_PUZZLE_HASH
-        my_id my_inner_puzzlehash my_amount
-        (f p) (f (r p)) (f (r (r p)))
-        (f (r (r (r p)))) (f (r (r (r (r p))))))))
+              (sha256tree
+                (list VAULT_SOLS_SWAP_TAG operation_hash my_id))))
+          (c
+            (list CREATE_COIN
+              my_inner_puzzlehash my_amount (list my_inner_puzzlehash))
+            (merge-lists
+              (if deed_transfer
+                (list
+                  (list CREATE_PUZZLE_ANNOUNCEMENT
+                    (concat PROTOCOL_PREFIX
+                      (sha256tree
+                        (list my_id (f deed_transfer)
+                          (f (r (r deed_transfer)))))))
+                  (list ASSERT_COIN_ANNOUNCEMENT
+                    (sha256
+                      (f (r deed_transfer))
+                      (concat PROTOCOL_PREFIX
+                        (sha256 my_id (f deed_transfer)
+                          (f (r (r deed_transfer))))))))
+                ())
+              (c
+                (list ASSERT_BEFORE_SECONDS_ABSOLUTE quote_expires_at)
+                (c
+                  (list REMARK
+                    PROTOCOL_PREFIX SPEND_AUTHORIZE_SOLS_SWAP operation_hash)
+                  (base_conditions
+                    SINGLETON_STRUCT my_id my_amount my_inner_puzzlehash)))))))))
 
   ;; SPEND CASE 'd' — ACCEPT A GOVERNED FUNDED REDEMPTION
   ;;
@@ -939,9 +908,9 @@
                   (spend_authorize_sols_swap
                     SINGLETON_STRUCT OWNER_PUBKEY AUTH_TYPE
                     IDENTITY_ATTEST_ROOT ZKPASSPORT_BRIDGE_POLICY_HASH
-                    POOL_SINGLETON_MOD_HASH POOL_SINGLETON_LAUNCHER_ID
-                    POOL_SINGLETON_LAUNCHER_PUZZLE_HASH
-                    my_id my_inner_puzzlehash my_amount p)
+                    my_id my_inner_puzzlehash my_amount
+                    (f p) (f (r p)) (f (r (r p)))
+                    (f (r (r (r p)))))
                   (if (= spend_case SPEND_ACCEPT_REDEMPTION)
                     (spend_accept_redemption
                       SINGLETON_STRUCT OWNER_PUBKEY AUTH_TYPE

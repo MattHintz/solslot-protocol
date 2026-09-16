@@ -37,7 +37,7 @@ from chia.wallet.puzzles.singleton_top_layer_v1_1 import (
     puzzle_for_singleton,
     solution_for_singleton,
 )
-from chia.wallet.trading.offer import OFFER_MOD_HASH, Offer
+from chia.wallet.trading.offer import OFFER_MOD_HASH, Offer, NotarizedPayment
 from chia.wallet.wallet_spend_bundle import WalletSpendBundle
 from chia_rs import G1Element, G2Element
 from chia_rs.sized_bytes import bytes32
@@ -297,6 +297,16 @@ def pool_operation_announcement(operation_hash: bytes32) -> bytes:
     return b"\x53" + bytes(
         Program.to([SWAP_OPERATION_TAG, operation_hash]).get_tree_hash()
     )
+
+
+def _pool_payments(requested: dict, pool_coin_id: bytes32) -> dict:
+    """Match Pool V4's consensus payment nonce: the exact pool input ID.
+
+    Offer.notarize_payments hashes a list of input coins, which is a different
+    nonce and cannot satisfy Pool V4's payment announcement.
+    """
+    return {asset: [NotarizedPayment(p.puzzle_hash, p.amount, p.memos, nonce=pool_coin_id)
+                    for p in payments] for asset, payments in requested.items()}
 
 
 def _sols_payments(
@@ -677,6 +687,8 @@ def build_sols_to_deed_protocol_offer(
         identity_attest_root=identity_attest_root,
         zkpassport_bridge_policy_hash=zkpassport_bridge_policy_hash,
         operation_hash=receipt.operation_hash,
+        pool_coin_id=pool_coin.name(),
+        pool_inner_puzzle_hash=bytes32(make_pool_v4_inner(config, receipt.current_state).get_tree_hash()),
         quote_expires_at=quote_expires_at,
         lineage_proof=vault_lineage_proof,
         signature_data=vault_signature_data,
@@ -769,7 +781,7 @@ def build_sols_to_deed_protocol_offer(
             config.permanent_rules.sols_tail_hash
         ),
     }
-    notarized = Offer.notarize_payments(requested, [pool_coin])
+    notarized = _pool_payments(requested, pool_coin.name())
     offer = Offer(
         notarized,
         WalletSpendBundle(
@@ -939,6 +951,7 @@ def build_deed_to_sols_protocol_offer(
             bytes32(p2_vault_inner.get_tree_hash()),
             int(p2_vault_deed_coin.amount),
             smart_deed_hash,
+            p2_vault_deed_coin.name(),
         ]
     )
     p2_vault_spend = make_spend(
@@ -1026,6 +1039,8 @@ def build_deed_to_sols_protocol_offer(
         identity_attest_root=identity_attest_root,
         zkpassport_bridge_policy_hash=zkpassport_bridge_policy_hash,
         operation_hash=receipt.operation_hash,
+        pool_coin_id=pool_coin.name(),
+        pool_inner_puzzle_hash=bytes32(make_pool_v4_inner(config, receipt.current_state).get_tree_hash()),
         quote_expires_at=quote_expires_at,
         lineage_proof=vault_lineage_proof,
         signature_data=vault_signature_data,
@@ -1174,7 +1189,7 @@ def build_deed_to_sols_protocol_offer(
         ),
     }
     offer = Offer(
-        Offer.notarize_payments(requested, [pool_coin]),
+        _pool_payments(requested, pool_coin.name()),
         WalletSpendBundle(
             [
                 statutes_spend,

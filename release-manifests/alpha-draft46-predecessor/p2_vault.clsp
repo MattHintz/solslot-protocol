@@ -14,19 +14,12 @@
         my_singleton_inner_puzzle_hash ; the NFT's singleton inner puzzlehash
         my_amount
         next_puzzlehash ; where the NFT coin should be sent
-        . swap_transfer ; optional one-element list: exact input coin for VSX1 swaps
     )
 
     ;; Include standard condition codes and utility functions
     (include condition_codes.clib)
     (include utils.clib)
     (include utility_macros.clib)
-
-    (defconstant VAULT_SWAP_TRANSFER_TAG 0x56535831) ;; VSX1
-    (defun swap-message (vault_coin_id transfer coin_or_launcher destination)
-      (concat PROTOCOL_PREFIX
-        (sha256tree (list VAULT_SWAP_TRANSFER_TAG vault_coin_id
-                         (f transfer) coin_or_launcher destination))))
 
     ;; Main function to handle spends
     (defun main (
@@ -39,7 +32,6 @@
         my_singleton_inner_puzzle_hash
         my_amount
         next_puzzlehash
-        swap_transfer
     )
         (assert
             (is-size-b32 singleton_inner_puzzle_hash)
@@ -48,23 +40,14 @@
             (is-size-b32 my_singleton_inner_puzzle_hash)
             (is-uint64 my_amount)
             (is-size-b32 next_puzzlehash)
-            (if swap_transfer
-                (assert (not (r swap_transfer)) (is-size-b32 (f swap_transfer)) 1)
-                1)
-            (merge-lists
-                (if swap_transfer
-                    (list (list ASSERT_MY_COIN_ID (f swap_transfer)))
-                    ())
-              (list
+            (list
                 (list ASSERT_MY_AMOUNT my_amount)
 
                 ;; Assert singleton spend behavior
                 (list ASSERT_PUZZLE_ANNOUNCEMENT
                     (sha256
                         (calculate_full_puzzle_hash (c SINGLETON_MOD_HASH (c LAUNCHER_ID LAUNCHER_PUZZLE_HASH)) singleton_inner_puzzle_hash)
-                        (if swap_transfer
-                          (swap-message singleton_coin_id swap_transfer my_launcher_id next_puzzlehash)
-                          (concat PROTOCOL_PREFIX (sha256tree (list singleton_coin_id my_launcher_id next_puzzlehash))))
+                        (concat PROTOCOL_PREFIX (sha256tree (list singleton_coin_id my_launcher_id next_puzzlehash)))
                     )
                 )
 
@@ -73,14 +56,11 @@
 
                 ;; Announce that a specific singleton is being spent to help prevent ephemeral singleton spends from influencing
                 ;; Announce the combination of NFT launcher ID and next_puzzlehash
-                (list CREATE_COIN_ANNOUNCEMENT
-                  (if swap_transfer
-                    (swap-message singleton_coin_id swap_transfer my_launcher_id next_puzzlehash)
-                    (concat PROTOCOL_PREFIX (sha256 singleton_coin_id my_launcher_id next_puzzlehash))))
-            ))
+                (list CREATE_COIN_ANNOUNCEMENT (concat PROTOCOL_PREFIX (sha256 singleton_coin_id my_launcher_id next_puzzlehash)))
+            )
         )
     )
 
     ;; Execute the main function with the provided parameters
-    (main SINGLETON_MOD_HASH LAUNCHER_ID LAUNCHER_PUZZLE_HASH singleton_inner_puzzle_hash singleton_coin_id my_launcher_id my_singleton_inner_puzzle_hash my_amount next_puzzlehash swap_transfer)
+    (main SINGLETON_MOD_HASH LAUNCHER_ID LAUNCHER_PUZZLE_HASH singleton_inner_puzzle_hash singleton_coin_id my_launcher_id my_singleton_inner_puzzle_hash my_amount next_puzzlehash)
 )

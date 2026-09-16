@@ -1,4 +1,4 @@
-"""Unit tests for vault_singleton_inner.clsp, p2_vault.clsp, p2_pool_v2.clsp, and vault_driver.py.
+"""Unit tests for vault_singleton_inner_v2.clsp, p2_vault.clsp, p2_pool_v2.clsp, and vault_driver.py.
 
 Tests run curried puzzles directly via Program.run() to verify:
   1. Vault BLS (AUTH_TYPE=1) path: all three spend cases produce correct conditions
@@ -25,7 +25,7 @@ from solslot_puzzles.protocol_deployment import singleton_full_puzzle_hash
 
 # ── Load compiled puzzles ──────────────────────────────────────────────────
 VAULT_INNER_MOD: Program = load_clvm(
-    "vault_singleton_inner.clsp",
+    "vault_singleton_inner_v2.clsp",
     package_or_requirement="solslot_puzzles",
     recompile=True,
 )
@@ -65,7 +65,7 @@ VAULT_SINGLETON_STRUCT = Program.to(
     (SINGLETON_MOD_HASH, (VAULT_LAUNCHER_ID, LAUNCHER_PUZZLE_HASH))
 )
 
-# Auth type constants (must mirror vault_singleton_inner.clsp)
+# Auth type constants (must mirror vault_singleton_inner_v2.clsp)
 AUTH_TYPE_BLS = 1
 AUTH_TYPE_SECP256R1 = 2
 AUTH_TYPE_SECP256K1 = 3
@@ -377,9 +377,9 @@ class TestVaultBLSAcceptOffer:
             None,
         )
         # Pinned solution tree hash. Embeds the vault inner puzzle hash, so it
-        # updates whenever vault_singleton_inner.clsp's mod hash changes — here,
-        # the 'm' (migrate) spend case (vault upgrade flow) was added.
-        assert sol.get_tree_hash().hex() == "e12e401cc2e81cd1a18ff16208179ec3bf5e073f7d68dfc6633a890860eb1a0e"
+        # updates whenever vault_singleton_inner_v2.clsp's mod hash changes — here,
+        # the current alpha swap authorization commitment changed.
+        assert sol.get_tree_hash().hex() == "84d3609396ba28b0b317484ac31a30f9c17256702f216fda6d07bc3e6aeed199"
         fields = list(sol.as_iter())
         params = list(fields[4].as_iter())
         assert bytes32(fields[0].as_atom()) == my_id
