@@ -27,6 +27,7 @@ from chia.wallet.cat_wallet.cat_utils import (
 )
 from chia.wallet.lineage_proof import LineageProof
 from chia.wallet.puzzles.singleton_top_layer_v1_1 import (
+    SINGLETON_MOD_HASH,
     puzzle_for_singleton,
     solution_for_singleton,
 )
@@ -365,6 +366,43 @@ def proposal_tracker_v2_inner_puzzle(
 
 def proposal_tracker_v2_inner_hash(*args, **kwargs) -> bytes32:
     return proposal_tracker_v2_inner_puzzle(*args, **kwargs).get_tree_hash()
+
+
+def validate_tracker_propose_parameters(
+    tracker_inner_puzzle: Program, params: list[Program],
+) -> tuple[int, ...] | None:
+    """Validate the versioned PROPOSE wire shape and return its policy snapshot."""
+    from solslot_puzzles.protocol_statutes_v1 import ProtocolParameters
+
+    module, args = tracker_inner_puzzle.uncurry()
+    if module == proposal_tracker_mod():
+        if len(params) != 5:
+            raise ValueError("legacy TRK_PROPOSE requires five parameters")
+        return None
+    if module != proposal_tracker_v2_mod():
+        raise ValueError("unrecognized proposal tracker module")
+    if len(params) != 6:
+        raise ValueError("V2 TRK_PROPOSE requires statutes and administrator evidence")
+    evidence = list(params[5].as_iter())
+    if len(evidence) != 3 or any(len(value.as_atom()) != 32 for value in evidence[:2]):
+        raise ValueError("V2 TRK_PROPOSE evidence is malformed")
+    values = [value.as_int() for value in evidence[2].as_iter()]
+    curried = list(args.as_iter())
+    if len(curried) != 19:
+        raise ValueError("V2 proposal tracker curry is malformed")
+    return ProtocolParameters.from_sequence(values).validate(
+        sgt_total_supply=curried[12].as_int(),
+    ).as_tuple()
+
+
+def tracker_propose_policy_from_spend(
+    puzzle_reveal: Program, params: list[Program],
+) -> tuple[int, ...] | None:
+    module, curried = puzzle_reveal.uncurry()
+    args = list(curried.as_iter())
+    if module.get_tree_hash() != SINGLETON_MOD_HASH or len(args) != 2:
+        raise ValueError("governance proposal is not a canonical singleton")
+    return validate_tracker_propose_parameters(args[1], params)
 
 
 def kos_mint_execute_message(

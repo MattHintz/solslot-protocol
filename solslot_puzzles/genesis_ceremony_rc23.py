@@ -8,9 +8,12 @@ from typing import Any, Mapping, Sequence
 
 from chia.types.blockchain_format.coin import Coin
 from chia.types.blockchain_format.program import Program
-from chia.types.coin_spend import CoinSpend, make_spend
+from chia.types.coin_spend import CoinSpend
+from chia.wallet.cat_wallet.cat_utils import (
+    CAT_MOD, SpendableCAT, construct_cat_puzzle,
+    unsigned_spend_bundle_for_spendable_cats,
+)
 from chia.wallet.puzzles.singleton_top_layer_v1_1 import (
-    SINGLETON_LAUNCHER,
     SINGLETON_LAUNCHER_HASH,
     SINGLETON_MOD_HASH,
 )
@@ -42,13 +45,17 @@ from solslot_puzzles.genesis_ceremony import (
     _normalize_evm_addresses,
     _normalize_source_shas,
     _signed_faucet_spend,
+    _singleton_launcher_spend,
     _singleton_spends,
 )
 from solslot_puzzles.recovery_dependencies import (
     RECOVERY_DEPENDENCY_MANIFEST_HASH,
 )
 from solslot_puzzles.eip712_helpers import keccak256
-from solslot_puzzles.protocol_deployment import singleton_full_puzzle_hash
+from solslot_puzzles.protocol_deployment import (
+    singleton_full_puzzle_hash, sgt_free_inner_puzzle_for_owner,
+)
+from solslot_puzzles.sgt_driver import sgt_tail_puzzle
 from solslot_puzzles.protocol_deployment_rc22 import (
     RC22ProtocolDeploymentPlan,
     build_rc22_protocol_deployment_plan,
@@ -953,6 +960,56 @@ def verify_rc23_genesis_ceremony_plan(
         raise ValueError("ceremony plan hash does not match canonical content")
 
 
+@dataclass(frozen=True)
+class RC23SGTIssuance:
+    eve_coin: Coin
+    eve_spend: CoinSpend
+    reserve_coin: Coin
+
+
+def build_rc23_sgt_issuance(plan: RC23GenesisCeremonyPlan) -> RC23SGTIssuance:
+    """Consume the one-time CAT eve before handing SGT to the governed reserve."""
+    return build_sgt_genesis_issuance(
+        genesis_coin_id=plan.funding.sgt,
+        governance_launcher_id=plan.protocol.governance_launcher_id,
+        reserve_inner_puzzle_hash=plan.protocol.sgt_reserve_inner_puzzle_hash,
+        reserve_full_puzzle_hash=plan.protocol.sgt_full_puzzle_hash,
+        total_supply=plan.protocol.permanent_rules.sgt_total_supply,
+    )
+
+
+def build_sgt_genesis_issuance(
+    *, genesis_coin_id: bytes32, governance_launcher_id: bytes32,
+    reserve_inner_puzzle_hash: bytes32, reserve_full_puzzle_hash: bytes32,
+    total_supply: int,
+) -> RC23SGTIssuance:
+    """Derive the same issuance from the signed plan or verified public artifact."""
+    tail = sgt_tail_puzzle(genesis_coin_id)
+    reserve_inner = sgt_free_inner_puzzle_for_owner(
+        governance_launcher_id, reserve_inner_puzzle_hash,
+    )
+    reserve_full = construct_cat_puzzle(CAT_MOD, tail.get_tree_hash(), reserve_inner)
+    if reserve_full.get_tree_hash() != reserve_full_puzzle_hash:
+        raise ValueError("SGT issuance destination differs from the ceremony plan")
+    amount = uint64(total_supply)
+    # CAT2 consumes the TAIL marker; only the conserved reserve output survives.
+    eve_inner = Program.to((1, [
+        [51, reserve_inner.get_tree_hash(), amount],
+        [51, 0, -113, tail, []],
+    ]))
+    eve_puzzle = construct_cat_puzzle(CAT_MOD, tail.get_tree_hash(), eve_inner)
+    eve_coin = Coin(genesis_coin_id, eve_puzzle.get_tree_hash(), amount)
+    bundle = unsigned_spend_bundle_for_spendable_cats(CAT_MOD, [SpendableCAT(
+        coin=eve_coin, limitations_program_hash=tail.get_tree_hash(),
+        inner_puzzle=eve_inner, inner_solution=Program.to([]),
+        limitations_program_reveal=tail,
+    )])
+    return RC23SGTIssuance(
+        eve_coin, bundle.coin_spends[0],
+        Coin(eve_coin.name(), reserve_full.get_tree_hash(), amount),
+    )
+
+
 def build_rc23_genesis_ceremony_bundle(
     *,
     plan: RC23GenesisCeremonyPlan,
@@ -989,17 +1046,25 @@ def build_rc23_genesis_ceremony_bundle(
 
     spends: list[CoinSpend] = []
     signatures: list[Any] = []
+    sgt_issuance = build_rc23_sgt_issuance(plan)
     sgt_spend, signature = _funding_spend(
         faucet=faucet,
         coin=funding_coins.sgt,
-        target_puzzle_hash=plan.protocol.sgt_full_puzzle_hash,
+        target_puzzle_hash=sgt_issuance.eve_coin.puzzle_hash,
         target_amount=plan.protocol.permanent_rules.sgt_total_supply,
         fee=0,
     )
     spends.append(sgt_spend)
+    spends.append(sgt_issuance.eve_spend)
     signatures.append(signature)
 
+    pool_launcher_spend, pool_assertion = _singleton_launcher_spend(
+        funding_coin=funding_coins.pool,
+        surface=SingletonSurface(plan.protocol.pool_launcher_id,
+            plan.protocol.pool_inner_puzzle_hash, plan.protocol.pool_full_puzzle_hash),
+    )
     pool_conditions = [
+        pool_assertion,
         Program.to(
             [
                 51,
@@ -1022,22 +1087,7 @@ def build_rc23_genesis_ceremony_bundle(
     )
     spends.append(pool_funding_spend)
     signatures.append(pool_signature)
-    pool_launcher_coin = Coin(
-        funding_coins.pool.name(),
-        bytes32(SINGLETON_LAUNCHER_HASH),
-        uint64(1),
-    )
-    if bytes32(pool_launcher_coin.name()) != plan.protocol.pool_launcher_id:
-        raise ValueError("pool launcher does not match plan")
-    spends.append(
-        make_spend(
-            pool_launcher_coin,
-            SINGLETON_LAUNCHER,
-            Program.to(
-                [plan.protocol.pool_inner_puzzle_hash, uint64(1), []]
-            ),
-        )
-    )
+    spends.append(pool_launcher_spend)
     reserve_seed_coin = Coin(
         funding_coins.pool.name(),
         plan.protocol.sols_reserve_seed_puzzle_hash,
@@ -1097,13 +1147,6 @@ def build_rc23_genesis_ceremony_bundle(
             for amount in admin_authority.IDENTITY_LAUNCHER_AMOUNTS
         ],
     ]
-    authority_funding_spend, authority_signature = _signed_faucet_spend(
-        faucet=faucet,
-        coin=funding_coins.admin_authority,
-        conditions=authority_conditions,
-    )
-    spends.append(authority_funding_spend)
-    signatures.append(authority_signature)
     authority_surfaces = (
         (
             admin_authority.AUTHORITY_LAUNCHER_AMOUNT,
@@ -1122,20 +1165,18 @@ def build_rc23_genesis_ceremony_bundle(
         ],
     )
     for amount, surface in authority_surfaces:
-        launcher_coin = Coin(
-            funding_coins.admin_authority.name(),
-            bytes32(SINGLETON_LAUNCHER_HASH),
-            uint64(amount),
+        launcher_spend, assertion = _singleton_launcher_spend(
+            funding_coin=funding_coins.admin_authority, surface=surface, amount=amount,
         )
-        if bytes32(launcher_coin.name()) != surface.launcher_id:
-            raise ValueError("Authority V3 launcher does not match plan")
-        spends.append(
-            make_spend(
-                launcher_coin,
-                SINGLETON_LAUNCHER,
-                Program.to([surface.full_puzzle_hash, amount, []]),
-            )
-        )
+        spends.append(launcher_spend)
+        authority_conditions.append(assertion)
+    authority_funding_spend, authority_signature = _signed_faucet_spend(
+        faucet=faucet,
+        coin=funding_coins.admin_authority,
+        conditions=authority_conditions,
+    )
+    spends.append(authority_funding_spend)
+    signatures.append(authority_signature)
 
     # The batch spends 529 mojos into protocol outputs and leaves the approved
     # one-mojo safety buffer as fee. The separately estimated medium-speed
@@ -1153,6 +1194,10 @@ def build_rc23_genesis_ceremony_bundle(
             ]
         )
     )
+    property_launcher_spend, property_assertion = _singleton_launcher_spend(
+        funding_coin=funding_coins.bridge_batch, surface=plan.property_registry,
+    )
+    batch_conditions.append(property_assertion)
     batch_spend, batch_signature = _signed_faucet_spend(
         faucet=faucet,
         coin=funding_coins.bridge_batch,
@@ -1161,24 +1206,7 @@ def build_rc23_genesis_ceremony_bundle(
     spends.append(batch_spend)
     signatures.append(batch_signature)
 
-    property_launcher_coin = Coin(
-        funding_coins.bridge_batch.name(),
-        bytes32(SINGLETON_LAUNCHER_HASH),
-        uint64(1),
-    )
-    if bytes32(property_launcher_coin.name()) != (
-        plan.property_registry.launcher_id
-    ):
-        raise ValueError("property registry launcher does not match plan")
-    spends.append(
-        make_spend(
-            property_launcher_coin,
-            SINGLETON_LAUNCHER,
-            Program.to(
-                [plan.property_registry.inner_puzzle_hash, uint64(1), []]
-            ),
-        )
-    )
+    spends.append(property_launcher_spend)
 
     for parent, bridge_coin in zip(
         plan.bridge_batch.parent_coins,
@@ -1210,9 +1238,9 @@ def build_rc23_genesis_ceremony_bundle(
         spends.append(parent_spend)
         signatures.append(signature)
 
-    if len(spends) != 52:
+    if len(spends) != 53:
         raise ValueError(
-            f"RC23 ceremony bundle must contain 52 spends, got {len(spends)}"
+            f"RC23 ceremony bundle must contain 53 spends, got {len(spends)}"
         )
     return RC23GenesisCeremonyBundle(
         plan=plan,
@@ -1238,5 +1266,7 @@ __all__ = [
     "RC23GenesisFundingCoins",
     "build_rc23_genesis_ceremony_bundle",
     "build_rc23_genesis_ceremony_plan",
+    "build_rc23_sgt_issuance",
+    "build_sgt_genesis_issuance",
     "verify_rc23_genesis_ceremony_plan",
 ]

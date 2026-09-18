@@ -989,6 +989,7 @@ def build_tracker_propose_coin_spend(
     voter_inner_puzzle_hash: bytes32,
     first_vote_amount: int,
     voting_deadline: int,
+    proposal_evidence: Program | None = None,
 ) -> CoinSpend:
     """Singleton-wrapped PROPOSE spend for the governance proposal tracker.
 
@@ -1065,19 +1066,21 @@ def build_tracker_propose_coin_spend(
     ):
         raise ValueError("voting_deadline must be a uint64")
 
+    # Current V2 trackers bind administrator approval and the live statutes
+    # policy. The older tracker keeps its original five-parameter wire format.
+    from solslot_puzzles.sgt_driver import validate_tracker_propose_parameters
+    params = [proposal_hash, bill_operation, voter_inner_puzzle_hash,
+              first_vote_amount, voting_deadline]
+    if proposal_evidence is not None:
+        params.append(proposal_evidence)
+    validate_tracker_propose_parameters(tracker_inner_puzzle, list(Program.to(params).as_iter()))
     inner_solution = Program.to(
         [
             tracker_coin.name(),
             tracker_inner_puzzle.get_tree_hash(),
             tracker_coin.amount,
             TRK_PROPOSE,
-            [
-                proposal_hash,
-                bill_operation,
-                voter_inner_puzzle_hash,
-                first_vote_amount,
-                voting_deadline,
-            ],
+            params,
         ]
     )
     full_puzzle = puzzle_for_singleton(tracker_launcher_id, tracker_inner_puzzle)
