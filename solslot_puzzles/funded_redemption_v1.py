@@ -512,6 +512,81 @@ def aggregate_direct_redemption(
     return aggregate
 
 
+@dataclass(frozen=True)
+class UnsignedRedemptionEvidence:
+    """Complete candidate, with owner authorization explicitly still pending."""
+
+    operation_hash: bytes32
+    vault_coin_id: bytes32
+    coin_spends: tuple[CoinSpend, ...]
+    roles: tuple[str, ...]
+    outputs: tuple[Coin, ...]
+    required_backing_mojos: int = 0
+
+    @property
+    def candidate_hash(self) -> bytes32:
+        return bytes32(Program.to([b"RDA1", self.operation_hash,
+            [[role.encode(), bytes(spend)] for role, spend in zip(self.roles, self.coin_spends)]]).get_tree_hash())
+
+    def to_json(self) -> dict[str, object]:
+        def coin(value):
+            return {"parentCoinInfo": "0x" + value.parent_coin_info.hex(),
+                    "puzzleHash": "0x" + value.puzzle_hash.hex(), "amount": str(value.amount)}
+        return {"schemaVersion": 1, "action": "FUNDED_REDEMPTION",
+            "status": "OWNER_AUTHORIZATION_PENDING", "consensusValidated": False,
+            "candidateHash": "0x" + self.candidate_hash.hex(),
+            "operationHash": "0x" + self.operation_hash.hex(), "requiredBackingMojos": "0",
+            "coinSpends": [{"role": role, "coinId": "0x" + spend.coin.name().hex(),
+                "coin": coin(spend.coin), "puzzleReveal": "0x" + bytes(spend.puzzle_reveal).hex(),
+                "solution": "0x" + bytes(spend.solution).hex()}
+                for role, spend in zip(self.roles, self.coin_spends)],
+            "expectedOutputs": [{"coinId": "0x" + item.name().hex(), "coin": coin(item)} for item in self.outputs]}
+
+
+def prepare_unsigned_direct_redemption(
+    *, maker_offer: Offer, acceptance: DirectRedemptionAcceptance,
+) -> UnsignedRedemptionEvidence:
+    """Assemble settlements without executing or fake-signing an EVM vault.
+
+    The vault is neither an offered asset nor a settlement producer. Build the
+    two executable offer halves without it, then append its exact unsigned
+    spend and successor. The complete signed bundle still requires consensus
+    validation; an Offer balance check is not that validation.
+    """
+    inner = list(Program.from_bytes(bytes(acceptance.vault_spend.solution)).at("rrf").as_iter())
+    authorization = list(inner[4].as_iter())
+    if (len(inner) != 5 or inner[3].as_atom() != b"d" or len(authorization) != 3
+            or authorization[2].as_atom() != b""):
+        raise ValueError("redemption review requires the exact unsigned vault action")
+    if len(maker_offer.coin_spends()) != 1:
+        raise ValueError("redemption requires exactly one funding leaf")
+    taker = Offer(acceptance.taker_offer.requested_payments,
+                  WalletSpendBundle([acceptance.deed_spend], G2Element()),
+                  acceptance.taker_offer.driver_dict)
+    aggregate = Offer.aggregate([maker_offer, taker])
+    if not aggregate.is_valid() or aggregate.fees() != 0:
+        raise ValueError("redemption protocol must balance without customer fees")
+    executable = aggregate.to_valid_spend()
+    leaf = maker_offer.coin_spends()[0]
+    by_id = {spend.coin.name(): spend for spend in executable.coin_spends}
+    settlements = [spend for spend in executable.coin_spends if spend.coin.name() not in
+                   {leaf.coin.name(), acceptance.deed_spend.coin.name()}]
+    payment = [spend for spend in settlements if spend.coin.parent_coin_info == leaf.coin.name()]
+    deed = [spend for spend in settlements if spend.coin.parent_coin_info == acceptance.deed_spend.coin.name()]
+    if (len(by_id) != 4 or len(payment) != 1 or len(deed) != 1
+            or by_id.get(leaf.coin.name()) != leaf
+            or by_id.get(acceptance.deed_spend.coin.name()) != acceptance.deed_spend):
+        raise ValueError("redemption settlement inputs are not canonical")
+    outputs = tuple(item for item in executable.additions() if item.name() not in by_id)
+    if len(outputs) != 2:
+        raise ValueError("redemption requires one payout and one settled deed")
+    successor = Coin(acceptance.vault_spend.coin.name(), acceptance.vault_spend.coin.puzzle_hash, uint64(1))
+    return UnsignedRedemptionEvidence(acceptance.operation_hash, acceptance.vault_spend.coin.name(),
+        (leaf, acceptance.vault_spend, acceptance.deed_spend, payment[0], deed[0]),
+        ("redemption_leaf", "vault", "held_deed", "payment_settlement", "deed_settlement"),
+        (successor, *outputs))
+
+
 def redemption_leaf_conditions(
     *,
     funding_coin: Coin,

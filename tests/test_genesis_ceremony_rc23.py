@@ -196,7 +196,7 @@ def test_rc23_bundle_keeps_nine_inputs_and_launches_four_authority_vaults() -> N
         faucet=faucet,
         funding_coins=coins,
     )
-    assert len(built.spend_bundle.coin_spends) == 52
+    assert len(built.spend_bundle.coin_spends) == 53
     spent = {
         bytes32(spend.coin.name())
         for spend in built.spend_bundle.coin_spends

@@ -644,6 +644,7 @@ def _funding_spend(
     target_puzzle_hash: bytes32,
     target_amount: int,
     fee: int,
+    extra_conditions: Sequence[Program] = (),
 ) -> tuple[CoinSpend, Any]:
     if int(coin.amount) < target_amount + fee:
         raise ValueError("genesis funding coin is too small")
@@ -653,7 +654,24 @@ def _funding_spend(
         conditions.append(Program.to([51, faucet.address_puzzle_hash, change]))
     if fee:
         conditions.append(Program.to([52, fee]))
+    conditions.extend(extra_conditions)
     return _signed_faucet_spend(faucet=faucet, coin=coin, conditions=conditions)
+
+
+def _singleton_launcher_spend(
+    *, funding_coin: Coin, surface: SingletonSurface, amount: int = 1,
+) -> tuple[CoinSpend, Program]:
+    """Return the exact launcher spend and its signed-parent commitment."""
+    launcher_coin = Coin(
+        funding_coin.name(), bytes32(SINGLETON_LAUNCHER_HASH), uint64(amount)
+    )
+    if bytes32(launcher_coin.name()) != surface.launcher_id:
+        raise ValueError("derived launcher id does not match ceremony plan")
+    solution = Program.to([surface.full_puzzle_hash, amount, []])
+    assertion = Program.to([
+        61, hashlib.sha256(bytes(launcher_coin.name()) + bytes(solution.get_tree_hash())).digest()
+    ])
+    return make_spend(launcher_coin, SINGLETON_LAUNCHER, solution), assertion
 
 
 def _singleton_spends(
@@ -663,22 +681,16 @@ def _singleton_spends(
     surface: SingletonSurface,
     fee: int,
 ) -> tuple[list[CoinSpend], Any]:
+    launcher_spend, assertion = _singleton_launcher_spend(
+        funding_coin=funding_coin, surface=surface,
+    )
     parent_spend, signature = _funding_spend(
         faucet=faucet,
         coin=funding_coin,
         target_puzzle_hash=bytes32(SINGLETON_LAUNCHER_HASH),
         target_amount=1,
         fee=fee,
-    )
-    launcher_coin = Coin(
-        funding_coin.name(), bytes32(SINGLETON_LAUNCHER_HASH), uint64(1)
-    )
-    if bytes32(launcher_coin.name()) != surface.launcher_id:
-        raise ValueError("derived launcher id does not match ceremony plan")
-    launcher_spend = make_spend(
-        launcher_coin,
-        SINGLETON_LAUNCHER,
-        Program.to([surface.inner_puzzle_hash, 1, []]),
+        extra_conditions=[assertion],
     )
     return [parent_spend, launcher_spend], signature
 
