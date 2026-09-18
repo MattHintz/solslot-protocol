@@ -34,7 +34,7 @@ def puzzle_for_vault_sols_inner(
         raise ValueError("vault_launcher_id must be non-zero")
     return vault_sols_inner_mod().curry(
         vault_sols_inner_mod_hash(),
-        pool_v4_inner_mod_hash(),
+        pool_v4_inner_mod_hash(config.pool_puzzle_version),
         config.pool_singleton_struct,
         config.statutes_config,
         config.market_config,

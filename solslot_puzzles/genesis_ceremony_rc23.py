@@ -558,6 +558,8 @@ def _plan_payload(
         payload["enrollmentActivation"] = json.loads(json.dumps(plan.enrollment_activation))
     if plan.protocol.sols_reserve_seed_version != 1:
         payload["solsReserveSeed"]["version"] = plan.protocol.sols_reserve_seed_version
+    if plan.protocol.pool_puzzle_version != 4:
+        payload["poolPuzzleVersion"] = plan.protocol.pool_puzzle_version
     if include_hash:
         payload["planHash"] = _hex(plan.plan_hash)
     return payload
@@ -634,6 +636,7 @@ def build_rc23_genesis_ceremony_plan(
     property_registry_version: int = 0,
     enrollment_activation: Mapping[str, Any] | None = None,
     sols_reserve_seed_version: int = 2,
+    pool_puzzle_version: int = 5,
 ) -> RC23GenesisCeremonyPlan:
     if network != GENESIS_NETWORK:
         raise ValueError("RC23 fresh genesis is restricted to testnet11")
@@ -763,6 +766,7 @@ def build_rc23_genesis_ceremony_plan(
         trusted_governance_rewards_root=trusted_governance_rewards_root,
         trusted_zkpassport_bridge_policy_hash=bridge_policy_hash,
         sols_reserve_seed_version=sols_reserve_seed_version,
+        pool_puzzle_version=pool_puzzle_version,
     )
 
     config_launcher_id = _launcher_id(funding.protocol_config)
@@ -955,11 +959,10 @@ def verify_rc23_genesis_ceremony_plan(
         raise ValueError("ceremony plan does not contain 32 bridge coins")
     if plan.statutes.launcher_id != _launcher_id(plan.funding.statutes):
         raise ValueError("statutes launcher does not match its funding coin")
-    if (
-        plan.protocol.pool_inner_mod_hash.hex()
-        != "e01e8cb71b9612ba01ac9678e45e6cae6915cebffff6795f6809c081d973e27d"
-    ):
-        raise ValueError("ceremony plan does not launch frozen Pool V4")
+    from .pool_v4_driver import pool_v4_inner_mod_hash
+    if (plan.protocol.pool_config.pool_puzzle_version != plan.protocol.pool_puzzle_version
+        or plan.protocol.pool_inner_mod_hash != pool_v4_inner_mod_hash(plan.protocol.pool_puzzle_version)):
+        raise ValueError("ceremony plan does not launch its frozen pool version")
     if plan.plan_hash != _compute_plan_hash(plan):
         raise ValueError("ceremony plan hash does not match canonical content")
 
