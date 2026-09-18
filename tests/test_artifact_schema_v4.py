@@ -67,6 +67,21 @@ def test_v4_artifact_reconstructs_authority_v3_and_recovery_roster() -> None:
     verify_public_artifact(value, signature_verifier=_accept)
 
 
+def test_v4_treasury_alias_is_canonical_and_historical_artifacts_remain_verifiable():
+    value = _artifact()
+    treasury = value['genesisPlan']['trustedDestinations']['protocolTreasuryPuzzleHash']
+    assert value['puzzleHashes']['protocolTreasuryPuzzleHash'] == treasury
+    assert value['permanentRules']['protocolTreasuryPuzzleHash'] == treasury
+    historical = copy.deepcopy(value)
+    del historical['puzzleHashes']['protocolTreasuryPuzzleHash']
+    historical['artifactHash'] = artifact_hash(historical)
+    verify_public_artifact(historical, signature_verifier=_accept)
+    value['puzzleHashes']['protocolTreasuryPuzzleHash'] = '0x'+'ff'*32
+    value['artifactHash'] = artifact_hash(value)
+    with pytest.raises(ValueError, match='puzzleHashes'):
+        verify_public_artifact(value, signature_verifier=_accept)
+
+
 @pytest.mark.parametrize(
     ("path", "replacement", "message"),
     (

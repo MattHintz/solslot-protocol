@@ -53,3 +53,10 @@ def test_generated_inventory_fixtures_and_embedded_puzzles_are_current():
     portal = root.parent/"admin-portal/src/app/services/mint-proposal-v2"
     assert (portal/"inventory-mint.fixtures.json").read_text() == raw
     assert (portal/"inventory-puzzles.ts").read_text() == constants()
+
+
+def test_current_governance_fixture_preserves_four_field_mint_contract():
+    from scripts.dump_governance_v2_inventory_fixture import build_fixture
+    root = Path(__file__).resolve().parents[1]
+    fixture = json.loads((root/'fixtures/mint-proposal-v2/governance-v2-inventory.fixture.json').read_text())
+    assert fixture == build_fixture()

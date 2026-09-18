@@ -658,6 +658,7 @@ def build_mint_publish_artifacts(
     metadata_root: bytes32 | None = None,
     metadata_anchor_id: bytes32 | None = None,
     primary_purchase: PrimaryPurchaseMintConfig | None = None,
+    governance_tracker_version: int = 1,
 ) -> MintPublishArtifacts:
     """Deterministically pin all publish-time artifacts for a mint proposal.
 
@@ -669,6 +670,8 @@ def build_mint_publish_artifacts(
     See module docstring for design rationale and the cross-repo
     contract surface.
     """
+    if type(governance_tracker_version) is not int or governance_tracker_version not in (1, 2):
+        raise ValueError("unsupported governance tracker version")
     if asset_class < 0:
         raise ValueError(
             f"asset_class must be >= 0, got {asset_class}"
@@ -803,7 +806,11 @@ def build_mint_publish_artifacts(
                 "metadata_anchor_id must be 32 bytes, "
                 f"got {len(resolved_metadata_anchor_id)}"
             )
-        bill_fields.extend((metadata_root, resolved_metadata_anchor_id))
+        # V2 accepts the canonical four-field MINT bill. Purchase metadata
+        # remains committed by the inventory puzzle's full hash and by the
+        # proposal data hash. Preserve the historical V1 extended encoding.
+        if governance_tracker_version == 1:
+            bill_fields.extend((metadata_root, resolved_metadata_anchor_id))
     bill_op_program = Program.to(bill_fields)
     proposal_hash = bytes32(bill_op_program.get_tree_hash())
 

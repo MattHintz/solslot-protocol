@@ -64,6 +64,9 @@ def _projection(plan: RC23GenesisCeremonyPlan) -> dict[str, Any]:
     hashes = dict(projection["puzzleHashes"])
     hashes.update(
         {
+            # Consumers of primary inventory use this public coordinate. It
+            # is already committed by the canonical plan/permanent rules.
+            "protocolTreasuryPuzzleHash": canonical["trustedDestinations"]["protocolTreasuryPuzzleHash"],
             "adminAuthorityInnerMod": canonical["puzzleHashes"][
                 "adminAuthorityInnerMod"
             ],
@@ -428,6 +431,11 @@ def _verify_artifact_content(payload: Mapping[str, Any]) -> None:
     from .enrollment_activation import activation_from_artifact
     activation_from_artifact(payload)
     for key, value in projection.items():
+        if (key == "puzzleHashes" and isinstance(payload.get(key), Mapping)
+                and "protocolTreasuryPuzzleHash" not in payload[key]):
+            # Historical signed V4 artifacts omitted this redundant alias.
+            # Preserve their original signed bytes; if present it must match.
+            value = {name: item for name, item in value.items() if name != "protocolTreasuryPuzzleHash"}
         if payload.get(key) != value:
             raise ValueError(
                 f"artifact {key} does not match its RC23 plan"
