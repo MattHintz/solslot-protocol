@@ -158,7 +158,10 @@ def build_rc22_protocol_deployment_plan(
     trusted_zkpassport_bridge_policy_hash: bytes32,
     sgt_total_supply: int = 1_000_000,
     sols_reserve_seed_version: int = 1,
+    pool_puzzle_version: int = 4,
 ) -> RC22ProtocolDeploymentPlan:
+    if type(pool_puzzle_version) is not int or pool_puzzle_version not in (4, 5):
+        raise ValueError("unsupported pool puzzle version")
     if type(sols_reserve_seed_version) is not int or sols_reserve_seed_version not in (1, 2):
         raise ValueError("unsupported Sols reserve seed version")
     if network != RC22_NETWORK:
@@ -261,6 +264,7 @@ def build_rc22_protocol_deployment_plan(
     )
     initial_pool_state.validate(())
     pool_config = PoolV4Config(
+        pool_puzzle_version=pool_puzzle_version,
         pool_launcher_id=pool_launcher_id,
         statutes_inner_mod_hash=protocol_statutes_inner_mod_hash(),
         statutes_singleton_struct=statutes_struct,
@@ -389,7 +393,7 @@ def build_rc22_protocol_deployment_plan(
             statutes_launcher_id,
             statutes_inner_hash,
         ),
-        pool_inner_mod_hash=pool_v4_inner_mod_hash(),
+        pool_inner_mod_hash=pool_v4_inner_mod_hash(pool_puzzle_version),
         pool_inner_puzzle_hash=pool_inner_hash,
         pool_full_puzzle_hash=pool_full_hash,
         sols_reserve_seed_puzzle_hash=sols_reserve_seed_puzzle_hash,
@@ -413,6 +417,7 @@ def build_rc22_protocol_deployment_plan(
         statutes_state=statutes_state,
         pool_state=initial_pool_state,
         pool_config=pool_config,
+        pool_puzzle_version=pool_puzzle_version,
     )
 
 

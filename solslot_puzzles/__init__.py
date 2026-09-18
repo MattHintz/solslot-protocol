@@ -137,6 +137,8 @@ PUZZLE_FILENAMES = (
     # Additive reservation execution repair. Historical modules remain exact.
     "mint_offer_inventory_available_v2.clsp",
     "zkpassport_bridge_permit_v1.clsp",
+    # Byte-ordered inventory; Pool V4 remains preserved for historical plans.
+    "pool_singleton_inner_v5.clsp",
 )
 
 # ── Frozen checksum — update after every intentional puzzle change ──
@@ -192,7 +194,7 @@ FROZEN_CHECKSUM: Optional[str] = (
     # RC27.35 appends an Authority-lost-prepare-bound recovery member. Every
     # prior puzzle hash remains byte-for-byte unchanged and separately
     # release-pinned.
-    "2e8dec8ef4101598c25bc408990b3946f1193b6e8d86b4a64f3592ef4946f3df"
+    "9afb6dd0a20a46ef99d42e60a073fa6351dd6aedfccfa1067e0292c4c1e69ed9"
 )
 
 # ── Cache ──

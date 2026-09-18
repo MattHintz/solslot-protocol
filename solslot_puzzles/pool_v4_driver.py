@@ -34,15 +34,26 @@ from solslot_puzzles.sols_pool_v4 import (
 _MOD: Program | None = None
 
 
-def pool_v4_inner_mod() -> Program:
+def pool_v4_inner_mod(version: int = 4) -> Program:
+    if type(version) is not int or version not in (4, 5):
+        raise ValueError("unsupported pool puzzle version")
+    if version == 5:
+        return load_puzzle("pool_singleton_inner_v5.clsp")
     global _MOD
     if _MOD is None:
         _MOD = load_puzzle("pool_singleton_inner_v4.clsp")
     return _MOD
 
 
-def pool_v4_inner_mod_hash() -> bytes32:
-    return bytes32(pool_v4_inner_mod().get_tree_hash())
+def pool_v4_inner_mod_hash(version: int = 4) -> bytes32:
+    return bytes32(pool_v4_inner_mod(version).get_tree_hash())
+
+
+def pool_puzzle_version_for_hash(module_hash: bytes32) -> int:
+    for version in (4, 5):
+        if module_hash == pool_v4_inner_mod_hash(version):
+            return version
+    raise ValueError("unsupported pool inner module hash")
 
 
 @dataclass(frozen=True)
@@ -60,6 +71,7 @@ class PoolV4Config:
     deed_launcher_puzzle_hash: bytes32
     reserve_puzzle_hash: bytes32
     sgt_rewards_puzzle_hash: bytes32
+    pool_puzzle_version: int = 4
 
     @property
     def pool_singleton_struct(self) -> Program:
@@ -108,8 +120,8 @@ def make_pool_v4_inner(
     state: SolsPoolStateV4,
 ) -> Program:
     state.economics.validate()
-    return pool_v4_inner_mod().curry(
-        pool_v4_inner_mod_hash(),
+    return pool_v4_inner_mod(config.pool_puzzle_version).curry(
+        pool_v4_inner_mod_hash(config.pool_puzzle_version),
         config.pool_singleton_struct,
         config.statutes_config,
         config.market_config,

@@ -12,8 +12,11 @@ from tests.historical_puzzles import MANIFEST, REPLACED, ROOT, historical_puzzle
 
 def test_exact_replacements_and_complete_current_manifest():
     assert REPLACED == {'vault_singleton_inner_v2.clsp', 'p2_vault.clsp', 'pool_singleton_inner_v4.clsp'}
-    assert tuple(MANIFEST['puzzleHashes']) == PUZZLE_FILENAMES
-    assert MANIFEST['canonicalChecksum'] == FROZEN_CHECKSUM
+    # Draft56 appends Pool V5 without rewriting this historical release.
+    historical_names = PUZZLE_FILENAMES[:-1]
+    assert PUZZLE_FILENAMES[-1] == 'pool_singleton_inner_v5.clsp'
+    assert tuple(MANIFEST['puzzleHashes']) == historical_names
+    assert MANIFEST['canonicalChecksum'] == hashlib.sha256(b''.join(bytes(load_puzzle(name).get_tree_hash()) for name in historical_names)).hexdigest()
     for name, expected in MANIFEST['puzzleHashes'].items():
         assert load_puzzle(name).get_tree_hash().hex() == expected
     for row in MANIFEST['replacements']:
@@ -24,7 +27,7 @@ def test_exact_replacements_and_complete_current_manifest():
         for suffix, field in [('', 'SourceSha256'), ('.hex', 'HexSha256')]:
             assert hashlib.sha256(historical_source_path(name + suffix).read_bytes()).hexdigest() == row['previous' + field]
             assert hashlib.sha256((ROOT / 'solslot_puzzles' / (name + suffix)).read_bytes()).hexdigest() == row[field[0].lower() + field[1:]]
-    assert hashlib.sha256(b''.join(bytes(historical_puzzle(name).get_tree_hash()) for name in PUZZLE_FILENAMES)).hexdigest() == MANIFEST['preservedCanonicalChecksum']
+    assert hashlib.sha256(b''.join(bytes(historical_puzzle(name).get_tree_hash()) for name in historical_names)).hexdigest() == MANIFEST['preservedCanonicalChecksum']
 
 
 def test_shared_fresh_vault_builder_and_swap_module_are_identical():
