@@ -133,6 +133,7 @@ class RC22ProtocolDeploymentPlan:
     governance_puzzle_version: int = RC22_GOVERNANCE_PUZZLE_VERSION
     statutes_puzzle_version: int = RC22_STATUTES_PUZZLE_VERSION
     vault_puzzle_version: int = RC22_VAULT_PUZZLE_VERSION
+    sols_reserve_seed_version: int = 1
 
 
 def build_rc22_protocol_deployment_plan(
@@ -156,7 +157,10 @@ def build_rc22_protocol_deployment_plan(
     trusted_governance_rewards_root: bytes32,
     trusted_zkpassport_bridge_policy_hash: bytes32,
     sgt_total_supply: int = 1_000_000,
+    sols_reserve_seed_version: int = 1,
 ) -> RC22ProtocolDeploymentPlan:
+    if type(sols_reserve_seed_version) is not int or sols_reserve_seed_version not in (1, 2):
+        raise ValueError("unsupported Sols reserve seed version")
     if network != RC22_NETWORK:
         raise ValueError("RC22 fresh genesis is restricted to testnet11")
     parameters.validate(sgt_total_supply=sgt_total_supply)
@@ -285,13 +289,14 @@ def build_rc22_protocol_deployment_plan(
         pool_launcher_id,
         pool_inner_hash,
     )
+    reserve_template = CAT_MOD.curry(CAT_MOD_HASH, fixed_sols_tail,
+        trusted_treasury_reserve_puzzle_hash)
+    # V1 treated an already-computed inner puzzle hash as a literal CLVM
+    # atom. Keep that identity available solely for historical reconstruction.
+    # V2 hashes the actual CAT inner program using its precomputed tree hash.
     sols_reserve_seed_puzzle_hash = bytes32(
-        CAT_MOD.curry(
-            CAT_MOD_HASH,
-            fixed_sols_tail,
-            trusted_treasury_reserve_puzzle_hash,
-        ).get_tree_hash()
-    )
+        reserve_template.get_tree_hash_precalc(trusted_treasury_reserve_puzzle_hash)
+        if sols_reserve_seed_version == 2 else reserve_template.get_tree_hash())
     sols_reserve_seed_coin_id = bytes32(
         Coin(
             pool_genesis_coin_id,
@@ -389,6 +394,7 @@ def build_rc22_protocol_deployment_plan(
         pool_full_puzzle_hash=pool_full_hash,
         sols_reserve_seed_puzzle_hash=sols_reserve_seed_puzzle_hash,
         sols_reserve_seed_coin_id=sols_reserve_seed_coin_id,
+        sols_reserve_seed_version=sols_reserve_seed_version,
         governance_inner_puzzle_hash=governance_inner_hash,
         governance_full_puzzle_hash=governance_full_hash,
         governance_singleton_struct_hash=bytes32(

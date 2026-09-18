@@ -79,8 +79,10 @@ def funding_coins(faucet: _FakeFaucet) -> RC23GenesisFundingCoins:
 def ceremony_plan(
     faucet: _FakeFaucet,
     coins: RC23GenesisFundingCoins,
+    *, sols_reserve_seed_version: int = 1,
 ):
     return build_rc23_genesis_ceremony_plan(
+        sols_reserve_seed_version=sols_reserve_seed_version,
         ceremony_id=bytes32(b"\xA1" * 32),
         expires_at=1_800_000_000,
         source_shas=SOURCE_SHAS,

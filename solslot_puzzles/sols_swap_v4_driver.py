@@ -247,6 +247,18 @@ def _complete_lineage(lineage: LineageProof, label: str) -> None:
         raise SolsSwapOfferError(f"{label} requires a complete lineage proof")
 
 
+def _pool_lineage(lineage: LineageProof, coin: Coin, launcher_id: bytes32) -> None:
+    if lineage.inner_puzzle_hash is not None:
+        _complete_lineage(lineage, "pool singleton")
+        return
+    # A fresh pool's parent is its launcher, which has no singleton inner.
+    # Accept that shape only when it reconstructs this exact launcher coin.
+    if (lineage.parent_name is None or lineage.amount != 1
+        or coin.parent_coin_info != launcher_id
+        or Coin(lineage.parent_name, SINGLETON_LAUNCHER_HASH, uint64(1)).name() != launcher_id):
+        raise SolsSwapOfferError("pool singleton requires authenticated launcher lineage")
+
+
 def _quote(receipt: SwapReceipt):
     if receipt.direction != SOLS_TO_DEED:
         raise SolsSwapOfferError("receipt is not a Sols-to-deed operation")
@@ -738,10 +750,10 @@ def _assemble_sols_to_deed_protocol(
     for lineage, label in (
         (statutes_lineage_proof, "statutes singleton"),
         (vault_lineage_proof, "vault singleton"),
-        (pool_lineage_proof, "pool singleton"),
         (custody_lineage_proof, "SmartDeed custody singleton"),
     ):
         _complete_lineage(lineage, label)
+    _pool_lineage(pool_lineage_proof, pool_coin, config.pool_launcher_id)
     if pool_coin.name() != receipt.pool_coin_id:
         raise SolsSwapOfferError("pool coin does not match the quoted operation")
     if quote_expires_at != receipt.quote_expires_at:
@@ -945,10 +957,10 @@ def _assemble_deed_to_sols_protocol(
     for lineage, label in (
         (statutes_lineage_proof, "statutes singleton"),
         (vault_lineage_proof, "vault singleton"),
-        (pool_lineage_proof, "pool singleton"),
         (p2_vault_deed_lineage_proof, "SmartDeed vault singleton"),
     ):
         _complete_lineage(lineage, label)
+    _pool_lineage(pool_lineage_proof, pool_coin, config.pool_launcher_id)
     if pool_coin.name() != receipt.pool_coin_id:
         raise SolsSwapOfferError("pool coin does not match the quoted operation")
     if quote_expires_at != receipt.quote_expires_at:
