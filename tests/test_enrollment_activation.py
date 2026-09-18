@@ -31,8 +31,13 @@ def selected_artifact(environment='staging-alpha'):
         confirmed_block_index=1234,build_timestamp=original['buildTimestamp'],signatures=original['signatures'],review_class=original['reviewClass'])
 
 
-def test_omitted_activation_pins_fresh_release_bytes_and_unknown_block_rejected():
-    value=_artifact();verify_public_artifact(value,signature_verifier=_accept)
+def test_historical_omitted_activation_bytes_and_unknown_block_rejected():
+    value=_artifact()
+    # Historical V4 signed bytes predate the redundant treasury projection.
+    # Preserve their pinned hash and verify without rewriting that evidence.
+    del value['puzzleHashes']['protocolTreasuryPuzzleHash']
+    value['artifactHash']=artifact_hash(value)
+    verify_public_artifact(value,signature_verifier=_accept)
     assert hashlib.sha256(json.dumps(value,sort_keys=True,separators=(',',':')).encode()).hexdigest()=='01b6517e4cc091858ec184947f752b274fd7d4e97248f171577219d4f1279786'
     assert activation_from_artifact(value) is None
     for bad in [None,{},dict(schema='solslot.enrollment-activation.v1',network='mainnet')]:

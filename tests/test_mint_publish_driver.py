@@ -1010,6 +1010,28 @@ class TestArtifactsCrossDriver:
                 primary_purchase=config,
             )
 
+    def test_v2_inventory_bill_preserves_metadata_commitment_and_historical_encoding(self):
+        config = PrimaryPurchaseMintConfig(network='testnet11', inventory_version=2,
+            usd_amount_minor=101, protocol_treasury_puzhash=_b(0xD4),
+            validator_pubkeys=tuple(bytes([v])*48 for v in (1, 2, 3)), provider_id=_b(0xD3))
+        args = dict(**_default_kwargs(), primary_purchase=config,
+            metadata_root=_b(0xD1), metadata_anchor_id=_b(0xD2))
+        historical = build_mint_publish_artifacts(**args)
+        current = build_mint_publish_artifacts(**args, governance_tracker_version=2)
+        assert len(list(historical.bill_op_program.as_iter())) == 6
+        assert len(list(current.bill_op_program.as_iter())) == 4
+        assert current.deed_full_puzhash == historical.deed_full_puzhash
+        assert current.proposal_data_hash == historical.proposal_data_hash
+        assert current.proposal_hash != historical.proposal_hash
+        for field in ('metadata_root', 'metadata_anchor_id'):
+            changed = build_mint_publish_artifacts(**{**args, field: _b(0xD5)}, governance_tracker_version=2)
+            assert changed.deed_full_puzhash != current.deed_full_puzhash
+            assert changed.proposal_hash != current.proposal_hash
+            assert changed.proposal_data_hash != current.proposal_data_hash
+        for version in (0, 3, True, '2'):
+            with pytest.raises(ValueError, match='tracker version'):
+                build_mint_publish_artifacts(**args, governance_tracker_version=version)
+
 
 # ─── Sub-brick 4d.1 — Spend-bundle builders ────────────────────────────────
 
