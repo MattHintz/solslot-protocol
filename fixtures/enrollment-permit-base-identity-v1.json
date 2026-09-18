@@ -1,0 +1,87 @@
+{
+  "schema": "solslot.enrollment-permit-vector.v1",
+  "testOnly": true,
+  "networkBroadcast": false,
+  "bridgePolicyHash": "0xda7805e8e22d19ae416f4dac24fc2cb0f93aeedd35b8ea8053d6f30af07f4334",
+  "validatorPubkeys": [
+    "0xa010d140e7c43146b5bb59695e6c444abbb62e964a535d0034351a90d1192bff0130de95f9bbc58af254c4dab4e65d3a",
+    "0xa5a0ced8c174d59f3e56551633f92dc8d102bd60f0cc16299c7c4c6c3a3002952413df06b65217dd18dd7c12027134e2",
+    "0x8b1afd3dff22960b4783961c76975be82653b2303ea6a90134a3706c48b461916223b478feb3397722a69234a9ea13e0"
+  ],
+  "binding": {
+    "vaultLauncherId": "0x1111111111111111111111111111111111111111111111111111111111111111",
+    "bridgeParentId": "0x6666666666666666666666666666666666666666666666666666666666666666",
+    "bridgeAmount": 1
+  },
+  "fields": {
+    "scopedNullifier": "0x2222222222222222222222222222222222222222222222222222222222222222",
+    "nullifierType": 1,
+    "serviceScopeHash": "0x3333333333333333333333333333333333333333333333333333333333333333",
+    "serviceSubscopeHash": "0x4444444444444444444444444444444444444444444444444444444444444444",
+    "proofTimestamp": 1900000000
+  },
+  "permit": {
+    "permitId": "0x0202020202020202020202020202020202020202020202020202020202020202",
+    "contextHash": "0xe0fda682bcc344516aedf4cf17320903cb4dedb59ed1dcc47ec7a024b9b44cb2",
+    "vaultLauncherId": "0x1111111111111111111111111111111111111111111111111111111111111111",
+    "currentVaultCoinId": "0x7777777777777777777777777777777777777777777777777777777777777777",
+    "ownerAuthType": 1,
+    "ownerKeyHash": "0xc47f6166f146ecb5d3ab2bbdce1269f7fcb85e22a7d29d18a968d0cca9d9463d",
+    "bridgeCoinId": "0xbd1390be6ea837841ba78190f448a6326ccab410d1461c944fd0cd315f3d81a0",
+    "issuedAt": 1900000000,
+    "expiresAt": 1900003600
+  },
+  "permitHash": "0x1b2f361f177cf77da4c26f8329c7b67341c487cdc29a1e3cf06a40b376b7f6f1",
+  "legacyValidatorMessage": "0x680213dcfe2314fb7b21e16a249733690ac98b29c1acf9a2c85d00c5344c99c9",
+  "validatorMessage": "0xe0be45f1b074404ec10d1fd6133c75581e41424a6b0e70a177af08a91792f4e4",
+  "bridgeMessage": "0x2d398f2a1865fcc68000b3d5f291e89b5e895f8cd3d50cc2fd2036030bbe52ff",
+  "attestationRoot": "0x649f7d41ff41ca34bf0d091ba762cefce1d545677e5aa5dfb8205fc878b84d7c",
+  "context": {
+    "environment": "production-alpha",
+    "network": "testnet11",
+    "evmChainId": 8453,
+    "emitter": "0x1212121212121212121212121212121212121212",
+    "issuer": "0x1313131313131313131313131313131313131313",
+    "deploymentId": "0x1414141414141414141414141414141414141414141414141414141414141414",
+    "releaseIdentity": "0x1515151515151515151515151515151515151515151515151515151515151515"
+  },
+  "operationalEvmChainId": 84532,
+  "permitSigningTypedData": {
+    "domain": {
+      "name": "SolslotEnrollmentPermit",
+      "version": "1",
+      "chainId": 8453,
+      "verifyingContract": "0x1212121212121212121212121212121212121212"
+    },
+    "primaryType": "EnrollmentPermit",
+    "types": {
+      "EIP712Domain": [
+        {
+          "name": "name",
+          "type": "string"
+        },
+        {
+          "name": "version",
+          "type": "string"
+        },
+        {
+          "name": "chainId",
+          "type": "uint256"
+        },
+        {
+          "name": "verifyingContract",
+          "type": "address"
+        }
+      ],
+      "EnrollmentPermit": [
+        {
+          "name": "permitHash",
+          "type": "bytes32"
+        }
+      ]
+    },
+    "message": {
+      "permitHash": "0x1b2f361f177cf77da4c26f8329c7b67341c487cdc29a1e3cf06a40b376b7f6f1"
+    }
+  }
+}

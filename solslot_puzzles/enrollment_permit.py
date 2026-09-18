@@ -16,6 +16,9 @@ from chia_rs.sized_bytes import bytes32
 PERMIT_DOMAIN = b"solslot-enrollment-permit-v1"
 VALIDATOR_PERMIT_DOMAIN = b"solslot-enrollment-validator-v1"
 MAX_PERMIT_SECONDS = 3600
+# Identity proofs may be verified on Base mainnet while assets and governance
+# remain on Testnet11 / Base Sepolia. This is never a financial-chain setting.
+ENROLLMENT_IDENTITY_CHAIN_IDS = frozenset((8453, 84532))
 
 
 @dataclass(frozen=True)
@@ -31,8 +34,8 @@ class EnrollmentPermitContext:
     def __post_init__(self) -> None:
         if (self.environment not in ("staging-alpha", "production-alpha")
                 or self.network != "testnet11" or type(self.evm_chain_id) is not int
-                or self.evm_chain_id != 84532):
-            raise ValueError("permit context must identify an isolated alpha Testnet deployment")
+                or self.evm_chain_id not in ENROLLMENT_IDENTITY_CHAIN_IDS):
+            raise ValueError("permit context must identify Testnet11 with an approved Base identity chain")
         for name, size in (("emitter", 20), ("issuer", 20), ("deployment_id", 32), ("release_identity", 32)):
             value = getattr(self, name)
             if not isinstance(value, bytes) or len(value) != size or value == bytes(size):

@@ -9,7 +9,7 @@ from chia_rs import (AugSchemeMPL, Coin, CoinRecord, SpendBundle, check_time_loc
     validate_clvm_and_signature, get_flags_for_height_and_constants, MEMPOOL_MODE)
 from chia_rs.sized_bytes import bytes32
 from chia_rs.sized_ints import uint32, uint64
-from solslot_puzzles.enrollment_permit import EnrollmentPermit, EnrollmentPermitContext, owner_key_hash
+from solslot_puzzles.enrollment_permit import EnrollmentPermit, EnrollmentPermitContext, owner_key_hash, permit_signing_typed_data
 from solslot_puzzles.enrollment_permit_driver import make_permit_bridge_puzzle, build_permit_bridge_spend
 from solslot_puzzles.zkpassport_bridge_driver import make_bridge_policy_hash
 
@@ -147,10 +147,36 @@ def test_malformed_permits_fail_closed(field, value):
 def test_context_isolates_environment_network_emitter_issuer_deployment_and_release():
     ctx = EnrollmentPermitContext('staging-alpha', 'testnet11', 84532, b'e'*20, b'i'*20, B(8), B(9))
     for field, value in [('environment','production-alpha'), ('emitter',b'f'*20), ('issuer',b'j'*20),
-                         ('deployment_id',B(10)), ('release_identity',B(11))]:
+                         ('deployment_id',B(10)), ('release_identity',B(11)), ('evm_chain_id',8453)]:
         assert replace(ctx, **{field:value}).context_hash != ctx.context_hash
-    for field, value in [('environment','staging-beta'), ('network','mainnet'), ('evm_chain_id',8453)]:
+    for field, value in [('environment','staging-beta'), ('network','mainnet'), ('evm_chain_id',1),
+                         ('evm_chain_id',11155111), ('evm_chain_id',True), ('evm_chain_id','8453')]:
         with pytest.raises(ValueError): replace(ctx, **{field:value})
+
+
+def test_base_identity_context_cannot_replay_sepolia_permit_or_validator_signature():
+    sepolia=EnrollmentPermitContext('production-alpha','testnet11',84532,b'e'*20,b'i'*20,B(8),B(9))
+    base=replace(sepolia,evm_chain_id=8453)
+    permit,fields,companion=case()
+    old_coin=Coin(fields['bridge_coin'].parent_coin_info,make_permit_bridge_puzzle(PUBKEYS,sepolia.context_hash).get_tree_hash(),1)
+    old=replace(permit,context_hash=sepolia.context_hash,bridge_coin_id=old_coin.name())
+    old_bundle,_=signed(old,{**fields,'bridge_coin':old_coin},companion)
+    new_coin=Coin(old_coin.parent_coin_info,make_permit_bridge_puzzle(PUBKEYS,base.context_hash).get_tree_hash(),1)
+    new=replace(old,context_hash=base.context_hash,bridge_coin_id=new_coin.name())
+    new_fields={**fields,'bridge_coin':new_coin}
+    with pytest.raises(ValueError,match='another deployment context'):
+        permit_signing_typed_data(old,base)
+    assert permit_signing_typed_data(new,base)['domain']['chainId']==8453
+    assert permit_signing_typed_data(old,sepolia)['domain']['chainId']==84532
+    # The unchanged CLVM bridge accepts the new correctly signed context, while
+    # actual consensus validation rejects the prior chain's collected signature.
+    valid,_=signed(new,new_fields,companion)
+    validate_clvm_and_signature(valid,11_000_000_000,DEFAULT_CONSTANTS,FLAGS)
+    replay,_=signed(new,new_fields,companion,original_signature=old_bundle.aggregated_signature)
+    with pytest.raises(ValueError):
+        validate_clvm_and_signature(replay,11_000_000_000,DEFAULT_CONSTANTS,FLAGS)
+    with pytest.raises(ValueError,match='exact authorized coin'):
+        build_permit_bridge_spend(permit=old,**new_fields)
 
 
 def test_evm_python_clvm_wire_vector():
@@ -161,6 +187,37 @@ def test_evm_python_clvm_wire_vector():
         bytes32.fromhex(p['ownerKeyHash'][2:]), bytes32.fromhex(p['bridgeCoinId'][2:]), p['issuedAt'], p['expiresAt'])
     assert '0x'+permit.permit_hash.hex() == vector['permitHash']
     assert '0x'+permit.validator_message(bytes32.fromhex(vector['legacyValidatorMessage'][2:])).hex() == vector['validatorMessage']
+
+
+def test_base_identity_cross_language_context_and_bridge_vector():
+    vector=json.loads((Path(__file__).parents[1]/'fixtures/enrollment-permit-base-identity-v1.json').read_text())
+    context=vector['context']
+    hx=lambda value:bytes32.fromhex(value.removeprefix('0x'))
+    ctx=EnrollmentPermitContext(context['environment'],context['network'],context['evmChainId'],
+        bytes.fromhex(context['emitter'][2:]),bytes.fromhex(context['issuer'][2:]),
+        hx(context['deploymentId']),hx(context['releaseIdentity']))
+    permit=EnrollmentPermit.from_wire({**vector['permit'],'permitHash':vector['permitHash']})
+    assert permit.context_hash==ctx.context_hash
+    assert ctx.evm_chain_id==8453 and ctx.network=='testnet11'
+    assert vector['operationalEvmChainId']==84532
+    assert permit_signing_typed_data(permit,ctx)==vector['permitSigningTypedData']
+    pubkeys=[bytes.fromhex(k[2:]) for k in vector['validatorPubkeys']]
+    policy=make_permit_bridge_puzzle(pubkeys,ctx.context_hash).get_tree_hash()
+    assert policy==hx(vector['bridgePolicyHash'])
+    binding=vector['binding'];fields=vector['fields']
+    bridge=build_permit_bridge_spend(permit=permit,
+        bridge_coin=Coin(hx(binding['bridgeParentId']),policy,binding['bridgeAmount']),
+        validator_pubkeys=pubkeys,signer_indices=[0,2],new_identity_attest_root=hx(vector['attestationRoot']),
+        attestation_leaf_hash=hx(vector['attestationRoot']),scoped_nullifier=hx(fields['scopedNullifier']),
+        nullifier_type=fields['nullifierType'],service_scope_hash=hx(fields['serviceScopeHash']),
+        service_subscope_hash=hx(fields['serviceSubscopeHash']),proof_timestamp=fields['proofTimestamp'])
+    assert bridge.bridge_message==hx(vector['bridgeMessage'])
+    assert bridge.validator_message==hx(vector['validatorMessage'])
+    assert permit.validator_message(hx(vector['legacyValidatorMessage']))==bridge.validator_message
+    # Run the unchanged puzzle and inspect its real AGG_SIG_ME conditions.
+    conditions=bridge.puzzle.run(bridge.solution).as_python()
+    assert [[b'\x32',pubkeys[i],bytes(bridge.validator_message)] for i in (0,2)]==[
+        c for c in conditions if c[0]==b'\x32']
 
 
 @pytest.mark.parametrize("auth_type", [1, 3])

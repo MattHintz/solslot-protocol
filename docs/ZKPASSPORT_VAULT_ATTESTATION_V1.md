@@ -160,3 +160,40 @@ Chia puzzle boundary.
    publication point.
 
 Each step must be committed and pushed before the next begins.
+
+## Selected Base identity deployment
+
+An alpha may verify identity on Base mainnet while Solslot assets remain on
+Testnet11. The signed enrollment activation selects the identity chain separately
+from the artifact's operational EIP-712 chain:
+
+| Coordinate | Base identity | Historical selected deployment |
+| --- | --- | --- |
+| Artifact and genesis plan `network` | `testnet11` | `testnet11` |
+| Artifact and genesis plan `evmChainId` | `84532` | `84532` |
+| `enrollmentActivation.evmChainId` | `8453` | `84532` |
+| Enrollment issuer permit EIP-712 chain | `8453` | `84532` |
+| Genesis administrator/artifact EIP-712 chain | `84532` | `84532` |
+
+Historical artifacts without an activation retain Ethereum Sepolia (`11155111`)
+and their original signed bytes. Missing or malformed selected activation must
+not fall back to that historical path.
+
+After authenticating the artifact, use `enrollment_identity_chain_id(artifact,
+environment=...)` for identity RPC, emitter and permit verification. This helper
+validates content; it does not authenticate signatures or authorize activation.
+Operational signing still uses the artifact chain. Payment and recovery networks
+retain their existing rules.
+
+The permit context commits to environment, Chia network, identity chain, emitter,
+issuer, deployment and source release. Changing the identity chain changes the
+context hash, curried bridge policy, bridge coins and fresh vault parameters.
+Existing permits and collected validator signatures cannot be transplanted. New
+source and deployment evidence must be authenticated normally.
+
+The Chialisp bridge module is unchanged: the context commitment, two-of-three
+validators, one-mojo bridge input, concurrent current-vault spend and immutable
+permit deadline continue to apply. Validators independently verify the selected
+identity-chain evidence before signing. The synthetic cross-language vector is
+`fixtures/enrollment-permit-base-identity-v1.json`; the original permit vector
+remains unchanged. Neither vector is deployment or approval evidence.
