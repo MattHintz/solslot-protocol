@@ -556,6 +556,8 @@ def _plan_payload(
     }
     if plan.enrollment_activation is not None:
         payload["enrollmentActivation"] = json.loads(json.dumps(plan.enrollment_activation))
+    if plan.protocol.sols_reserve_seed_version != 1:
+        payload["solsReserveSeed"]["version"] = plan.protocol.sols_reserve_seed_version
     if include_hash:
         payload["planHash"] = _hex(plan.plan_hash)
     return payload
@@ -631,6 +633,7 @@ def build_rc23_genesis_ceremony_plan(
     vault_version: int = RC23_VAULT_VERSION,
     property_registry_version: int = 0,
     enrollment_activation: Mapping[str, Any] | None = None,
+    sols_reserve_seed_version: int = 2,
 ) -> RC23GenesisCeremonyPlan:
     if network != GENESIS_NETWORK:
         raise ValueError("RC23 fresh genesis is restricted to testnet11")
@@ -759,6 +762,7 @@ def build_rc23_genesis_ceremony_plan(
         ),
         trusted_governance_rewards_root=trusted_governance_rewards_root,
         trusted_zkpassport_bridge_policy_hash=bridge_policy_hash,
+        sols_reserve_seed_version=sols_reserve_seed_version,
     )
 
     config_launcher_id = _launcher_id(funding.protocol_config)

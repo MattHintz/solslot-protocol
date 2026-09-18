@@ -211,6 +211,7 @@ def _rebuild_plan(
     validators = plan.get("validatorSet")
     trusted = plan.get("trustedDestinations")
     state = plan.get("state")
+    reserve_seed = plan.get("solsReserveSeed")
     if not all(
         isinstance(value, Mapping)
         for value in (
@@ -223,6 +224,7 @@ def _rebuild_plan(
             validators,
             trusted,
             state,
+            reserve_seed,
         )
     ) or not isinstance(recovery_kits, list):
         raise ValueError("artifact genesis plan is incomplete")
@@ -341,6 +343,7 @@ def _rebuild_plan(
             for value in plan["retiredCoordinates"]
         ],
         enrollment_activation=plan.get("enrollmentActivation"),
+        sols_reserve_seed_version=reserve_seed.get("version", 1),
         parameters=resolved_parameters,
         network=str(plan["network"]),
         evm_chain_id=int(plan["evmChainId"]),
