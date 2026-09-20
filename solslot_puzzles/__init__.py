@@ -139,12 +139,17 @@ PUZZLE_FILENAMES = (
     "zkpassport_bridge_permit_v1.clsp",
     # Byte-ordered inventory; Pool V4 remains preserved for historical plans.
     "pool_singleton_inner_v5.clsp",
+    # Authority state announcements are exclusive to validated transitions.
+    # Preserve V3 for historical coins and signed genesis plans.
+    "admin_authority_v4_inner.clsp",
 )
 
 # ── Frozen checksum — update after every intentional puzzle change ──
 # Set to None to skip verification (development mode).
 # Generate with: python -c "from solslot_puzzles import compute_puzzles_checksum; print(compute_puzzles_checksum())"
 FROZEN_CHECKSUM: Optional[str] = (
+    # Authority V4 appends an announcement-namespace guard; all earlier
+    # puzzle hashes remain unchanged (authority-v4-puzzle-hashes.json).
     # RC22 appends the typed SGT-governance tracker and unified statutes
     # singleton. Its release manifest explicitly records the p2_vault and
     # p2_pool_v2 replacements plus the final Pool V4 and vault V2 hashes.
@@ -194,7 +199,7 @@ FROZEN_CHECKSUM: Optional[str] = (
     # RC27.35 appends an Authority-lost-prepare-bound recovery member. Every
     # prior puzzle hash remains byte-for-byte unchanged and separately
     # release-pinned.
-    "9afb6dd0a20a46ef99d42e60a073fa6351dd6aedfccfa1067e0292c4c1e69ed9"
+    "40af9a4125a4c77f31e7da0e254c32d286dee29847f8c17a248dbcd8e5c7ee2e"
 )
 
 # ── Cache ──
