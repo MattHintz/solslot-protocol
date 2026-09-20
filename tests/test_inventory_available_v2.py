@@ -143,7 +143,7 @@ def test_known_version_selection_and_no_cross_version_reinterpretation(version):
     assert_signed(failure.spend, conditions, failure.validator_message)
 
 
-@pytest.mark.parametrize("version", [0,3,True,"2",None])
+@pytest.mark.parametrize("version", [0,4,True,"2",None])
 def test_unknown_or_coerced_version_rejected(version):
     _, terms = settlement()
     with pytest.raises(PaymentArtifactError):

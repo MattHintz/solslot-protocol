@@ -4,6 +4,8 @@ from __future__ import annotations
 from typing import Any, Mapping
 import re
 from . import load_puzzle
+from .alpha_payment_profile import alpha_payment_profile
+from .enrollment_networks import enrollment_operational_chain_id
 
 
 def validate_inventory_activation(artifact: Mapping[str, Any], *, required: bool = False,
@@ -19,14 +21,23 @@ def validate_inventory_activation(artifact: Mapping[str, Any], *, required: bool
         return None
     if not isinstance(value, Mapping):
         raise ValueError("signed inventory V2 activation evidence is required")
+    mainnet = value.get("schema") == "solslot.inventory-activation.v2"
     expected = {
-        "schema": "solslot.inventory-activation.v1", "network": "testnet11",
+        "schema": "solslot.inventory-activation.v2" if mainnet else "solslot.inventory-activation.v1", "network": "testnet11",
         "deploymentId": artifact.get("ceremony", {}).get("ceremonyId"),
-        "inventoryVersion": 2, "adapterVersion": 1,
-        "availableModuleHash": "0x" + load_puzzle("mint_offer_inventory_available_v2.clsp").get_tree_hash().hex(),
-        "reservedModuleHash": "0x" + load_puzzle("mint_offer_delegate_v5.clsp").get_tree_hash().hex(),
+        "inventoryVersion": 3 if mainnet else 2, "adapterVersion": 2 if mainnet else 1,
+        "availableModuleHash": "0x" + load_puzzle("mint_offer_inventory_available_v3.clsp" if mainnet else "mint_offer_inventory_available_v2.clsp").get_tree_hash().hex(),
+        "reservedModuleHash": "0x" + load_puzzle("mint_offer_delegate_v6.clsp" if mainnet else "mint_offer_delegate_v5.clsp").get_tree_hash().hex(),
         "sourceShas": artifact.get("sourceShas"),
     }
+    if mainnet:
+        profile = alpha_payment_profile()
+        actual = value.get("paymentProfile")
+        if (not isinstance(actual, Mapping) or set(actual) != set(profile)
+                or any(actual[k] != v or type(actual[k]) is not type(v) for k, v in profile.items())
+                or enrollment_operational_chain_id(artifact.get("enrollmentActivation")) != 8453):
+            raise ValueError("inventory activation requires the explicit Base mainnet alpha payment profile")
+        expected["paymentProfile"] = profile
     if (set(value) != set(expected) | {"environment", "reviewEvidenceSha256"}
             or any(value.get(k) != v for k, v in expected.items())
             or type(value.get("inventoryVersion")) is not int or type(value.get("adapterVersion")) is not int
@@ -47,9 +58,10 @@ def validate_inventory_recovery(artifact: Mapping[str, Any], *, required: bool =
     if value is None and not required:
         return None
     activation = validate_inventory_activation(artifact, required=True, environment=environment)
-    expected = dict(schema='solslot.inventory-recovery.v1', network='testnet11',
+    mainnet = activation['inventoryVersion'] == 3
+    expected = dict(schema='solslot.inventory-recovery.v2' if mainnet else 'solslot.inventory-recovery.v1', network='testnet11',
         environment=activation['environment'], deploymentId=activation['deploymentId'],
-        inventoryVersion=2, adapterVersion=1, validatorLedgerVersion=10, minConfirmations=3,
+        inventoryVersion=activation['inventoryVersion'], adapterVersion=activation['adapterVersion'], validatorLedgerVersion=10, minConfirmations=3,
         availableModuleHash=activation['availableModuleHash'], sourceShas=artifact.get('sourceShas'))
     if (not isinstance(value, Mapping) or set(value) != set(expected) | {'reviewEvidenceSha256', 'historicalArtifactHashes'}
             or any(value.get(k) != v for k, v in expected.items())

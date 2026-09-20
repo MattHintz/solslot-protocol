@@ -603,8 +603,10 @@ class PrimaryPurchaseMintConfig:
     inventory_version: int = 1
 
     def __post_init__(self) -> None:
-        if type(self.inventory_version) is not int or self.inventory_version not in (1, 2):
+        if type(self.inventory_version) is not int or self.inventory_version not in (1, 2, 3):
             raise ValueError("unsupported inventory puzzle version")
+        if self.inventory_version == 3 and self.network != "testnet11":
+            raise ValueError("alpha test-token inventory requires Chia Testnet11")
         if not self.network or len(self.network.encode("ascii")) > 32:
             raise ValueError("primary purchase network must be 1-32 ASCII bytes")
         if self.usd_amount_minor <= 0 or self.usd_amount_minor > 0xFFFFFFFFFFFFFFFF:
