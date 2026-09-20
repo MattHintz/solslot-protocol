@@ -102,7 +102,7 @@ def _compressed_pubkey(private_key: keys.PrivateKey) -> bytes:
     return prefix + raw[:32]
 
 
-def _fixture() -> AuthorityFixture:
+def _fixture(*, authority_puzzle_version: int = 3) -> AuthorityFixture:
     daily_private_keys = tuple(
         keys.PrivateKey(bytes([value]) * 32) for value in (0x11, 0x22, 0x33)
     )
@@ -120,6 +120,7 @@ def _fixture() -> AuthorityFixture:
             bytes(value.get_g1()) for value in recovery_private_keys
         ),
         source_manifest_hash=SOURCE_MANIFEST_HASH,
+        authority_puzzle_version=authority_puzzle_version,
     )
     return AuthorityFixture(
         authority=authority,
@@ -148,8 +149,11 @@ def test_current_identity_constructor_matches_genesis_identity() -> None:
         assert rebuilt.full_puzzle_hash == identity.full_puzzle_hash
 
 
-def test_operational_action_requires_owner_plus_one_current_identities() -> None:
-    fixture = _fixture()
+@pytest.mark.parametrize("authority_puzzle_version", (3, 4))
+def test_operational_action_requires_owner_plus_one_current_identities(
+    authority_puzzle_version: int,
+) -> None:
+    fixture = _fixture(authority_puzzle_version=authority_puzzle_version)
     delegated = Program.to((1, [[60, b"publish exact proposal"]]))
     mips = build_authority_operational_mips_spend(
         authority=fixture.authority,
@@ -444,7 +448,10 @@ def _singleton_spend(
 
 
 @pytest.mark.asyncio
-async def test_routine_rotation_bundle_requires_exact_authority_and_identities() -> None:
+@pytest.mark.parametrize("authority_puzzle_version", (3, 4))
+async def test_routine_rotation_bundle_requires_exact_authority_and_identities(
+    authority_puzzle_version: int,
+) -> None:
     daily_private_keys = tuple(
         keys.PrivateKey(bytes([value]) * 32)
         for value in (0x11, 0x22, 0x33)
@@ -474,6 +481,7 @@ async def test_routine_rotation_bundle_requires_exact_authority_and_identities()
                 bytes(value.get_g1()) for value in recovery_private_keys
             ),
             source_manifest_hash=SOURCE_MANIFEST_HASH,
+            authority_puzzle_version=authority_puzzle_version,
         )
         launch_targets = (
             (
@@ -828,8 +836,11 @@ def test_inner_parser_round_trips_identity_custody_and_manifest() -> None:
     assert parsed.state.pending_kind == 0
 
 
-def test_routine_rotation_executes_owner_target_and_replacement_acceptance() -> None:
-    fixture = _fixture()
+@pytest.mark.parametrize("authority_puzzle_version", (3, 4))
+def test_routine_rotation_executes_owner_target_and_replacement_acceptance(
+    authority_puzzle_version: int,
+) -> None:
+    fixture = _fixture(authority_puzzle_version=authority_puzzle_version)
     transition, replacement_key = _transition(
         fixture,
         slot=1,
@@ -880,8 +891,11 @@ def test_routine_rotation_executes_owner_target_and_replacement_acceptance() -> 
     )
 
 
-def test_lost_key_prepare_requires_both_other_identities_and_exact_output() -> None:
-    fixture = _fixture()
+@pytest.mark.parametrize("authority_puzzle_version", (3, 4))
+def test_lost_key_prepare_requires_both_other_identities_and_exact_output(
+    authority_puzzle_version: int,
+) -> None:
+    fixture = _fixture(authority_puzzle_version=authority_puzzle_version)
     transition, replacement_key = _transition(
         fixture,
         slot=1,
@@ -959,8 +973,11 @@ def test_lost_key_announcement_wrapper_rejects_mismatch_and_duplicates() -> None
         )
 
 
-def test_old_daily_key_can_veto_only_exact_pending_replacement() -> None:
-    fixture = _fixture()
+@pytest.mark.parametrize("authority_puzzle_version", (3, 4))
+def test_old_daily_key_can_veto_only_exact_pending_replacement(
+    authority_puzzle_version: int,
+) -> None:
+    fixture = _fixture(authority_puzzle_version=authority_puzzle_version)
     transition, _ = _transition(
         fixture,
         slot=1,
@@ -1034,11 +1051,13 @@ def test_old_daily_key_can_veto_only_exact_pending_replacement() -> None:
         (PENDING_LOST, LOST_KEY_DELAY_SECONDS),
     ),
 )
+@pytest.mark.parametrize("authority_puzzle_version", (3, 4))
 def test_completion_is_permissionless_delayed_and_exact(
+    authority_puzzle_version: int,
     kind: int,
     expected_delay: int,
 ) -> None:
-    fixture = _fixture()
+    fixture = _fixture(authority_puzzle_version=authority_puzzle_version)
     transition, _ = _transition(fixture, slot=0, kind=kind)
     identity_result = transition.intermediate_custody_reveal.run(
         build_identity_finish_solution(transition),
@@ -1070,8 +1089,11 @@ def test_completion_is_permissionless_delayed_and_exact(
     )
 
 
-def test_pending_change_freezes_operational_spends_and_second_prepare() -> None:
-    fixture = _fixture()
+@pytest.mark.parametrize("authority_puzzle_version", (3, 4))
+def test_pending_change_freezes_operational_spends_and_second_prepare(
+    authority_puzzle_version: int,
+) -> None:
+    fixture = _fixture(authority_puzzle_version=authority_puzzle_version)
     transition, _ = _transition(
         fixture,
         slot=2,
@@ -1109,8 +1131,11 @@ def test_pending_change_freezes_operational_spends_and_second_prepare() -> None:
         )
 
 
-def test_recovery_kit_rotation_keeps_daily_key_and_uses_24_hour_delay() -> None:
-    fixture = _fixture()
+@pytest.mark.parametrize("authority_puzzle_version", (3, 4))
+def test_recovery_kit_rotation_keeps_daily_key_and_uses_24_hour_delay(
+    authority_puzzle_version: int,
+) -> None:
+    fixture = _fixture(authority_puzzle_version=authority_puzzle_version)
     transition, current_daily = _transition(
         fixture,
         slot=2,
