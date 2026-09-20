@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .enrollment_networks import enrollment_operational_chain_id
+
 from datetime import datetime, timezone
 from typing import Any, Callable, Mapping, Sequence
 
@@ -368,7 +370,7 @@ def _verify_artifact_content(payload: Mapping[str, Any]) -> None:
         raise ValueError("unsupported or retired protocolVersion")
     if payload.get("network") != GENESIS_NETWORK:
         raise ValueError("artifact network is not testnet11")
-    expected_chain = 84532 if payload.get('enrollmentActivation') is not None else GENESIS_EVM_CHAIN_ID
+    expected_chain = enrollment_operational_chain_id(payload.get('enrollmentActivation'))
     if type(payload.get("evmChainId")) is not int or payload.get("evmChainId") != expected_chain:
         raise ValueError("artifact EVM chain differs from its enrollment activation selection")
     review_class = payload.get("reviewClass")

@@ -1,6 +1,8 @@
 """Fresh RC23 testnet genesis plan and atomic ceremony bundle."""
 from __future__ import annotations
 
+from .enrollment_networks import enrollment_operational_chain_id
+
 import hashlib
 import json
 from dataclasses import asdict, dataclass
@@ -640,7 +642,7 @@ def build_rc23_genesis_ceremony_plan(
 ) -> RC23GenesisCeremonyPlan:
     if network != GENESIS_NETWORK:
         raise ValueError("RC23 fresh genesis is restricted to testnet11")
-    expected_evm_chain = 84532 if enrollment_activation is not None else GENESIS_EVM_CHAIN_ID
+    expected_evm_chain = enrollment_operational_chain_id(enrollment_activation)
     if type(evm_chain_id) is not int or evm_chain_id != expected_evm_chain:
         raise ValueError("RC23 genesis chain must match its explicit legacy or permit selection")
     _nonzero(ceremony_id, "ceremony_id")
@@ -892,7 +894,7 @@ def verify_rc23_genesis_ceremony_plan(
             raise ValueError('enrollment activation is not pinned by genesis vault and bridge outputs')
     if plan.network != GENESIS_NETWORK:
         raise ValueError("ceremony plan network is not testnet11")
-    expected_evm_chain = 84532 if plan.enrollment_activation is not None else GENESIS_EVM_CHAIN_ID
+    expected_evm_chain = enrollment_operational_chain_id(plan.enrollment_activation)
     if type(plan.evm_chain_id) is not int or plan.evm_chain_id != expected_evm_chain:
         raise ValueError("ceremony plan EVM chain differs from its selected policy")
     expected_dependency_hash = bytes32.from_hexstr(

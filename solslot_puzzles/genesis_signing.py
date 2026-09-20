@@ -7,6 +7,7 @@ from typing import Any, Mapping
 from chia_rs.sized_bytes import bytes32
 
 from solslot_puzzles.genesis_constants import GENESIS_EVM_CHAIN_ID, GENESIS_NETWORK
+from .enrollment_networks import enrollment_operational_chain_id
 
 
 EIP712_DOMAIN_NAME = "Solslot Protocol"
@@ -47,8 +48,8 @@ def _domain(
     *,
     version: str = EIP712_DOMAIN_VERSION,
 ) -> dict[str, Any]:
-    if type(chain_id) is not int or chain_id not in (GENESIS_EVM_CHAIN_ID,84532):
-        raise ValueError("genesis administrator signatures require explicit Ethereum Sepolia or Base Sepolia")
+    if type(chain_id) is not int or chain_id not in (GENESIS_EVM_CHAIN_ID,84532,8453):
+        raise ValueError("genesis administrator signatures require explicit Ethereum Sepolia, Base Sepolia or Base mainnet")
     return {
         "name": EIP712_DOMAIN_NAME,
         "version": version,
@@ -157,7 +158,7 @@ def genesis_artifact_signing_typed_data(
         raise ValueError("unsupported artifact protocolVersion")
     if payload.get("network") != GENESIS_NETWORK:
         raise ValueError("genesis artifact is restricted to testnet11")
-    expected_chain = 84532 if schema_version == 4 and payload.get('enrollmentActivation') is not None else GENESIS_EVM_CHAIN_ID
+    expected_chain = enrollment_operational_chain_id(payload.get('enrollmentActivation')) if schema_version == 4 else GENESIS_EVM_CHAIN_ID
     if type(payload.get("evmChainId")) is not int or payload.get("evmChainId") != expected_chain:
         raise ValueError("genesis artifact chain differs from its explicit enrollment policy")
     ceremony = payload.get("ceremony")
