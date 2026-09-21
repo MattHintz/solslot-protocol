@@ -1,0 +1,461 @@
+{
+  "schema": "solslot.puzzle-hashes.v1",
+  "release": "alpha-e2e-draft66",
+  "deployable": false,
+  "predecessorRevision": "86cf648f27678884d00dcc7aab55d5c1790c2069",
+  "integratedReviewRevision": "c7d4bb47787b4ccd3b645500bc3f6b71aa467791",
+  "preservedCanonicalChecksum": "0e69cc9453c80019aa1a7a895e6752d1f84a68b6b45dff10b0a5f82dd107b213",
+  "canonicalChecksum": "874bec26d16877d0700811e624d62d04418795ac0d1584cbe7dc7b2a852aedcb",
+  "replacements": [],
+  "preservedManifests": [
+    {
+      "filename": "base-test-token-draft63-puzzle-hashes.json",
+      "sha256": "83411139d070e54622aa3292c9bc0eea5683d0c649458d6a843cb527b0a5d156"
+    },
+    {
+      "filename": "authority-v4-puzzle-hashes.json",
+      "sha256": "339fcadc7d6757456d8de258015673d81aa5c60389ba8d6af12484e64111416d"
+    }
+  ],
+  "preserved": [
+    {
+      "filename": "singleton_launcher_with_did.clsp",
+      "treeHash": "7dee0963bf040a2610eaf0c70a3df4a92022652a3e1eae92a3a1493887d1704c",
+      "sourceSha256": "4aa4d941f0dcb59b063d58e726989472e6aa9f183a5269bf785f3e73f829adca",
+      "hexSha256": "f02d62deedc0e05ce27ddca495b8fc5c8b913249817daabd9aae416da094e7b6"
+    },
+    {
+      "filename": "smart_deed_inner_v2.clsp",
+      "treeHash": "66b8c1098f6953b20496a84a17653b3e0ab200b0c6049f3e383e0e3709bd190b",
+      "sourceSha256": "d59a439fdcddecc2818f5e18f6057f01e87790717d0c5f96a21cde5e6de6331e",
+      "hexSha256": "28b7801eb2072a5f9e66cc1f1db1f1f61e2d09673590d95aa3125817ab644a36"
+    },
+    {
+      "filename": "vault_singleton_inner.clsp",
+      "treeHash": "b9165548667a296c6ecf4921f4a0ba54bb98104810fd539abd7416417eb39b45",
+      "sourceSha256": "73be8ab106771f238626615201c675d5778673f26aa8386840a93f293bbb64b0",
+      "hexSha256": "c0ca58c5d42cbcee916626116b55bf0cc27a13e51d76d96456283c7e3043dbde"
+    },
+    {
+      "filename": "p2_vault.clsp",
+      "treeHash": "5c4a02ae4fe1021d5d30cd0332ee3abdd3a83b6fdc110a526c44eff6325c2d08",
+      "sourceSha256": "75dcfd9fd2cfd46ef2ffb2859225ced98fe4b51c349f71d41aff0fae715d6ab5",
+      "hexSha256": "9806a1b68db6aa52498a183aac30962fb2cf2c8419184a372e4832d728062068"
+    },
+    {
+      "filename": "p2_pool_v2.clsp",
+      "treeHash": "a871d51b4a5b97dd34076fccb3123dc339c7fb60d317b8f04a2ce203760609c0",
+      "sourceSha256": "e943bbbed4a23acc4a7dfc265a9f877c356f8d4961566e7b519dddab2d55a3f2",
+      "hexSha256": "833618d494f8548c4beac265198a5dca2e9e76122642d7d6ed6431eb5be63a0e"
+    },
+    {
+      "filename": "pool_token_tail.clsp",
+      "treeHash": "28648fedc879e3dbbde6d269bae3df923b8566b5a666f6e075772e338f1c89ed",
+      "sourceSha256": "89460cb25f5c934052b78ebf17963bc5795b3f7687c0908d1fd3a3827241f7b8",
+      "hexSha256": "12097567a44638db28d282d9d04b597611e78f6a34afc062945851e3915d02d4"
+    },
+    {
+      "filename": "pool_singleton_inner_v3.clsp",
+      "treeHash": "1a3041db26d9ae5c02f75efd710df789311711db66b880a97f751f169b499302",
+      "sourceSha256": "fb41146af7a1823929725f2b11638f7eeab242908eb42a5032fd0c0bc3aef8fc",
+      "hexSha256": "d05c603790ca2df6bfa06f52b5736d8c729d2128ee877c60b89c4b961bf52d4a"
+    },
+    {
+      "filename": "governance_singleton_inner.clsp",
+      "treeHash": "f03566a8c4f210b9128b9e7b2d717444218a8dc7f6f09b5c163dbcde03adbf51",
+      "sourceSha256": "21e02d02064b6e248d80d3de99a9106d4b38ca272a2d0eb12f3234c52d938397",
+      "hexSha256": "a6384d144c3519f7ea3f1c5564167fdc0daceddb643c5d689f405a65395d5dbb"
+    },
+    {
+      "filename": "quorum_did_inner.clsp",
+      "treeHash": "e399673edc9237f5ade3f6240992ed71d974cb125fd2609b2b7795e3bc691ef4",
+      "sourceSha256": "ddbcbd1fc0668ffc03c437f88478f0bac4943b1fbf48b5a54c469856282d928a",
+      "hexSha256": "d662a7e6fa7002fd1e6815cb54a31451a65c400fd2e8b3d51da468c1d0677e13"
+    },
+    {
+      "filename": "mint_offer_delegate.clsp",
+      "treeHash": "3f2cbb847fa3079575b47a31dd5b713867c07926b4dec7af3143c19929e6c07b",
+      "sourceSha256": "8741a9ddb3327249a104007b094b0689a16ac3c230bb47d20b6ac2adba9bc679",
+      "hexSha256": "15eb5b5d7fdff48e1e9b844ff9773421e4e1773fcde8f4eb91479d6c3071ed71"
+    },
+    {
+      "filename": "mint_offer_delegate_v2.clsp",
+      "treeHash": "7092272c2c7ca2fd74d85c6aa3e5c11e792925ffc56a43ea8487a9d21b4ea0af",
+      "sourceSha256": "49a68fff71f8dc557c91f1e3a6990ee388d4061ad5cc9cf67b2bb065597c27df",
+      "hexSha256": "c3bdd7b7974285898eeddb9d242ca41b3fdb6d3e81377d62315e76754ea24336"
+    },
+    {
+      "filename": "purchase_payment.clsp",
+      "treeHash": "84a915d06f33ca60a53ca7e82706d1c7ccdef38bde2a36897e1f99da47108a12",
+      "sourceSha256": "bb92fd6016db97323df2108073261177bc4c470364c0f415e904046c1fbfa51c",
+      "hexSha256": "cde224e27b1581ddd59ed9a03cb59a1a577e6de4a103dd39348b514977629ae1"
+    },
+    {
+      "filename": "p2_deed_settlement.clsp",
+      "treeHash": "83e8addd99cc14b19abcdb1c2eeba95ff54a847c9783813f4e9387ffe4cc1bd7",
+      "sourceSha256": "bb501d147ecce6c7280721d011b4df5d673004f581cf1259045b665a613cc3da",
+      "hexSha256": "5625fa73be9d812c31bb8c92def320601b271202f76dddbed3f81460d4868983"
+    },
+    {
+      "filename": "sgt_tail.clsp",
+      "treeHash": "493afb89eed93ab86741b2aa61b8f5de495d33ff9b781dfc8919e602b2afa150",
+      "sourceSha256": "e02906e6fae7bc16b1210434630440cbe559386e7c948f16aad3d56f2f80b842",
+      "hexSha256": "00cb7c17f4bf44ce835930f7d6a9d02c1b811e3cb0966e0482cf46338c960235"
+    },
+    {
+      "filename": "sgt_free_inner.clsp",
+      "treeHash": "397658ed0de137d97e850c5c7ef18ed95ed36d799c3b2a799f2f8f1f0554112d",
+      "sourceSha256": "5e6ec0ed751fc9b82b121ba3428622acda88ea252a6cd716d33ace6309e4392f",
+      "hexSha256": "30590c5db76738059ab9822389f1b7ed52a95ad18d1894fbf893a38c4c9ef812"
+    },
+    {
+      "filename": "sgt_locked_inner.clsp",
+      "treeHash": "8092b7bb3f6c9d7d9e355ebc883afe2c0ef2b89336f8ef3ffb3f0716ef7c18c1",
+      "sourceSha256": "7bde830ed4741b9dc5227e502aeb6f7f31b0a0eb4ef265a21f77447242c6e08c",
+      "hexSha256": "860266167315697544b122eb8e88fae8648abc563f6d56552f263a23bf915f19"
+    },
+    {
+      "filename": "protocol_config_inner.clsp",
+      "treeHash": "449dab6d5ed9275e03d113108548e267a559c97ec28030b7bdf70bd9617e8b95",
+      "sourceSha256": "9f97a6c7e40e93252e9be518b352bef12326ec8e7d31fc7f6740605527a8a664",
+      "hexSha256": "4cc53a4217aa384aac205c21ebf1afb0b171c66e5140d70d36b77ccb7598710b"
+    },
+    {
+      "filename": "admin_authority_v2_inner.clsp",
+      "treeHash": "9842657d7ecb74760e5cce485d2ea4e22afb24b213e22279f272b932e28985d2",
+      "sourceSha256": "55c84f0593ac2ceae18877c8560bcecacef7b6d2310fd61a6c98696dc228184a",
+      "hexSha256": "62ba869becc9c9215a6ec2ea7d6af413fa5b4d26f57b380275a746f209e90287"
+    },
+    {
+      "filename": "property_registry_inner.clsp",
+      "treeHash": "a8f1ee7f135950140e8e02a3e948e5ba78d8ffe64cc327767da114884acee16c",
+      "sourceSha256": "a14c488b16d4ea368d84701b11536955f77c3ed909d7318b87ed68ddfd7d6c06",
+      "hexSha256": "a5d8f731670a3b01955c81c3779d4f1a871721197f93fa5918a86c3a78877d6a"
+    },
+    {
+      "filename": "collection_nav_registry_inner.clsp",
+      "treeHash": "4258e4dc7cc52b00985476d5001e83121cceff6b229acafff260fb9363f881e2",
+      "sourceSha256": "557185f735606b7f727dcd1b23c76748a20da817dc1eb8255b15faf84c558609",
+      "hexSha256": "cd3b01294c2880e996199d9e0c6f6efb5ceca5d797667c18b1c7d86901493ebc"
+    },
+    {
+      "filename": "mint_proposal_inner_v2.clsp",
+      "treeHash": "bb1379bc24f0a02ca27de58e2200ae4cd1fc1e58d53a49d1119600108741d37e",
+      "sourceSha256": "90731a099938c4083a458ec629c199d4820cadb0fc06e4294178c97a1e0af480",
+      "hexSha256": "6fd735a7c759a2b6948396e963590d1fbc9c8a709059fba307efd7fc4b41ffed"
+    },
+    {
+      "filename": "zkpassport_bridge_message.clsp",
+      "treeHash": "341151935b773901c3f31db323372c88953d96f44a06345cfab9bba2f06ac5fa",
+      "sourceSha256": "d032740b7ce17fdebdf92a470972b203ffde20ee9e1479e2b5f030795f65c47c",
+      "hexSha256": "169fede16741a5c6d7762fb8c2a3571a17a1e18cd3bd1d52395c5f17ba809989"
+    },
+    {
+      "filename": "vault_version_registry_inner.clsp",
+      "treeHash": "4da782b97ac91bd620bf721bc6d04c291a8c35505ea2d7b86ef9a4b808dac09e",
+      "sourceSha256": "56789fb5fd7a1ea3d2bd4cc7860c196cbaba3d1ff38407ebcc32d42e163231f6",
+      "hexSha256": "c6fed6d64dd65a289d00482fc06431a5396eaa31bd6bfef26bc4ed5c2e10276d"
+    },
+    {
+      "filename": "voucher_presale_series_v1.clsp",
+      "treeHash": "cf4a01e66544860781bad056aa8a45703afc5615677174a61b8093381670f3e1",
+      "sourceSha256": "ca89dd6c7846706849e80c5255bdc3d0b6feb64820e7b65eb4b84b525fd2a0cb",
+      "hexSha256": "611da734ac6ade82ca7dd1c60bf7795dfca9478eaa30b085e0bdcd4fceea39f3"
+    },
+    {
+      "filename": "voucher_nft_inner_v1.clsp",
+      "treeHash": "f48655ef99f5b014ae19e040d0049214b83ae8e128df2cad912e99f9c92c6f86",
+      "sourceSha256": "31fe0d32c984842ea2ac04e4d43833ba211e4ce01ce1ee3270fd5b6e91e0f4ab",
+      "hexSha256": "2f0ffd93d286369198e873d62ae0735ce7878c3913900e99b2c76f49a15e1686"
+    },
+    {
+      "filename": "voucher_burn_v2.clsp",
+      "treeHash": "044ebff3ad6d351856fd37d38c599ad0e416aa8a22621d8c13c27e24561f7f77",
+      "sourceSha256": "fcca9df39622a2a91f5188445018d402d7458947cf7a3dfa96fdea03232c62f0",
+      "hexSha256": "d2ce46c907bfb0f826aa11fc539cb9563205646a410522e199aa252a5841b77f"
+    },
+    {
+      "filename": "voucher_presale_series_v2.clsp",
+      "treeHash": "73617d396b2fc0af0e37131e92626a5ae9effea0f5cd6ca6775a0f1917910be5",
+      "sourceSha256": "3d1836f3b738c3b0771792d5ac3b589387dcc229292b73cb6ea54cb964a71467",
+      "hexSha256": "b2d53fa3dae26e0a9d04e05947321bc2e0471d45d5cf238aa79dc9cbba23119f"
+    },
+    {
+      "filename": "voucher_nft_inner_v2.clsp",
+      "treeHash": "3cf32fc6d24806af751c1606fe7e4a356df6179ccb4744a3c76cb85e51f03670",
+      "sourceSha256": "99f4b1f376094fcea8d1a068ab8efabf1f96f224fa73b09200489766f4777568",
+      "hexSha256": "6c36248d01881d36eb3b86b1f7443313aeac525df747b4776b542fc633ad2440"
+    },
+    {
+      "filename": "voucher_payment_escrow_v2.clsp",
+      "treeHash": "a8526fb172c7c233d8cd54084e6bea2eeeca0640ad45e775f1f6b5a92738f6d0",
+      "sourceSha256": "1cf42695dbd0b5d12545fa368952c178a66130b0c661a21e7e5f20f28987f603",
+      "hexSha256": "2d4e1602f041d5770c7e88bed26b597312b193ec0873b0cab0cb2ccdcc225eb6"
+    },
+    {
+      "filename": "voucher_external_escrow_receipt_v2.clsp",
+      "treeHash": "d6c6216928eeff14af9a32a9b9cfe0cf2b780dfd6b0c1cdc775abd460ec32905",
+      "sourceSha256": "831587c92983e764e73c68ab02eeb0ea41ed52f063e679f26275102b0a2ae6fc",
+      "hexSha256": "74f5e7e304db45abf6cd47ce2909ca277d77627ab85855dd65e10b0ad1f4322d"
+    },
+    {
+      "filename": "voucher_base_result_authorization_v2.clsp",
+      "treeHash": "845405b5536bf5def384dcc07194287c8ae0cd37cbb8a1e726d508806c434942",
+      "sourceSha256": "620e143f4e37c2df57578b98ff8a5f8668f808108cf037ecd1468dc3a3fa7ed9",
+      "hexSha256": "20eaba4f8bb2231c1579956276aaaafe9b76a350c37fcb8cde97ef72ded795b3"
+    },
+    {
+      "filename": "voucher_purchase_launcher_v2.clsp",
+      "treeHash": "ed9e8bac59006774ae640467e5daf7a33888cfb80a1990a8e58ae1decf571e9a",
+      "sourceSha256": "1f13a3ea78f53638f16be134cc8c035ba09c00284600263ff73bdae707f47067",
+      "hexSha256": "759d85b5fe431a0f2509a0a704c3d078e56351267f33c7912e298666faf33883"
+    },
+    {
+      "filename": "mint_offer_delegate_v3.clsp",
+      "treeHash": "94a85ab601cd57c5c1553fc47d9b2fd195b4766c1c7f69f7418f042f63cc088e",
+      "sourceSha256": "834e4ac0685b74b73c353e128a5f483ee94bddf5b39603ab4a935917e4320266",
+      "hexSha256": "e81a81d458a929c893d77873fddaf7da1e8990d1753034d7917863b74875ace8"
+    },
+    {
+      "filename": "mint_offer_delegate_v4.clsp",
+      "treeHash": "3c5d3a6cd206d742fbb4ec1cca334580e646dff958b77953c722b6c5a9aa4598",
+      "sourceSha256": "ef625b6ec5f32270ed402a535c562faeb381719206b1bb4a468022a40c317fdd",
+      "hexSha256": "f4a9b90695bbf192155db36a1a886f109f3b664a08c03a4f0fc8c4cfc9cf8b25"
+    },
+    {
+      "filename": "governance_singleton_inner_v2.clsp",
+      "treeHash": "14380db3a00acd31031a2ff5137cacff975800301358499d90ebaa29c08bc193",
+      "sourceSha256": "db7c8a1a47d6f98ba0864b1f97ab1ab8122b47a01bc100cbda19e1123123e3c7",
+      "hexSha256": "2aa7f3b20c33b5567008b60c5212423567bd7786484b24f3f0c5f2274209a292"
+    },
+    {
+      "filename": "protocol_statutes_inner_v1.clsp",
+      "treeHash": "1862f5f4301fe00a4f1801f412774b5514b03b6c528b3783b0ebc61cd451e11d",
+      "sourceSha256": "65e93760bea7fe5bec35f5560465813672e8442ece11efb8b8aad135f41a5bcc",
+      "hexSha256": "005a0c1a692a7351f7ae69113d18767c0a4ef16d57c6abdbf8af0468af5a0c42"
+    },
+    {
+      "filename": "vault_singleton_inner_v2.clsp",
+      "treeHash": "104a7d0356d628b9073bf39f550a3b41163008381e2db3b8d2327ffe20216903",
+      "sourceSha256": "71dc9c37520a0adb69ec66dfb44e1f86a5ad73d09f0c4a930b1b6975677d6d6f",
+      "hexSha256": "42af1c4fbf59852748f3e3f3d0e264149b675bd2e14a77b9e0e6755c9adfb716"
+    },
+    {
+      "filename": "pool_singleton_inner_v4.clsp",
+      "treeHash": "e01e8cb71b9612ba01ac9678e45e6cae6915cebffff6795f6809c081d973e27d",
+      "sourceSha256": "0f0572894ad1b22552cdb312b12463ef41d42c7576c1cb7e3504353c1fe39711",
+      "hexSha256": "64995ca4bb7000919cd9d8806a1558d7023250e375e432355c38879accd7355f"
+    },
+    {
+      "filename": "p2_deed_redemption_v1.clsp",
+      "treeHash": "78a759362ae12e73aee1986043fb6e8e0df21ed6e104ed0dc0bd2831c10816dc",
+      "sourceSha256": "ca30eb23c749654c11bdc17e5f3330f82395a03f2c7ffac064b33864eb723549",
+      "hexSha256": "177a0612f67056f96b25eb0812cbfaad7b45619cfe375f434d986dc3f8db486e"
+    },
+    {
+      "filename": "redemption_treasury_v1.clsp",
+      "treeHash": "0d25b689b7c5abdb6e2d882abd70afbd4c025aad0f21ba178c0dddc210090377",
+      "sourceSha256": "91ccc438f83eb11cf3223ec0cde1a4e6703e011c686234e279a882bca63bdadf",
+      "hexSha256": "01cec6ac3608ee0cf1b802f350dafbfa6e4bd3cbf444ca9c6e2c77e59f2355b6"
+    },
+    {
+      "filename": "admin_authority_v3_inner.clsp",
+      "treeHash": "a8f01fcd5869ce286d4504531d786e055ebca36fcb9ecd1b8aaf118564c286ae",
+      "sourceSha256": "5318e10cc3458f4aafc918f79c7a37f534002f2a0973b6faeb725dc062d21943",
+      "hexSha256": "5641486f0447dd32ea8d1069373b1d0ec70d8064e8ece2778a494405f08843f5"
+    },
+    {
+      "filename": "admin_authority_action_v1.clsp",
+      "treeHash": "e4115ef7c8bafff1490657637af6f9fb2df7cf7265dd5b8e9aab2557617e5a2f",
+      "sourceSha256": "0bcaa79f73e5f9bab7e1dd82d8acbc47ca874eeddbd3ad8e63571357c7469ba3",
+      "hexSha256": "744d78312a4297c99744212f2c4a888673f84ac0dda2eed8bac5cb9a0ab16b50"
+    },
+    {
+      "filename": "admin_identity_action_v1.clsp",
+      "treeHash": "37d216ee6ed5a4488e73fe3e8eb4294f19a1154faacb17c095220b40df972b94",
+      "sourceSha256": "b709430017898f5ed4faea759367b22567d2ec406f4f36c1b1af6d3e26b45dd6",
+      "hexSha256": "6749d3baace0698ae2aa10048794f3dbfa14972482e63e5aae4cd2a2b9d84eca"
+    },
+    {
+      "filename": "admin_identity_terminal_action_v1.clsp",
+      "treeHash": "ccb501bd5b482d0df0580d9fb5b50f9e6ae823977caa4e50ad454cb7dc3af11e",
+      "sourceSha256": "2ab3013003836f1b7d4909aeef23c220388f60c1538806438accf3835483bf26",
+      "hexSha256": "819b2e8e46975aebed74eb8909d68de7d11ba8616f5864e9ee96ba36eadc5232"
+    },
+    {
+      "filename": "admin_identity_prepare_announcement_v1.clsp",
+      "treeHash": "1af3093179c445ddd6ce89c8e3b14b0c0f39044fa79b6aada79f7d5f920a9e65",
+      "sourceSha256": "05ba0cb92840958319a5b10da350a88708a14eb29ec393f48e1efa4445fe5964",
+      "hexSha256": "e37a929f52c69b95c4f69c05cae10cf395118673e6b0795ca88704971fdffe27"
+    },
+    {
+      "filename": "eip712_member_v2.clsp",
+      "treeHash": "aaf5d0676da9c06b02ae94acc7f226c6b583205d42f5b350bec43df7fcd09ea7",
+      "sourceSha256": "9091e14d772241974747a282777a188190666870931370f5c7dc2f2417dc18fc",
+      "hexSha256": "ddea447c532f0f1299d45623c7cb0aeaab1638db36358828c8367a8a15e733fd"
+    },
+    {
+      "filename": "stripe_settlement_receipt_v1.clsp",
+      "treeHash": "f8a8e54b751adb4a569431d9f70b78f9ffa990696faba1fc8525f5917dee7898",
+      "sourceSha256": "6ef0430001c31af7816ceb315c183ce417a68fe4991a1448297044bdd99e7e5a",
+      "hexSha256": "f1f384d96f4ced19995176d6252f72aec83fef2b2ebd16f0d83eabf6651ebe1b"
+    },
+    {
+      "filename": "mint_offer_inventory_available_v1.clsp",
+      "treeHash": "3e4a9f59c0851d717bda68d52b75527659a9712b0f39de4851f09b01b00d8f2e",
+      "sourceSha256": "6df13657883c7c4e3e08cf40c2b47739349b65fddd0a2f199b1a4c2f8d8b0920",
+      "hexSha256": "3a18b62ad03bae4f630d42f1942368bc27d48483e2c34444e0ab2ce0db8352af"
+    },
+    {
+      "filename": "mint_offer_delegate_v5.clsp",
+      "treeHash": "c779d3786c8c2f898784f4031f873e81fb785442a5e8fd8dd6dfb9446328a972",
+      "sourceSha256": "1c5aac7801f271113daa7348237805aee073ad73672aa19d304f1feec25b093f",
+      "hexSha256": "6172ba9c216d3b4c18591676a58107914f7bf1d6f60425056dd3632768687bcb"
+    },
+    {
+      "filename": "voucher_nft_inner_v3.clsp",
+      "treeHash": "871110df60084f9ddb699ed481f26dd6cfe2882b92e7e4a3de5366f759d41b24",
+      "sourceSha256": "110a002968ba319c891cb28097a1f277ed8371fd6f458ea11bbd349e12de3b1d",
+      "hexSha256": "dd8b98c2b96036b17afbb8498d5d2ea015bae28eefa5fa1f56889de38938e90a"
+    },
+    {
+      "filename": "voucher_stripe_receipt_v1.clsp",
+      "treeHash": "fa0b83da26c7a05797e203ef7217b3cf03aad37a3aabd3f14d26e8e13616a7e3",
+      "sourceSha256": "516939b8e5e7217e506e78fb1459d8712ac6f65ae1f7be43a1561a4909c8739c",
+      "hexSha256": "c0d8be249a6c0709af4000fc7abdaf295ad20bd02d6d1cc9d4e9449fd13117a0"
+    },
+    {
+      "filename": "sgt_reserve_inner_v1.clsp",
+      "treeHash": "99c0d9313f1e6f3f7f938a45bc14b1d04127a2b468cbfe915242e12755f0f830",
+      "sourceSha256": "7bb434bb16c7cbc9aba795cf1b40a3310330ea47c5d303634f558ce7f4d3de9f",
+      "hexSha256": "820180bcd66d68c562c3b3016a128a934927e0ac6abbaf444d2d48472e7eb584"
+    },
+    {
+      "filename": "sgt_sale_inner_v1.clsp",
+      "treeHash": "3d1cbeffba6456c70d2732da94d2c5d9b149a5776095897fe97e40aaa2c47acf",
+      "sourceSha256": "5095ecc7700cd1f3a637d118303ab137dc5f94a35f529277ce9cb83bf81906cc",
+      "hexSha256": "ff8bbb68e0d2c23d2b68c5311dd19b922d6e75a1281a5dfb66848164666e5a84"
+    },
+    {
+      "filename": "purchase_batch_settlement_receipt_v1.clsp",
+      "treeHash": "16ffd80e85712a55e8064adf19df1f6a9e1f85ed4f5336a8eff151e2d141e4c9",
+      "sourceSha256": "75ed2d2439d62ab9b36749acbbef71abca036cbdad0a773e951b6d7a40e11ff2",
+      "hexSha256": "62d63c244e721ace7a30a6704b33d00fed79e8f1d03ec0c78df1c149795ffb4a"
+    },
+    {
+      "filename": "vault_sols_inner_v1.clsp",
+      "treeHash": "bbb8d654c79d65e931135c7f7e576dd6b2c3b1f6cc93b9bcf5bf1bd924285500",
+      "sourceSha256": "01e8266cea07c34adcfef51935dceccc7367c624ded3f3efe0006b0556225203",
+      "hexSha256": "c49562dbe165f8ae04fb807e2cd7cadb53f8311812129dd11440c2365cbafc97"
+    },
+    {
+      "filename": "admin_recovery_authority_member_v1.clsp",
+      "treeHash": "37ee69d130159cf716199c06e455f42d5afeb553029b5aa7e2bde7e1908de898",
+      "sourceSha256": "c22450572a32c88ebf22133016269bf21d5d33e9628183331cd92e1ae11ca39d",
+      "hexSha256": "82b61f4b414588278f8d964eaa5a5a8de10a3910f05a3f676bf54491f2541037"
+    },
+    {
+      "filename": "mint_offer_inventory_available_v2.clsp",
+      "treeHash": "137867495c47434d2293368b4a1fe265967bde49e0a34aaf45a6a84a4bb3d515",
+      "sourceSha256": "87f81ba263d2830a23a017329402e7917c23c7c30c52d710fd40bba28274f7e2",
+      "hexSha256": "de8b084c4d358138c7f630fe4406f97583ac91940287800badd4f4072ff63416"
+    },
+    {
+      "filename": "zkpassport_bridge_permit_v1.clsp",
+      "treeHash": "2c8b1ddeb939570bbd9cd2e79ffe3787eb42ab28a3d661fae95354ec8a5eee38",
+      "sourceSha256": "c6a2f10b89075fdf04597427d68adb0ba97f7a7233be90b91a8125253986f54a",
+      "hexSha256": "ea2f832ce0487f7f7ede2376da8aef02895c31d8823cc018514751ee6a9c259f"
+    },
+    {
+      "filename": "pool_singleton_inner_v5.clsp",
+      "treeHash": "6abf69f8793c4ff34f3c9fc6975760f0fba7d372e60d6f45bd8639ace1c08b31",
+      "sourceSha256": "b4427199170965745c3b085744a18090291eb2d6beb8ad8be76844f986b33ea8",
+      "hexSha256": "63a6ab4cbebbdcef4fc8932b2cb690ae40169bc37703671144d8338be6f634c6"
+    },
+    {
+      "filename": "mint_offer_inventory_available_v3.clsp",
+      "treeHash": "49630bc2068d26bf2cc37f5ae69b29349b49a56707d6fd4f93a7ea44c4a0492c",
+      "sourceSha256": "5c29d2b4278c3ce0108d255b5d9ea62094e02ab256f8300ec3f440cebeac9b3b",
+      "hexSha256": "7e3519d397505e243e64eee063cc8802df887abc60e4c721efca63c114c45172"
+    },
+    {
+      "filename": "mint_offer_delegate_v6.clsp",
+      "treeHash": "0e22dc5f2b60ee0081d37ac836c2520729727e2e45ecbef752a02f9c0e776774",
+      "sourceSha256": "cca6ca474b5382795363ec784505cbd6ba4c048cacc73679400d8fc467734203",
+      "hexSha256": "bc6f5c938f5662fee2df2199077abd792e254350eb66e4253147ecba97c8a2fd"
+    }
+  ],
+  "additions": [
+    {
+      "filename": "admin_authority_v4_inner.clsp",
+      "treeHash": "84e403582322e3f05df52bde4e179ab6b9968413647a3e0667ec2c365b09aaa1",
+      "sourceSha256": "47ec17e80695eea590c8179973f83e1ccb9ac3c48342981a0ad9cb3dc1264bbf",
+      "hexSha256": "7eba33ca36244d3a729595952e29930f84e4071c02182ef08f966da9e52980b4"
+    }
+  ],
+  "puzzleHashes": {
+    "singleton_launcher_with_did.clsp": "7dee0963bf040a2610eaf0c70a3df4a92022652a3e1eae92a3a1493887d1704c",
+    "smart_deed_inner_v2.clsp": "66b8c1098f6953b20496a84a17653b3e0ab200b0c6049f3e383e0e3709bd190b",
+    "vault_singleton_inner.clsp": "b9165548667a296c6ecf4921f4a0ba54bb98104810fd539abd7416417eb39b45",
+    "p2_vault.clsp": "5c4a02ae4fe1021d5d30cd0332ee3abdd3a83b6fdc110a526c44eff6325c2d08",
+    "p2_pool_v2.clsp": "a871d51b4a5b97dd34076fccb3123dc339c7fb60d317b8f04a2ce203760609c0",
+    "pool_token_tail.clsp": "28648fedc879e3dbbde6d269bae3df923b8566b5a666f6e075772e338f1c89ed",
+    "pool_singleton_inner_v3.clsp": "1a3041db26d9ae5c02f75efd710df789311711db66b880a97f751f169b499302",
+    "governance_singleton_inner.clsp": "f03566a8c4f210b9128b9e7b2d717444218a8dc7f6f09b5c163dbcde03adbf51",
+    "quorum_did_inner.clsp": "e399673edc9237f5ade3f6240992ed71d974cb125fd2609b2b7795e3bc691ef4",
+    "mint_offer_delegate.clsp": "3f2cbb847fa3079575b47a31dd5b713867c07926b4dec7af3143c19929e6c07b",
+    "mint_offer_delegate_v2.clsp": "7092272c2c7ca2fd74d85c6aa3e5c11e792925ffc56a43ea8487a9d21b4ea0af",
+    "purchase_payment.clsp": "84a915d06f33ca60a53ca7e82706d1c7ccdef38bde2a36897e1f99da47108a12",
+    "p2_deed_settlement.clsp": "83e8addd99cc14b19abcdb1c2eeba95ff54a847c9783813f4e9387ffe4cc1bd7",
+    "sgt_tail.clsp": "493afb89eed93ab86741b2aa61b8f5de495d33ff9b781dfc8919e602b2afa150",
+    "sgt_free_inner.clsp": "397658ed0de137d97e850c5c7ef18ed95ed36d799c3b2a799f2f8f1f0554112d",
+    "sgt_locked_inner.clsp": "8092b7bb3f6c9d7d9e355ebc883afe2c0ef2b89336f8ef3ffb3f0716ef7c18c1",
+    "protocol_config_inner.clsp": "449dab6d5ed9275e03d113108548e267a559c97ec28030b7bdf70bd9617e8b95",
+    "admin_authority_v2_inner.clsp": "9842657d7ecb74760e5cce485d2ea4e22afb24b213e22279f272b932e28985d2",
+    "property_registry_inner.clsp": "a8f1ee7f135950140e8e02a3e948e5ba78d8ffe64cc327767da114884acee16c",
+    "collection_nav_registry_inner.clsp": "4258e4dc7cc52b00985476d5001e83121cceff6b229acafff260fb9363f881e2",
+    "mint_proposal_inner_v2.clsp": "bb1379bc24f0a02ca27de58e2200ae4cd1fc1e58d53a49d1119600108741d37e",
+    "zkpassport_bridge_message.clsp": "341151935b773901c3f31db323372c88953d96f44a06345cfab9bba2f06ac5fa",
+    "vault_version_registry_inner.clsp": "4da782b97ac91bd620bf721bc6d04c291a8c35505ea2d7b86ef9a4b808dac09e",
+    "voucher_presale_series_v1.clsp": "cf4a01e66544860781bad056aa8a45703afc5615677174a61b8093381670f3e1",
+    "voucher_nft_inner_v1.clsp": "f48655ef99f5b014ae19e040d0049214b83ae8e128df2cad912e99f9c92c6f86",
+    "voucher_burn_v2.clsp": "044ebff3ad6d351856fd37d38c599ad0e416aa8a22621d8c13c27e24561f7f77",
+    "voucher_presale_series_v2.clsp": "73617d396b2fc0af0e37131e92626a5ae9effea0f5cd6ca6775a0f1917910be5",
+    "voucher_nft_inner_v2.clsp": "3cf32fc6d24806af751c1606fe7e4a356df6179ccb4744a3c76cb85e51f03670",
+    "voucher_payment_escrow_v2.clsp": "a8526fb172c7c233d8cd54084e6bea2eeeca0640ad45e775f1f6b5a92738f6d0",
+    "voucher_external_escrow_receipt_v2.clsp": "d6c6216928eeff14af9a32a9b9cfe0cf2b780dfd6b0c1cdc775abd460ec32905",
+    "voucher_base_result_authorization_v2.clsp": "845405b5536bf5def384dcc07194287c8ae0cd37cbb8a1e726d508806c434942",
+    "voucher_purchase_launcher_v2.clsp": "ed9e8bac59006774ae640467e5daf7a33888cfb80a1990a8e58ae1decf571e9a",
+    "mint_offer_delegate_v3.clsp": "94a85ab601cd57c5c1553fc47d9b2fd195b4766c1c7f69f7418f042f63cc088e",
+    "mint_offer_delegate_v4.clsp": "3c5d3a6cd206d742fbb4ec1cca334580e646dff958b77953c722b6c5a9aa4598",
+    "governance_singleton_inner_v2.clsp": "14380db3a00acd31031a2ff5137cacff975800301358499d90ebaa29c08bc193",
+    "protocol_statutes_inner_v1.clsp": "1862f5f4301fe00a4f1801f412774b5514b03b6c528b3783b0ebc61cd451e11d",
+    "vault_singleton_inner_v2.clsp": "104a7d0356d628b9073bf39f550a3b41163008381e2db3b8d2327ffe20216903",
+    "pool_singleton_inner_v4.clsp": "e01e8cb71b9612ba01ac9678e45e6cae6915cebffff6795f6809c081d973e27d",
+    "p2_deed_redemption_v1.clsp": "78a759362ae12e73aee1986043fb6e8e0df21ed6e104ed0dc0bd2831c10816dc",
+    "redemption_treasury_v1.clsp": "0d25b689b7c5abdb6e2d882abd70afbd4c025aad0f21ba178c0dddc210090377",
+    "admin_authority_v3_inner.clsp": "a8f01fcd5869ce286d4504531d786e055ebca36fcb9ecd1b8aaf118564c286ae",
+    "admin_authority_action_v1.clsp": "e4115ef7c8bafff1490657637af6f9fb2df7cf7265dd5b8e9aab2557617e5a2f",
+    "admin_identity_action_v1.clsp": "37d216ee6ed5a4488e73fe3e8eb4294f19a1154faacb17c095220b40df972b94",
+    "admin_identity_terminal_action_v1.clsp": "ccb501bd5b482d0df0580d9fb5b50f9e6ae823977caa4e50ad454cb7dc3af11e",
+    "admin_identity_prepare_announcement_v1.clsp": "1af3093179c445ddd6ce89c8e3b14b0c0f39044fa79b6aada79f7d5f920a9e65",
+    "eip712_member_v2.clsp": "aaf5d0676da9c06b02ae94acc7f226c6b583205d42f5b350bec43df7fcd09ea7",
+    "stripe_settlement_receipt_v1.clsp": "f8a8e54b751adb4a569431d9f70b78f9ffa990696faba1fc8525f5917dee7898",
+    "mint_offer_inventory_available_v1.clsp": "3e4a9f59c0851d717bda68d52b75527659a9712b0f39de4851f09b01b00d8f2e",
+    "mint_offer_delegate_v5.clsp": "c779d3786c8c2f898784f4031f873e81fb785442a5e8fd8dd6dfb9446328a972",
+    "voucher_nft_inner_v3.clsp": "871110df60084f9ddb699ed481f26dd6cfe2882b92e7e4a3de5366f759d41b24",
+    "voucher_stripe_receipt_v1.clsp": "fa0b83da26c7a05797e203ef7217b3cf03aad37a3aabd3f14d26e8e13616a7e3",
+    "sgt_reserve_inner_v1.clsp": "99c0d9313f1e6f3f7f938a45bc14b1d04127a2b468cbfe915242e12755f0f830",
+    "sgt_sale_inner_v1.clsp": "3d1cbeffba6456c70d2732da94d2c5d9b149a5776095897fe97e40aaa2c47acf",
+    "purchase_batch_settlement_receipt_v1.clsp": "16ffd80e85712a55e8064adf19df1f6a9e1f85ed4f5336a8eff151e2d141e4c9",
+    "vault_sols_inner_v1.clsp": "bbb8d654c79d65e931135c7f7e576dd6b2c3b1f6cc93b9bcf5bf1bd924285500",
+    "admin_recovery_authority_member_v1.clsp": "37ee69d130159cf716199c06e455f42d5afeb553029b5aa7e2bde7e1908de898",
+    "mint_offer_inventory_available_v2.clsp": "137867495c47434d2293368b4a1fe265967bde49e0a34aaf45a6a84a4bb3d515",
+    "zkpassport_bridge_permit_v1.clsp": "2c8b1ddeb939570bbd9cd2e79ffe3787eb42ab28a3d661fae95354ec8a5eee38",
+    "pool_singleton_inner_v5.clsp": "6abf69f8793c4ff34f3c9fc6975760f0fba7d372e60d6f45bd8639ace1c08b31",
+    "mint_offer_inventory_available_v3.clsp": "49630bc2068d26bf2cc37f5ae69b29349b49a56707d6fd4f93a7ea44c4a0492c",
+    "mint_offer_delegate_v6.clsp": "0e22dc5f2b60ee0081d37ac836c2520729727e2e45ecbef752a02f9c0e776774",
+    "admin_authority_v4_inner.clsp": "84e403582322e3f05df52bde4e179ab6b9968413647a3e0667ec2c365b09aaa1"
+  },
+  "activation": "New Authority V4 genesis with Base-mainnet TEST-SOLS and Chia Testnet11. Coordinated deployment and activation receipts remain required; historical plans and puzzle bytes are unchanged."
+}

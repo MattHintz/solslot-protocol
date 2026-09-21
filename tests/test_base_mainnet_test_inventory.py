@@ -148,8 +148,11 @@ def test_manifest_pins_additions_and_all_historical_bytes():
     root = Path(__file__).parents[1]
     manifest = json.loads((root/"release-manifests/base-test-token-draft63-puzzle-hashes.json").read_text())
     assert manifest["deployable"] is False
-    assert tuple(manifest["puzzleHashes"]) == PUZZLE_FILENAMES
-    assert manifest["canonicalChecksum"] == FROZEN_CHECKSUM
+    names = tuple(manifest["puzzleHashes"])
+    assert names == PUZZLE_FILENAMES[:len(names)]
+    assert manifest["canonicalChecksum"] == hashlib.sha256(
+        b"".join(bytes(load_puzzle(name).get_tree_hash()) for name in names)
+    ).hexdigest()
     assert manifest["replacements"] == []
     verify_puzzle_checksum()
     for row in manifest["preserved"] + manifest["additions"]:

@@ -347,6 +347,7 @@ def _rebuild_plan(
         enrollment_activation=plan.get("enrollmentActivation"),
         sols_reserve_seed_version=reserve_seed.get("version", 1),
         pool_puzzle_version=plan.get("poolPuzzleVersion", 4),
+        authority_puzzle_version=plan.get("authorityPuzzleVersion", 3),
         parameters=resolved_parameters,
         network=str(plan["network"]),
         evm_chain_id=int(plan["evmChainId"]),

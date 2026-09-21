@@ -12,7 +12,7 @@ from tests.historical_puzzles import MANIFEST, REPLACED, ROOT, historical_puzzle
 
 def test_exact_replacements_and_complete_current_manifest():
     assert REPLACED == {'vault_singleton_inner_v2.clsp', 'p2_vault.clsp', 'pool_singleton_inner_v4.clsp'}
-    # Draft56 appends Pool V5 without rewriting this historical release.
+    # Later modules append without rewriting this historical release.
     historical_names = PUZZLE_FILENAMES[:len(MANIFEST['puzzleHashes'])]
     assert PUZZLE_FILENAMES[len(historical_names)] == 'pool_singleton_inner_v5.clsp'
     assert tuple(MANIFEST['puzzleHashes']) == historical_names
