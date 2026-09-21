@@ -69,6 +69,8 @@ _STRIPE_SETTLEMENT_DOMAIN = b"SOLSLOT_STRIPE_RECEIPT_SETTLEMENT_V1"
 # only immutable serialized puzzle bytes at module scope and reconstruct the
 # Program in the calling thread.
 _MINT_OFFER_V5_MOD_BYTES = bytes(load_puzzle("mint_offer_delegate_v5.clsp"))
+_MINT_OFFER_V6_MOD_BYTES = bytes(load_puzzle("mint_offer_delegate_v6.clsp"))
+_INVENTORY_AVAILABLE_V3_MOD_BYTES = bytes(load_puzzle("mint_offer_inventory_available_v3.clsp"))
 _INVENTORY_AVAILABLE_V2_MOD_BYTES = bytes(
     load_puzzle("mint_offer_inventory_available_v2.clsp")
 )
@@ -152,8 +154,10 @@ class PrimaryMintTermsV3:
     inventory_version: int = 1
 
     def __post_init__(self) -> None:
-        if type(self.inventory_version) is not int or self.inventory_version not in (1, 2):
+        if type(self.inventory_version) is not int or self.inventory_version not in (1, 2, 3):
             raise PaymentArtifactError("unsupported inventory puzzle version")
+        if self.inventory_version == 3 and self.network != "testnet11":
+            raise PaymentArtifactError("alpha test-token inventory requires Chia Testnet11")
         if not self.network or len(self.network.encode("ascii")) > 32:
             raise PaymentArtifactError("network must be 1-32 ASCII bytes")
         for name in (
@@ -575,11 +579,13 @@ def _mint_immutable_args(terms: PrimaryMintTermsV3) -> tuple[object, ...]:
 
 
 def make_inventory_available_inner(terms: PrimaryMintTermsV3) -> Program:
-    mod = (mint_offer_inventory_available_v1_mod() if terms.inventory_version == 1
-           else Program.from_bytes(_INVENTORY_AVAILABLE_V2_MOD_BYTES))
+    mod = (mint_offer_inventory_available_v1_mod() if terms.inventory_version == 1 else
+           Program.from_bytes(_INVENTORY_AVAILABLE_V2_MOD_BYTES if terms.inventory_version == 2
+                              else _INVENTORY_AVAILABLE_V3_MOD_BYTES))
+    reserved = Program.from_bytes(_MINT_OFFER_V6_MOD_BYTES if terms.inventory_version == 3 else _MINT_OFFER_V5_MOD_BYTES)
     return mod.curry(
         bytes32(mod.get_tree_hash()),
-        mint_offer_delegate_v5_mod_hash(),
+        bytes32(reserved.get_tree_hash()),
         *_mint_immutable_args(terms),
     )
 
@@ -589,7 +595,7 @@ def make_mint_offer_v5_inner(
     reservation: InventoryReservationV1,
 ) -> Program:
     assert_artifact_matches_terms(reservation.artifact, terms)
-    mod = mint_offer_delegate_v5_mod()
+    mod = Program.from_bytes(_MINT_OFFER_V6_MOD_BYTES) if terms.inventory_version == 3 else mint_offer_delegate_v5_mod()
     artifact = reservation.artifact
     return mod.curry(
         bytes32(mod.get_tree_hash()),
@@ -609,6 +615,11 @@ def assert_artifact_matches_terms(
     artifact: PurchaseArtifactV3,
     terms: PrimaryMintTermsV3,
 ) -> None:
+    if terms.inventory_version == 3 and artifact.rail == PaymentRail.EVM_TEST_USD:
+        from .alpha_payment_profile import is_alpha_payment_tuple
+        if not is_alpha_payment_tuple(artifact.network, artifact.rail_chain_id,
+                                      artifact.rail_asset_id, artifact.rail_asset_decimals):
+            raise PaymentArtifactError("alpha inventory requires the exact Base mainnet TEST-SOLS payment tuple")
     expected = {
         "network": terms.network,
         "deed_launcher_id": terms.deed_launcher_id,
@@ -654,8 +665,14 @@ def inventory_terms_for_puzzle_hash(
     singleton lineage. This never migrates a coin or accepts a custom module.
     """
     _smart_deed_driver(terms, deed_singleton_struct)
-    for version in (1, 2):
+    for version in ((1, 2, 3) if terms.network == "testnet11" else (1, 2)):
         candidate = replace(terms, inventory_version=version)
+        # A reservation from another network cannot be reinterpreted as V3.
+        if reservation is not None and version == 3 and reservation.artifact.rail == PaymentRail.EVM_TEST_USD:
+            from .alpha_payment_profile import is_alpha_payment_tuple
+            a = reservation.artifact
+            if not is_alpha_payment_tuple(a.network, a.rail_chain_id, a.rail_asset_id, a.rail_asset_decimals):
+                continue
         inner = (make_inventory_available_inner(candidate) if reservation is None
                  else make_mint_offer_v5_inner(candidate, reservation))
         if SINGLETON_MOD.curry(deed_singleton_struct, inner).get_tree_hash() == puzzle_hash:

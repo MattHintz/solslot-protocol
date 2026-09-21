@@ -91,7 +91,11 @@ _ADMIN_IDENTITY_PREPARE_ANNOUNCEMENT_V1_MOD: Program | None = None
 _ADMIN_RECOVERY_AUTHORITY_MEMBER_V1_MOD: Program | None = None
 
 
-def admin_authority_v3_inner_mod() -> Program:
+def admin_authority_v3_inner_mod(version: int = 3) -> Program:
+    if type(version) is not int or version not in (3, 4):
+        raise ValueError("unsupported authority puzzle version")
+    if version == 4:
+        return load_puzzle("admin_authority_v4_inner.clsp")
     global _ADMIN_AUTHORITY_V3_INNER_MOD
     if _ADMIN_AUTHORITY_V3_INNER_MOD is None:
         _ADMIN_AUTHORITY_V3_INNER_MOD = load_puzzle(
@@ -100,8 +104,15 @@ def admin_authority_v3_inner_mod() -> Program:
     return _ADMIN_AUTHORITY_V3_INNER_MOD
 
 
-def admin_authority_v3_inner_mod_hash() -> bytes32:
-    return bytes32(admin_authority_v3_inner_mod().get_tree_hash())
+def admin_authority_v3_inner_mod_hash(version: int = 3) -> bytes32:
+    return bytes32(admin_authority_v3_inner_mod(version).get_tree_hash())
+
+
+def authority_puzzle_version_for_hash(module_hash: bytes32) -> int:
+    for version in (3, 4):
+        if module_hash == admin_authority_v3_inner_mod_hash(version):
+            return version
+    raise ValueError("unsupported authority inner module hash")
 
 
 def admin_authority_action_v1_mod() -> Program:
@@ -326,6 +337,7 @@ class GenesisAdminAuthorityV3:
     inner_puzzle: Program
     inner_puzzle_hash: bytes32
     full_puzzle_hash: bytes32
+    authority_puzzle_version: int = 3
 
 
 @dataclass(frozen=True)
@@ -429,6 +441,7 @@ class ParsedAdminAuthorityV3:
     lost_key_delay_seconds: int
     source_manifest_hash: bytes32
     state: AdminAuthorityV3State
+    authority_puzzle_version: int
 
 
 def _launcher_id(
@@ -634,6 +647,7 @@ def make_inner_puzzle(
     state: AdminAuthorityV3State | None = None,
     routine_delay_seconds: int = ROUTINE_DELAY_SECONDS,
     lost_key_delay_seconds: int = LOST_KEY_DELAY_SECONDS,
+    authority_puzzle_version: int = 3,
 ) -> Program:
     if len(lost_recovery_root_hashes) != 3:
         raise ValueError(
@@ -675,8 +689,8 @@ def make_inner_puzzle(
                 "state custody hashes do not match supplied custody hashes"
             )
     resolved.validate()
-    return admin_authority_v3_inner_mod().curry(
-        admin_authority_v3_inner_mod_hash(),
+    return admin_authority_v3_inner_mod(authority_puzzle_version).curry(
+        admin_authority_v3_inner_mod_hash(authority_puzzle_version),
         bytes32(SINGLETON_MOD_HASH),
         bytes32(SINGLETON_LAUNCHER_HASH),
         authority_launcher_id,
@@ -708,6 +722,7 @@ def build_genesis_admin_authority_v3(
     daily_compressed_pubkeys: Sequence[bytes],
     recovery_bls_pubkeys: Sequence[bytes],
     source_manifest_hash: bytes32,
+    authority_puzzle_version: int = 3,
 ) -> GenesisAdminAuthorityV3:
     daily_keys = tuple(bytes(value) for value in daily_compressed_pubkeys)
     recovery_keys = tuple(bytes(value) for value in recovery_bls_pubkeys)
@@ -771,6 +786,7 @@ def build_genesis_admin_authority_v3(
             identity.custody_hash for identity in identities
         ),
         source_manifest_hash=source_manifest_hash,
+        authority_puzzle_version=authority_puzzle_version,
     )
     return GenesisAdminAuthorityV3(
         authority_launcher_id=authority_launcher_id,
@@ -784,6 +800,7 @@ def build_genesis_admin_authority_v3(
         lost_recovery_reveals=lost_recovery_reveals,
         lost_recovery_root_hashes=lost_recovery_root_hashes,
         source_manifest_hash=source_manifest_hash,
+        authority_puzzle_version=authority_puzzle_version,
         inner_puzzle=inner,
         inner_puzzle_hash=bytes32(inner.get_tree_hash()),
         full_puzzle_hash=singleton_full_puzzle_hash(
@@ -879,14 +896,14 @@ def parse_inner_puzzle(curried_inner_puzzle: Program) -> ParsedAdminAuthorityV3:
     if uncurried is None:
         raise ValueError("Authority V3 inner puzzle is not curried")
     mod, args = uncurried
-    if bytes32(mod.get_tree_hash()) != admin_authority_v3_inner_mod_hash():
-        raise ValueError("inner puzzle module hash is not Authority V3")
+    module_hash = bytes32(mod.get_tree_hash())
+    puzzle_version = authority_puzzle_version_for_hash(module_hash)
     values = list(args.as_iter())
     if len(values) != 24:
         raise ValueError(
             f"Authority V3 inner puzzle must have 24 arguments, got {len(values)}"
         )
-    if bytes32(values[0].atom) != admin_authority_v3_inner_mod_hash():
+    if bytes32(values[0].atom) != module_hash:
         raise ValueError("Authority V3 self module hash is inconsistent")
     if bytes32(values[1].atom) != bytes32(SINGLETON_MOD_HASH):
         raise ValueError("Authority V3 singleton module hash is inconsistent")
@@ -950,6 +967,7 @@ def parse_inner_puzzle(curried_inner_puzzle: Program) -> ParsedAdminAuthorityV3:
         lost_key_delay_seconds=lost_delay,
         source_manifest_hash=bytes32(values[14].atom),
         state=state,
+        authority_puzzle_version=puzzle_version,
     )
 
 
@@ -1512,6 +1530,7 @@ def build_identity_vault_transition(
         identity_launcher_ids=parsed_authority.identity_launcher_ids,
         source_manifest_hash=source_manifest_hash,
         state=pending_state,
+        authority_puzzle_version=parsed_authority.authority_puzzle_version,
     )
     pending_authority_full_puzzle_hash = singleton_full_puzzle_hash(
         authority_launcher_id,
@@ -2352,6 +2371,7 @@ __all__ = [
     "admin_identity_prepare_announcement_v1_mod",
     "admin_identity_terminal_action_v1_mod",
     "authority_v3_launcher_ids",
+    "authority_puzzle_version_for_hash",
     "build_authority_action_puzzle",
     "build_authority_operational_mips_spend",
     "build_authority_prepare_mips_spend",

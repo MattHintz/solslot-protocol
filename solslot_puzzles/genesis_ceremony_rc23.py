@@ -1,6 +1,8 @@
 """Fresh RC23 testnet genesis plan and atomic ceremony bundle."""
 from __future__ import annotations
 
+from .enrollment_networks import enrollment_operational_chain_id
+
 import hashlib
 import json
 from dataclasses import asdict, dataclass
@@ -343,7 +345,9 @@ def _plan_payload(
                 plan.admin_authority.full_puzzle_hash
             ),
             "adminAuthorityInnerMod": _hex(
-                admin_authority.admin_authority_v3_inner_mod_hash()
+                admin_authority.admin_authority_v3_inner_mod_hash(
+                    plan.admin_authority_v3.authority_puzzle_version
+                )
             ),
             "adminIdentityCustody": [
                 _hex(identity.custody_hash)
@@ -560,6 +564,8 @@ def _plan_payload(
         payload["solsReserveSeed"]["version"] = plan.protocol.sols_reserve_seed_version
     if plan.protocol.pool_puzzle_version != 4:
         payload["poolPuzzleVersion"] = plan.protocol.pool_puzzle_version
+    if plan.admin_authority_v3.authority_puzzle_version != 3:
+        payload["authorityPuzzleVersion"] = plan.admin_authority_v3.authority_puzzle_version
     if include_hash:
         payload["planHash"] = _hex(plan.plan_hash)
     return payload
@@ -637,10 +643,11 @@ def build_rc23_genesis_ceremony_plan(
     enrollment_activation: Mapping[str, Any] | None = None,
     sols_reserve_seed_version: int = 2,
     pool_puzzle_version: int = 5,
+    authority_puzzle_version: int = 4,
 ) -> RC23GenesisCeremonyPlan:
     if network != GENESIS_NETWORK:
         raise ValueError("RC23 fresh genesis is restricted to testnet11")
-    expected_evm_chain = 84532 if enrollment_activation is not None else GENESIS_EVM_CHAIN_ID
+    expected_evm_chain = enrollment_operational_chain_id(enrollment_activation)
     if type(evm_chain_id) is not int or evm_chain_id != expected_evm_chain:
         raise ValueError("RC23 genesis chain must match its explicit legacy or permit selection")
     _nonzero(ceremony_id, "ceremony_id")
@@ -682,6 +689,7 @@ def build_rc23_genesis_ceremony_plan(
         daily_compressed_pubkeys=admin_compressed_pubkeys,
         recovery_bls_pubkeys=admin_recovery_bls_pubkeys,
         source_manifest_hash=source_manifest_hash,
+        authority_puzzle_version=authority_puzzle_version,
     )
     roster_receipt = build_genesis_eip712_admin_quorum(
         network=network,
@@ -892,7 +900,7 @@ def verify_rc23_genesis_ceremony_plan(
             raise ValueError('enrollment activation is not pinned by genesis vault and bridge outputs')
     if plan.network != GENESIS_NETWORK:
         raise ValueError("ceremony plan network is not testnet11")
-    expected_evm_chain = 84532 if plan.enrollment_activation is not None else GENESIS_EVM_CHAIN_ID
+    expected_evm_chain = enrollment_operational_chain_id(plan.enrollment_activation)
     if type(plan.evm_chain_id) is not int or plan.evm_chain_id != expected_evm_chain:
         raise ValueError("ceremony plan EVM chain differs from its selected policy")
     expected_dependency_hash = bytes32.from_hexstr(
@@ -957,6 +965,16 @@ def verify_rc23_genesis_ceremony_plan(
         raise ValueError("ceremony plan validator set is not 2-of-3")
     if len(plan.bridge_batch.bridge_coins) != GENESIS_BRIDGE_BATCH_SIZE:
         raise ValueError("ceremony plan does not contain 32 bridge coins")
+    parsed_authority = admin_authority.parse_inner_puzzle(
+        plan.admin_authority_v3.inner_puzzle
+    )
+    if (
+        parsed_authority.authority_puzzle_version
+        != plan.admin_authority_v3.authority_puzzle_version
+        or bytes32(plan.admin_authority_v3.inner_puzzle.get_tree_hash())
+        != plan.admin_authority.inner_puzzle_hash
+    ):
+        raise ValueError("ceremony plan does not launch its frozen authority version")
     if plan.statutes.launcher_id != _launcher_id(plan.funding.statutes):
         raise ValueError("statutes launcher does not match its funding coin")
     from .pool_v4_driver import pool_v4_inner_mod_hash

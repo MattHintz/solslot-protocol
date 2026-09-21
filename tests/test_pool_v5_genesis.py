@@ -12,14 +12,15 @@ from tests.test_sols_reserve_seed_v2 import public
 
 
 def test_pool_v5_manifest_appends_to_the_unchanged_historical_inventory():
-    from solslot_puzzles import FROZEN_CHECKSUM,PUZZLE_FILENAMES,load_puzzle
+    from solslot_puzzles import PUZZLE_FILENAMES,load_puzzle
     root=Path(__file__).resolve().parents[1]
     previous=json.loads((root/'release-manifests/alpha-draft46-puzzle-hashes.json').read_text())
     current=json.loads((root/'release-manifests/alpha-draft56-pool-v5-puzzle-hashes.json').read_text())
     assert current['deployable'] is False and current['replacements']==[]
-    assert current['canonicalChecksum']==FROZEN_CHECKSUM
+    names=tuple(current['puzzleHashes'])
+    assert current['canonicalChecksum']==hashlib.sha256(b''.join(bytes(load_puzzle(name).get_tree_hash()) for name in names)).hexdigest()
     assert current['preservedCanonicalChecksum']==previous['canonicalChecksum']
-    assert tuple(current['puzzleHashes'])==PUZZLE_FILENAMES
+    assert names==PUZZLE_FILENAMES[:len(names)]
     assert {name:value for name,value in current['puzzleHashes'].items() if name in previous['puzzleHashes']}==previous['puzzleHashes']
     for name,value in current['puzzleHashes'].items():
         assert load_puzzle(name).get_tree_hash().hex()==value

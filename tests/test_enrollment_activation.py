@@ -4,14 +4,14 @@ import json
 import pytest
 from solslot_puzzles import load_puzzle
 from solslot_puzzles.artifact_schema_v4 import _rebuild_plan,artifact_hash,build_public_artifact,verify_public_artifact
-from solslot_puzzles.enrollment_activation import activation_context,activation_from_artifact,enrollment_release_identity,validate_enrollment_activation
+from solslot_puzzles.enrollment_activation import activation_context,activation_from_artifact,enrollment_identity_chain_id,enrollment_release_identity,validate_enrollment_activation
 from solslot_puzzles.enrollment_permit_driver import make_permit_bridge_puzzle
 from tests.test_artifact_schema_v4 import _artifact,_accept
 
 
-def activation(artifact=None,environment='staging-alpha'):
+def activation(artifact=None,environment='staging-alpha',identity_chain_id=84532):
     artifact=artifact or _artifact()
-    value=dict(schema='solslot.enrollment-activation.v1',environment=environment,network='testnet11',evmChainId=84532,
+    value=dict(schema='solslot.enrollment-activation.v1',environment=environment,network='testnet11',evmChainId=identity_chain_id,
         deploymentId=artifact['ceremony']['ceremonyId'],sourceShas=copy.deepcopy(artifact['sourceShas']),
         releaseIdentity=enrollment_release_identity(artifact['sourceShas']),emitter=artifact['evmAddresses']['attestationEmitter'],
         issuer='0x7e5f4552091a69125d5dfcb7b8c2659029395bdf',issuerKeyRef='https://solslot-test.vault.azure.net/keys/permit-test/'+'ab'*16,
@@ -24,8 +24,8 @@ def activation(artifact=None,environment='staging-alpha'):
     return value
 
 
-def selected_artifact(environment='staging-alpha'):
-    original=_artifact();plan=copy.deepcopy(original['genesisPlan']);plan['enrollmentActivation']=activation(original,environment);plan['evmChainId']=84532
+def selected_artifact(environment='staging-alpha',identity_chain_id=84532):
+    original=_artifact();plan=copy.deepcopy(original['genesisPlan']);plan['enrollmentActivation']=activation(original,environment,identity_chain_id);plan['evmChainId']=84532
     rebuilt=_rebuild_plan({'genesisPlan':plan})
     return build_public_artifact(plan=rebuilt,spend_bundle_id=original['ceremony']['spendBundleId'],
         confirmed_block_index=1234,build_timestamp=original['buildTimestamp'],signatures=original['signatures'],review_class=original['reviewClass'])
@@ -40,6 +40,7 @@ def test_historical_omitted_activation_bytes_and_unknown_block_rejected():
     verify_public_artifact(value,signature_verifier=_accept)
     assert hashlib.sha256(json.dumps(value,sort_keys=True,separators=(',',':')).encode()).hexdigest()=='01b6517e4cc091858ec184947f752b274fd7d4e97248f171577219d4f1279786'
     assert activation_from_artifact(value) is None
+    assert enrollment_identity_chain_id(value) == 11155111
     for bad in [None,{},dict(schema='solslot.enrollment-activation.v1',network='mainnet')]:
         changed=copy.deepcopy(value);changed['enrollmentActivation']=bad;changed['artifactHash']=artifact_hash(changed)
         with pytest.raises(ValueError,match='activation'):verify_public_artifact(changed,signature_verifier=_accept)
@@ -56,6 +57,47 @@ def test_selected_policy_changes_fresh_vault_and_every_bridge_coin_but_preserves
     production=selected_artifact('production-alpha')
     assert production['canonicalVaultParamsHash']!=value['canonicalVaultParamsHash']
     with pytest.raises(ValueError):activation_from_artifact(value,environment='production-alpha')
+
+
+@pytest.mark.parametrize('environment',['staging-alpha','production-alpha'])
+def test_base_identity_is_bound_separately_from_testnet_ceremony(environment):
+    from solslot_puzzles.genesis_signing import genesis_artifact_signing_typed_data
+    value=selected_artifact(environment,8453)
+    verify_public_artifact(value,signature_verifier=_accept)
+    assert value['network'] == value['genesisPlan']['network'] == 'testnet11'
+    assert value['evmChainId'] == value['genesisPlan']['evmChainId'] == 84532
+    assert enrollment_identity_chain_id(value,environment=environment) == 8453
+    assert genesis_artifact_signing_typed_data(value)['domain']['chainId'] == 84532
+    sepolia=selected_artifact(environment,84532)
+    assert enrollment_identity_chain_id(sepolia,environment=environment) == 84532
+    assert value['enrollmentActivation']['contextHash'] != sepolia['enrollmentActivation']['contextHash']
+    assert value['puzzleHashes']['bridgePolicy'] != sepolia['puzzleHashes']['bridgePolicy']
+    assert value['canonicalVaultParamsHash'] != sepolia['canonicalVaultParamsHash']
+    assert not set(value['bridgePolicy']['bridgeCoinIds']) & set(sepolia['bridgePolicy']['bridgeCoinIds'])
+    # Rehashing a relabelled identity chain cannot reuse the old context/policy.
+    changed=copy.deepcopy(value)
+    changed['enrollmentActivation']['evmChainId']=84532
+    changed['genesisPlan']['enrollmentActivation']['evmChainId']=84532
+    changed['artifactHash']=artifact_hash(changed)
+    with pytest.raises(ValueError):verify_public_artifact(changed,signature_verifier=_accept)
+    with pytest.raises(ValueError):enrollment_identity_chain_id(changed)
+
+
+@pytest.mark.parametrize('chain',[8453,1,11155111,True])
+def test_base_identity_never_changes_operational_ceremony_chain(chain):
+    value=selected_artifact(identity_chain_id=8453)
+    value['evmChainId']=chain
+    value['genesisPlan']['evmChainId']=chain
+    value['artifactHash']=artifact_hash(value)
+    with pytest.raises(ValueError):verify_public_artifact(value,signature_verifier=_accept)
+    with pytest.raises(ValueError):enrollment_identity_chain_id(value)
+
+
+@pytest.mark.parametrize('artifact',[None,{}, {'network':'mainnet','evmChainId':11155111},
+    {'network':'testnet11','evmChainId':8453}, {'network':'testnet11','evmChainId':84532},
+    {'network':'testnet11','evmChainId':True}, {'network':'testnet11','evmChainId':'11155111'}])
+def test_identity_chain_has_no_unselected_or_malformed_fallback(artifact):
+    with pytest.raises(ValueError):enrollment_identity_chain_id(artifact)
 
 
 @pytest.mark.parametrize('field,bad',[

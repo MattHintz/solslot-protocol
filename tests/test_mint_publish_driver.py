@@ -929,7 +929,7 @@ class TestArtifactsCrossDriver:
 
         assert artifacts.deed_full_puzhash == expected
 
-    @pytest.mark.parametrize("inventory_version", [1, 2])
+    @pytest.mark.parametrize("inventory_version", [1, 2, 3])
     def test_collection_mint_uses_native_purchase_eve(self, inventory_version):
         metadata_root = _b(0xD1)
         provider_id = _b(0xD2)
