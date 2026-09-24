@@ -234,6 +234,8 @@ class RC23GenesisCeremonyPlan:
     retired_coordinates: tuple[bytes32, ...]
     plan_hash: bytes32
     enrollment_activation: Mapping[str, Any] | None = None
+    payment_chain_id: int | None = None
+    identity_policy: Mapping[str, Any] | None = None
 
     @property
     def statutes(self) -> SingletonSurface:
@@ -558,6 +560,10 @@ def _plan_payload(
             _hex(value) for value in plan.retired_coordinates
         ],
     }
+    if plan.identity_policy is not None:
+        payload["identityPolicy"] = json.loads(json.dumps(plan.identity_policy))
+    if plan.payment_chain_id is not None:
+        payload["paymentChainId"] = plan.payment_chain_id
     if plan.enrollment_activation is not None:
         payload["enrollmentActivation"] = json.loads(json.dumps(plan.enrollment_activation))
     if plan.protocol.sols_reserve_seed_version != 1:
@@ -641,12 +647,17 @@ def build_rc23_genesis_ceremony_plan(
     vault_version: int = RC23_VAULT_VERSION,
     property_registry_version: int = 0,
     enrollment_activation: Mapping[str, Any] | None = None,
+    payment_chain_id: int | None = None,
+    identity_policy: Mapping[str, Any] | None = None,
     sols_reserve_seed_version: int = 2,
     pool_puzzle_version: int = 5,
     authority_puzzle_version: int = 4,
 ) -> RC23GenesisCeremonyPlan:
     if network != GENESIS_NETWORK:
         raise ValueError("RC23 fresh genesis is restricted to testnet11")
+    _validate_payment_chain_id(payment_chain_id)
+    from .eligibility_policy import validate_identity_policy
+    selected_identity_policy = validate_identity_policy(identity_policy, evm_chain_id=evm_chain_id, enrollment_activation=enrollment_activation)
     expected_evm_chain = enrollment_operational_chain_id(enrollment_activation)
     if type(evm_chain_id) is not int or evm_chain_id != expected_evm_chain:
         raise ValueError("RC23 genesis chain must match its explicit legacy or permit selection")
@@ -879,14 +890,25 @@ def build_rc23_genesis_ceremony_plan(
         retired_coordinates=retired,
         plan_hash=bytes32.zeros,
         enrollment_activation=selected_activation,
+        payment_chain_id=payment_chain_id,
+        identity_policy=selected_identity_policy,
     )
     object.__setattr__(plan, "plan_hash", _compute_plan_hash(plan))
     return plan
 
 
+def _validate_payment_chain_id(chain_id: int | None) -> None:
+    """Optional signed payment domain; never changes enrollment/identity domains."""
+    if chain_id is not None and (type(chain_id) is not int or chain_id not in (8453, 84532)):
+        raise ValueError("unsupported ceremony payment chain")
+
+
 def verify_rc23_genesis_ceremony_plan(
     plan: RC23GenesisCeremonyPlan,
 ) -> None:
+    _validate_payment_chain_id(plan.payment_chain_id)
+    from .eligibility_policy import validate_identity_policy
+    validate_identity_policy(plan.identity_policy, evm_chain_id=plan.evm_chain_id, enrollment_activation=plan.enrollment_activation)
     plan.funding.validate()
     if plan.enrollment_activation is not None:
         from .enrollment_activation import validate_enrollment_activation

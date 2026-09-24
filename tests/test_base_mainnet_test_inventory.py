@@ -124,6 +124,20 @@ def test_activation_requires_new_schema_exact_profile_and_mainnet_enrollment():
     assert validate_inventory_activation(legacy)["inventoryVersion"] == 2
 
 
+def test_explicit_signed_base_payments_do_not_move_identity_off_sepolia():
+    a = selected_artifact()
+    a.pop('enrollmentActivation')
+    a['evmChainId'] = 11155111
+    a['paymentChainId'] = a['genesisPlan']['paymentChainId'] = 8453
+    assert validate_inventory_activation(a)['inventoryVersion'] == 3
+    assert a['evmChainId'] == 11155111
+    for value in (None, True, 84532, '8453'):
+        changed = copy.deepcopy(a)
+        changed['genesisPlan']['paymentChainId'] = value
+        with pytest.raises(ValueError, match='payment chain'):
+            validate_inventory_activation(changed)
+
+
 @pytest.mark.parametrize("field,value", [("chainId",84532), ("tokenAddress","0x"+"11"*20),
     ("tokenDecimals",18), ("tokenSymbol","USDC"), ("assetNetwork","mainnet"),
     ("hasMonetaryValue",0), ("hasMonetaryValue",True), ("tokenRuntimeCodeHash","0x"+"12"*32)])

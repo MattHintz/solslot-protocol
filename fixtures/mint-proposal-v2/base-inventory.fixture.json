@@ -1,0 +1,20 @@
+{
+  "governanceTrackerVersion": 2,
+  "inventoryVersion": 3,
+  "base": 101,
+  "expected": {
+    "smart_deed_inner_puzhash": "0x0443f58583274069792aae6a4bcdd0adb75f2a34fc641e767d49420d9b850e64",
+    "eve_inner_puzhash": "0x04321131bd4c823f0866bf3d992c059fa260ea4eb857b358b12fcc8392e28217",
+    "deed_full_puzhash": "0xaa1e716a0615300c4084e310faad5e0d3ea56a3d5847f046ae4d18c09a9a296f",
+    "proposal_hash": "0x48893be241aeed90f1bee41d55d6f5afb0a5254bfd07543e00cefa635f5aafd5",
+    "deed_launcher_id": "0x1310b78bf387ea58bb9365e261ff099a6971fd2ca5cc98e750b1d07e92e29b1d",
+    "proposal_singleton_launcher_id": "0x1e92dd4960d1ddfbd84b857b4836285eb4f3abe13efd639f16fb3f25ee8af534",
+    "proposal_data_hash": "0x75c1e8a71c1acb0f5b170383c8db4f90615a6375677a08b728f6a3641ab8104b",
+    "bill_op_program_hex": "0xff4dffa0aa1e716a0615300c4084e310faad5e0d3ea56a3d5847f046ae4d18c09a9a296fffa0a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1ffa0a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a780",
+    "bill_op_program_hash": "0x48893be241aeed90f1bee41d55d6f5afb0a5254bfd07543e00cefa635f5aafd5",
+    "deed_singleton_struct_program_hex": "0xffa07faa3253bfddd1e0decb0906b2dc6247bbc4cf608f58345d173adb63e8b47c9fffa01310b78bf387ea58bb9365e261ff099a6971fd2ca5cc98e750b1d07e92e29b1da0dfe1398684a2fa2a261e9fd9f1e406c0755d51665e1a15beece3ef47c8578cbe",
+    "deed_singleton_struct_program_hash": "0x6eb0d501fa02486db513463637f6ef588f33ff04c484bc3361b9e4123c337316",
+    "proposal_singleton_struct_program_hex": "0xffa07faa3253bfddd1e0decb0906b2dc6247bbc4cf608f58345d173adb63e8b47c9fffa01e92dd4960d1ddfbd84b857b4836285eb4f3abe13efd639f16fb3f25ee8af534a0eff07522495060c066f66f32acc2a77e3a3e737aca8baea4d1a64ea4cdc13da9",
+    "proposal_singleton_struct_program_hash": "0x33fedc7c6eba0d0b177ef72a4f94d86e8e71e765ddd7f5f2d616edb90a6b87a7"
+  }
+}

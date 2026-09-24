@@ -9,7 +9,7 @@ from solslot_puzzles.stripe_settlement_v1_driver import PRIMARY_PURCHASE_PROVIDE
 from scripts.dump_inventory_mint_fixtures import build_inventory_fixture
 
 
-def build_fixture():
+def build_fixture(*, inventory_version=2):
     baseline = build_inventory_fixture()
     kwargs = {}
     for key, value in baseline['inputs'].items():
@@ -24,7 +24,7 @@ def build_fixture():
     config = PrimaryPurchaseMintConfig(network='testnet11', usd_amount_minor=101,
         technology_fee_bps=100, protocol_treasury_puzhash=bytes32.fromhex(baseline['treasury'][2:]),
         validator_pubkeys=tuple(bytes.fromhex(key[2:]) for key in baseline['validators']),
-        provider_id=PRIMARY_PURCHASE_PROVIDER_ID, inventory_version=2)
+        provider_id=PRIMARY_PURCHASE_PROVIDER_ID, inventory_version=inventory_version)
     result = build_mint_publish_artifacts(**kwargs, primary_purchase=config,
         metadata_root=bytes32.fromhex(baseline['metadataRoot'][2:]), governance_tracker_version=2)
     expected = {}
@@ -35,7 +35,7 @@ def build_fixture():
             expected[field.name+'_hash'] = '0x'+value.get_tree_hash().hex()
         else:
             expected[field.name] = '0x'+bytes(value).hex()
-    return dict(governanceTrackerVersion=2, inventoryVersion=2, base=101, expected=expected)
+    return dict(governanceTrackerVersion=2, inventoryVersion=inventory_version, base=101, expected=expected)
 
 
 if __name__ == '__main__':

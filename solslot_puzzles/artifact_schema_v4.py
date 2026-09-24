@@ -90,6 +90,10 @@ def _projection(plan: RC23GenesisCeremonyPlan) -> dict[str, Any]:
     projection["adminRecoveryKits"] = list(
         canonical["adminRecoveryKits"]
     )
+    if plan.identity_policy is not None:
+        projection["identityPolicy"] = canonical["identityPolicy"]
+    if plan.payment_chain_id is not None:
+        projection["paymentChainId"] = canonical["paymentChainId"]
     if plan.enrollment_activation is not None:
         projection["enrollmentActivation"] = canonical["enrollmentActivation"]
     return projection
@@ -345,6 +349,8 @@ def _rebuild_plan(
             for value in plan["retiredCoordinates"]
         ],
         enrollment_activation=plan.get("enrollmentActivation"),
+        payment_chain_id=plan.get("paymentChainId"),
+        identity_policy=plan.get("identityPolicy"),
         sols_reserve_seed_version=reserve_seed.get("version", 1),
         pool_puzzle_version=plan.get("poolPuzzleVersion", 4),
         authority_puzzle_version=plan.get("authorityPuzzleVersion", 3),
@@ -431,7 +437,12 @@ def _verify_artifact_content(payload: Mapping[str, Any]) -> None:
             "artifact Chia confirmation policy is invalid"
         )
 
+    from .eligibility_policy import identity_policy_from_artifact
+    identity_policy_from_artifact(payload)
     projection = _projection(rebuilt)
+    if (("paymentChainId" in payload) != (rebuilt.payment_chain_id is not None)
+            or payload.get("paymentChainId") != rebuilt.payment_chain_id):
+        raise ValueError("artifact payment chain differs from the signed plan")
     from .inventory_activation import validate_inventory_activation, validate_inventory_recovery
     validate_inventory_activation(payload)
     validate_inventory_recovery(payload)

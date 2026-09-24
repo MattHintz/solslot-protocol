@@ -8,6 +8,19 @@ from .alpha_payment_profile import alpha_payment_profile
 from .enrollment_networks import enrollment_operational_chain_id
 
 
+def inventory_payment_chain(artifact: Mapping[str, Any]) -> int:
+    """Selected by the authenticated genesis; retain the old implicit profile."""
+    if "paymentChainId" not in artifact:
+        return enrollment_operational_chain_id(artifact.get("enrollmentActivation"))
+    chain = artifact["paymentChainId"]
+    plan = artifact.get("genesisPlan")
+    if (type(chain) is not int or chain not in (8453, 84532)
+            or not isinstance(plan, Mapping) or type(plan.get("paymentChainId")) is not int
+            or plan["paymentChainId"] != chain):
+        raise ValueError("inventory payment chain differs from the signed genesis plan")
+    return chain
+
+
 def validate_inventory_activation(artifact: Mapping[str, Any], *, required: bool = False,
                                   environment: str | None = None) -> Mapping[str, Any] | None:
     """Validate content only. Caller MUST first authenticate the complete artifact.
@@ -35,7 +48,7 @@ def validate_inventory_activation(artifact: Mapping[str, Any], *, required: bool
         actual = value.get("paymentProfile")
         if (not isinstance(actual, Mapping) or set(actual) != set(profile)
                 or any(actual[k] != v or type(actual[k]) is not type(v) for k, v in profile.items())
-                or enrollment_operational_chain_id(artifact.get("enrollmentActivation")) != 8453):
+                or inventory_payment_chain(artifact) != 8453):
             raise ValueError("inventory activation requires the explicit Base mainnet alpha payment profile")
         expected["paymentProfile"] = profile
     if (set(value) != set(expected) | {"environment", "reviewEvidenceSha256"}
