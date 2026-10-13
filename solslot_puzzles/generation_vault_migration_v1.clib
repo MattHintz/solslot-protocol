@@ -1,0 +1,69 @@
+; New-generation deed transfers require a verified recipient co-spend.
+; The historical p2_vault remains unchanged; its VSX1 mode pins the exact NFT.
+(
+(defconstant GENERATION_P2_VAULT_MOD_HASH 0x5c4a02ae4fe1021d5d30cd0332ee3abdd3a83b6fdc110a526c44eff6325c2d08)
+(defun gv-nth (n xs) (if n (gv-nth (- n 1) (r xs)) (f xs)))
+(defun gv-p2 (structure)
+  (curry_hashes GENERATION_P2_VAULT_MOD_HASH (sha256 1 (f structure))
+    (sha256 1 (f (r structure))) (sha256 1 (r (r structure)))))
+(defun gv-transfer (pool source_ph source_id deed_id deed_coin dest_ph dest_id dest_p2 timestamp)
+  (sha256tree (list "GEN_VERIFIED_DEED_TRANSFER_V1" pool source_ph source_id
+    deed_id deed_coin dest_ph dest_id dest_p2 timestamp)))
+(defun gv-accept (source_ph source_id deed_id deed_coin timestamp signature
+    structure pubkey auth identity policy pool mid inner amount)
+  (assert (is-size-b32 source_ph) (is-size-b32 source_id) (is-size-b32 deed_id) (is-size-b32 deed_coin)
+    (not (= source_id mid)) (is-uint64 timestamp) (is-size-b32 identity)
+    (not (= identity ZKPASSPORT_EMPTY_ATTEST_ROOT)) (not (= identity ZERO_B32))
+    (not (= policy ZERO_B32))
+    (merge-lists (base_conditions structure mid amount inner)
+      (merge-lists (time_bound_conditions timestamp)
+        (list (authenticate_operation auth pubkey 't'
+            (gv-transfer pool source_ph source_id deed_id deed_coin
+              (calculate_full_puzzle_hash structure inner) mid (gv-p2 structure) timestamp) mid signature)
+          (list CREATE_COIN inner amount (list inner))
+          (list RECEIVE_MESSAGE 18 (sha256tree (list "GEN_DEED_TRANSFER_REQUEST"
+            (gv-transfer pool source_ph source_id deed_id deed_coin
+              (calculate_full_puzzle_hash structure inner) mid (gv-p2 structure) timestamp))) source_ph)
+          (list SEND_MESSAGE 18 (sha256tree (list "GEN_DEED_TRANSFER_ACCEPTED"
+            (gv-transfer pool source_ph source_id deed_id deed_coin
+              (calculate_full_puzzle_hash structure inner) mid (gv-p2 structure) timestamp))) source_ph))))))
+(defun gv-send (deed_id deed_coin timestamp signature module recipient
+    structure pubkey auth members identity policy poolmod pool launcherph mid inner amount)
+  (assert (is-size-b32 deed_id) (is-size-b32 deed_coin) (is-uint64 timestamp) (is-size-b32 module)
+    (= (list-length recipient) 7)
+    (= inner (inner_puzzle_hash_for_updated_keys structure module pubkey auth members identity policy poolmod pool launcherph))
+    (= (f (gv-nth 0 recipient)) (f structure))
+    (= (r (r (gv-nth 0 recipient))) (r (r structure)))
+    (is-size-b32 (f (r (gv-nth 0 recipient))))
+    (not (= (f (r (gv-nth 0 recipient))) (f (r structure))))
+    (is-size-b32 (gv-nth 3 recipient)) (is-size-b32 (gv-nth 4 recipient))
+    (not (= (gv-nth 4 recipient) ZKPASSPORT_EMPTY_ATTEST_ROOT))
+    (not (= (gv-nth 4 recipient) ZERO_B32)) (not (= policy ZERO_B32))
+    (is-size-b32 (gv-nth 5 recipient)) (is-size-b32 (gv-nth 6 recipient))
+    (= (gv-nth 5 recipient)
+      (inner_puzzle_hash_for_updated_keys (gv-nth 0 recipient) module
+        (gv-nth 1 recipient) (gv-nth 2 recipient) (gv-nth 3 recipient) (gv-nth 4 recipient)
+        policy poolmod pool launcherph))
+    (merge-lists (base_conditions structure mid amount inner)
+      (merge-lists (time_bound_conditions timestamp)
+        (list
+          (authenticate_operation auth pubkey 'm'
+            (gv-transfer pool (calculate_full_puzzle_hash structure inner) mid deed_id deed_coin
+              (calculate_full_puzzle_hash (gv-nth 0 recipient) (gv-nth 5 recipient))
+              (gv-nth 6 recipient) (gv-p2 (gv-nth 0 recipient)) timestamp) mid signature)
+          (list CREATE_COIN inner amount (list inner))
+          (list SEND_MESSAGE 18 (sha256tree (list "GEN_DEED_TRANSFER_REQUEST"
+            (gv-transfer pool (calculate_full_puzzle_hash structure inner) mid deed_id deed_coin
+              (calculate_full_puzzle_hash (gv-nth 0 recipient) (gv-nth 5 recipient))
+              (gv-nth 6 recipient) (gv-p2 (gv-nth 0 recipient)) timestamp)))
+              (calculate_full_puzzle_hash (gv-nth 0 recipient) (gv-nth 5 recipient)))
+          (list RECEIVE_MESSAGE 18 (sha256tree (list "GEN_DEED_TRANSFER_ACCEPTED"
+            (gv-transfer pool (calculate_full_puzzle_hash structure inner) mid deed_id deed_coin
+              (calculate_full_puzzle_hash (gv-nth 0 recipient) (gv-nth 5 recipient))
+              (gv-nth 6 recipient) (gv-p2 (gv-nth 0 recipient)) timestamp)))
+              (calculate_full_puzzle_hash (gv-nth 0 recipient) (gv-nth 5 recipient)))
+          (list CREATE_PUZZLE_ANNOUNCEMENT (concat PROTOCOL_PREFIX
+            (sha256tree (list VAULT_SWAP_TRANSFER_TAG mid deed_coin deed_id (gv-p2 (gv-nth 0 recipient))))))
+          (list ASSERT_COIN_ANNOUNCEMENT (sha256 deed_coin (concat PROTOCOL_PREFIX
+            (sha256tree (list VAULT_SWAP_TRANSFER_TAG mid deed_coin deed_id (gv-p2 (gv-nth 0 recipient))))))))))))
+)

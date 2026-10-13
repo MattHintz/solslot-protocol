@@ -256,7 +256,14 @@ def _deed_singleton_child(
     )
 
 
-def _fixture(*, auth_type=AUTH_TYPE_BLS, owner_pubkey=OWNER_PK) -> SwapFixture:
+def _fixture(*, auth_type=AUTH_TYPE_BLS, owner_pubkey=OWNER_PK,
+             parameters=None, config=None, statutes_state=None) -> SwapFixture:
+    # Explicit candidate inputs; historical tests retain their original
+    # defaults and never have their signed fixtures silently reinterpreted.
+    PARAMETERS = parameters if parameters is not None else globals()['PARAMETERS']
+    CONFIG = config if config is not None else globals()['CONFIG']
+    STATUTES_STATE = statutes_state if statutes_state is not None else globals()['STATUTES_STATE']
+    EMPTY_POOL = replace(globals()['EMPTY_POOL'], state_version=2) if CONFIG.pool_puzzle_version==6 else globals()['EMPTY_POOL']
     empty_pool_inner = make_pool_v4_full(CONFIG, EMPTY_POOL).uncurry()
     assert empty_pool_inner is not None
     _, empty_pool_args = empty_pool_inner
@@ -313,7 +320,11 @@ def _fixture(*, auth_type=AUTH_TYPE_BLS, owner_pubkey=OWNER_PK) -> SwapFixture:
         seed=40,
     )
     assert parent_pool_coin == empty_pool_coin
-    vault_full = puzzle_for_vault_v2_full(
+    vault_constructor = puzzle_for_vault_v2_full
+    if CONFIG.pool_puzzle_version == 6:
+        from solslot_puzzles.generation_vault import vault_inner
+        vault_constructor = lambda **kwargs: puzzle_for_singleton(kwargs['vault_launcher_id'], vault_inner(**kwargs))
+    vault_full = vault_constructor(
         vault_launcher_id=VAULT_LAUNCHER,
         owner_pubkey=owner_pubkey,
         auth_type=auth_type,
@@ -341,7 +352,7 @@ def _fixture(*, auth_type=AUTH_TYPE_BLS, owner_pubkey=OWNER_PK) -> SwapFixture:
         bytes32(
             construct_cat_puzzle(
                 CAT_MOD,
-                RULES.sols_tail_hash,
+                CONFIG.permanent_rules.sols_tail_hash,
                 payment_puzzle,
             ).get_tree_hash()
         ),
@@ -375,7 +386,7 @@ def _fixture(*, auth_type=AUTH_TYPE_BLS, owner_pubkey=OWNER_PK) -> SwapFixture:
     statutes_inner = make_statutes_inner(
         singleton_struct=CONFIG.statutes_singleton_struct,
         governance_singleton_struct=CONFIG.governance_singleton_struct,
-        permanent_rules=RULES,
+        permanent_rules=CONFIG.permanent_rules,
         state=STATUTES_STATE,
     )
     statutes_coin, statutes_lineage, _ = _singleton_child(
@@ -625,14 +636,15 @@ def test_deed_to_sols_offer_bootstraps_atomically_and_preserves_anchor() -> None
     assert int(seller_payment.amount) == quote.seller_sols_mojos
 
 
-def _forward_arguments(fixture, *, auth_type=AUTH_TYPE_BLS, owner_pubkey=OWNER_PK):
+def _forward_arguments(fixture, *, auth_type=AUTH_TYPE_BLS, owner_pubkey=OWNER_PK,
+                       parameters=None, config=None, statutes_state=None):
     return {
         'receipt': fixture.receipt,
-        'config': CONFIG,
-        'parameters': PARAMETERS,
+        'config': config if config is not None else CONFIG,
+        'parameters': parameters if parameters is not None else PARAMETERS,
         'collection': COLLECTION,
         'pause': None,
-        'statutes_state': STATUTES_STATE,
+        'statutes_state': statutes_state if statutes_state is not None else STATUTES_STATE,
         'statutes_coin': fixture.statutes_coin,
         'statutes_launcher_id': STATUTES_LAUNCHER,
         'statutes_lineage_proof': fixture.statutes_lineage,
@@ -654,7 +666,12 @@ def _forward_arguments(fixture, *, auth_type=AUTH_TYPE_BLS, owner_pubkey=OWNER_P
     }
 
 
-def _reverse_arguments(*, auth_type=AUTH_TYPE_BLS, owner_pubkey=OWNER_PK):
+def _reverse_arguments(*, auth_type=AUTH_TYPE_BLS, owner_pubkey=OWNER_PK,
+                       parameters=None, config=None, statutes_state=None):
+    PARAMETERS = parameters if parameters is not None else globals()['PARAMETERS']
+    CONFIG = config if config is not None else globals()['CONFIG']
+    STATUTES_STATE = statutes_state if statutes_state is not None else globals()['STATUTES_STATE']
+    EMPTY_POOL = replace(globals()['EMPTY_POOL'], state_version=2) if CONFIG.pool_puzzle_version==6 else globals()['EMPTY_POOL']
     empty_pool_full = make_pool_v4_full(CONFIG, EMPTY_POOL)
     uncurried_pool = empty_pool_full.uncurry()
     assert uncurried_pool is not None
@@ -667,7 +684,11 @@ def _reverse_arguments(*, auth_type=AUTH_TYPE_BLS, owner_pubkey=OWNER_PK):
         seed=120,
     )
 
-    vault_full = puzzle_for_vault_v2_full(
+    vault_constructor = puzzle_for_vault_v2_full
+    if CONFIG.pool_puzzle_version == 6:
+        from solslot_puzzles.generation_vault import vault_inner
+        vault_constructor = lambda **kwargs: puzzle_for_singleton(kwargs['vault_launcher_id'], vault_inner(**kwargs))
+    vault_full = vault_constructor(
         vault_launcher_id=VAULT_LAUNCHER,
         owner_pubkey=owner_pubkey,
         auth_type=auth_type,
@@ -771,7 +792,7 @@ def _reverse_arguments(*, auth_type=AUTH_TYPE_BLS, owner_pubkey=OWNER_PK):
     statutes_inner = make_statutes_inner(
         singleton_struct=CONFIG.statutes_singleton_struct,
         governance_singleton_struct=CONFIG.governance_singleton_struct,
-        permanent_rules=RULES,
+        permanent_rules=CONFIG.permanent_rules,
         state=STATUTES_STATE,
     )
     statutes_coin, statutes_lineage, _ = _singleton_child(
@@ -782,7 +803,7 @@ def _reverse_arguments(*, auth_type=AUTH_TYPE_BLS, owner_pubkey=OWNER_PK):
     )
     reserve_cat = construct_cat_puzzle(
         CAT_MOD,
-        RULES.sols_tail_hash,
+        CONFIG.permanent_rules.sols_tail_hash,
         RESERVE_INNER,
     )
     reserve_coin = Coin(b32(127), bytes32(reserve_cat.get_tree_hash()), 1)

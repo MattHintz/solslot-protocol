@@ -1,0 +1,246 @@
+; Immutable governance kernel. The replaceable extension may add read-only
+; instructions, never conditions or arbitrary state. Permanent voting rules
+; and asset authorization remain in this boundary across module upgrades.
+; STATE = (bindings nonce active closed_proposals_root approved_actions_root upgrade_reserved)
+; bindings = (my_struct admin_struct ledger_struct sgt_bindings sgt_kernel
+;             opening_clock_module mint_authority_struct)
+; active = () or (proposal bill snapshot ledger_sequence yes_weight clock_id opened_at)
+; All sponsorship below explicitly means sponsor AND cast the first yes vote.
+(mod (SELF GENERATION REGISTRY_STRUCT COMPONENT_ID LOGIC_HASH VERSION COMPAT STATE
+      action my_id args)
+  (include condition_codes.clib)
+  (include utils.clib)
+  (include utility_macros.clib)
+  (include generation_sgt_common_v1.clib)
+  (include sgt_holdings_merkle_v1.clib)
+  (include generation_closed_set_v1.clib)
+  (include generation_parameters_v1.clib)
+  (include generation_statutes_records_v1.clib)
+  (include generation_redemption_v1.clib)
+  (defun nth (n values) (if n (nth (- n 1) (r values)) (f values)))
+  (defun list-length (values) (if values (+ 1 (list-length (r values))) 0))
+  (defun-inline next-ph (self gen registry id logic version compat state)
+    (curry_hashes self (sha256 1 self) (sha256 1 gen) (sha256tree registry)
+      (sha256 1 id) (sha256 1 logic) (sha256 1 version) (sha256 1 compat) (sha256tree state)))
+  (defun-inline own-ph (self gen registry id logic version compat state)
+    (calculate_full_puzzle_hash (f (f state))
+      (next-ph self gen registry id logic version compat state)))
+  (defun-inline recreate (self gen registry id logic version compat bindings nonce active closed approved reserved)
+    (list CREATE_COIN
+      (next-ph self gen registry id logic version compat (list bindings nonce active closed approved reserved)) 1))
+  (defun-inline proposal-id (gen nonce bill root)
+    (sha256tree (list "HOLDER_PROPOSAL_V1" gen nonce bill root)))
+  (defun-inline clock-ph (gen bindings proposal)
+    (curry_hashes (nth 5 bindings) (sha256 1 gen) (sha256tree (f bindings)) (sha256 1 proposal)))
+  (defun valid-bill (bill)
+    (if (= (f bill) "UPGRADE")
+      (assert (is-uint64 (nth 1 bill)) (is-size-b32 (f (nth 2 bill))) (nth 1 (nth 2 bill))
+        (not (r (r (r bill)))) 1)
+      (if (= (f bill) "REOPEN")
+        (assert (is-uint64 (nth 1 bill)) (is-uint64 (nth 2 bill))
+          (> (nth 2 bill) 0) (> 32 (nth 2 bill)) (not (r (r (r bill)))) 1)
+        (if (= (f bill) "MINT_TEST_ONLY")
+          (assert (is-size-b32 (nth 1 bill)) (is-size-b32 (nth 2 bill))
+            (is-uint64 (nth 3 bill)) (> (nth 3 bill) 0) (not (> (nth 3 bill) 100))
+            (not (r (r (r (r bill))))) 1)
+          (if (= (f bill) "PARAMETERS")
+            (assert (= (list-length bill) 6) (is-size-b32 (nth 1 bill)) (is-size-b32 (nth 2 bill))
+              (is-uint64 (nth 3 bill)) (is-size-b32 (nth 4 bill)) (= (list-length (nth 5 bill)) 6)
+              (valid-parameters (nth 5 bill)) 1)
+          (if (= (f bill) "STATUTES")
+            (assert (= (list-length bill) 9) (is-size-b32 (nth 1 bill)) (is-size-b32 (nth 2 bill))
+              (is-uint64 (nth 3 bill)) (is-size-b32 (nth 5 bill))
+              (= (nth 5 bill) (f (nth 6 bill))) (valid-statute (nth 4 bill) (nth 6 bill))
+              (is-size-b32 (nth 7 bill)) (is-size-b32 (nth 8 bill))
+              (not (= (nth 7 bill) (nth 8 bill))) 1)
+          (if (= (f bill) "FUND_REDEMPTION")
+            (valid-redemption bill)
+          (if (= (f bill) "GRANT")
+            (assert (is-size-b32 (nth 1 bill)) (nth 2 bill) (not (r (r (r bill)))) 1)
+            (x)))))))))
+  (defun weight (votes)
+    (if votes (+ (nth 1 (nth 1 (f votes))) (weight (r votes))) 0))
+  ; Reuse a still-unspent stake from a closed vote without forcing an unlock
+  ; after the next snapshot (which would create an ineligible replacement).
+  ; The original snapshot coin is consumed, its owner signs again, and the
+  ; prior lock must have a consensus-authenticated closure receipt.
+  (defun ballot (gen bindings proposal root closed (coin_id (ph amount kind owner lock) proof prior_closed))
+    (assert (is-size-b32 coin_id)
+      (if (= kind 1) (all (not lock) (not prior_closed))
+        (all (= kind 2) (is-size-b32 lock) (not (= lock proposal))
+          (is-closed closed lock prior_closed)))
+      (valid-descriptor (nth 3 bindings) kind owner lock amount)
+      (= ph (sgt-full-hash (nth 4 bindings) (nth 3 bindings) kind owner lock))
+      (= (sha256tree root)
+        (sha256tree (holdings-root (concat 0x00 coin_id)
+          (holding-node coin_id (list ph amount kind owner lock)) proof 256)))
+      (list
+        (list SEND_MESSAGE 18
+          (transfer-message gen coin_id "LOCK" (list (list 2 owner proposal amount))) ph)
+        (list RECEIVE_MESSAGE 58
+          (transfer-message gen coin_id "LOCK" (list (list 2 owner proposal amount))) coin_id))))
+  (defun ballots (gen bindings proposal root closed votes)
+    (if votes
+      (merge-lists (ballot gen bindings proposal root closed (f votes))
+        (ballots gen bindings proposal root closed (r votes))) ()))
+  (defun open-proposal (self gen registry id logic version compat my_id
+                        (bindings nonce active closed approved reserved)
+                        (admin_inner issued expires registry_inner ledger_inner root ledger_sequence bill sponsors))
+    (assert (not active) (valid-bill bill) (if (= (f bill) "UPGRADE") (not reserved) 1) (> (nth 1 root) 0)
+      (not (> (nth 1 root) 1000000)) (= (nth 2 root) 1000000)
+      (is-uint64 issued) (= expires (+ issued 86400))
+      (is-uint64 ledger_sequence) (not (> 10000 (weight sponsors)))
+      (not (> (weight sponsors) (nth 1 root))) (has-no-duplicate-firsts sponsors ())
+      (merge-lists
+        (list
+          (list ASSERT_SECONDS_ABSOLUTE issued) (list ASSERT_BEFORE_SECONDS_ABSOLUTE expires)
+          (list RECEIVE_MESSAGE 18
+            (sha256tree (list "PUBLICATION_APPROVAL" gen (proposal-id gen nonce bill root) issued expires))
+            (calculate_full_puzzle_hash (nth 1 bindings) admin_inner))
+          (list RECEIVE_MESSAGE 18
+            (sha256tree (list "ALLOW_NEW" gen 1 (proposal-id gen nonce bill root) bill))
+            (calculate_full_puzzle_hash registry registry_inner))
+          (list SEND_MESSAGE 18
+            (sha256tree (list "OPEN_SNAPSHOT" gen (proposal-id gen nonce bill root)))
+            (calculate_full_puzzle_hash (nth 2 bindings) ledger_inner))
+          (list RECEIVE_MESSAGE 18
+            (sha256tree (list "HOLDINGS_SNAPSHOT" gen (proposal-id gen nonce bill root) root ledger_sequence))
+            (calculate_full_puzzle_hash (nth 2 bindings) ledger_inner))
+          (list CREATE_COIN (clock-ph gen bindings (proposal-id gen nonce bill root)) 0)
+          (recreate self gen registry id logic version compat bindings (+ nonce 1)
+            (list (proposal-id gen nonce bill root) bill root ledger_sequence (weight sponsors)
+              (sha256 my_id (clock-ph gen bindings (proposal-id gen nonce bill root)) ()) 0) closed approved
+            (if (= (f bill) "UPGRADE") 1 reserved)))
+        (ballots gen bindings (proposal-id gen nonce bill root) root closed sponsors))))
+  (defun anchor (self gen registry id logic version compat
+                  (bindings nonce (proposal bill root ledger_sequence tally clock opened) closed approved reserved) (born))
+    (assert (not opened) (is-uint64 born) (> born 0)
+      (list
+        (list SEND_MESSAGE 18 (sha256tree (list "ANCHOR_OPENING" gen proposal born))
+          (clock-ph gen bindings proposal))
+        (list RECEIVE_MESSAGE 58 (sha256tree (list "OPENED_AT" gen proposal born)) clock)
+        (recreate self gen registry id logic version compat bindings nonce
+          (list proposal bill root ledger_sequence tally clock born) closed approved reserved))))
+  (defun vote (self gen registry id logic version compat
+                (bindings nonce (proposal bill root ledger_sequence tally clock opened) closed approved reserved) votes)
+    (assert (> opened 0) votes (has-no-duplicate-firsts votes ())
+      (not (> (+ tally (weight votes)) (nth 1 root)))
+      (merge-lists
+        (list (list ASSERT_SECONDS_ABSOLUTE opened) (list ASSERT_BEFORE_SECONDS_ABSOLUTE (+ opened 3600))
+          (recreate self gen registry id logic version compat bindings nonce
+            (list proposal bill root ledger_sequence (+ tally (weight votes)) clock opened) closed approved reserved))
+        (ballots gen bindings proposal root closed votes))))
+  (defun dispatch (gen registry bindings bill target_inner)
+    (if (= (f bill) "UPGRADE")
+      (list (list SEND_MESSAGE 18
+        (sha256tree (list "RATIFY_CODE_UPGRADE" gen (nth 1 bill) (nth 2 bill)))
+        (calculate_full_puzzle_hash registry target_inner)))
+      (if (= (f bill) "REOPEN")
+        (list (list SEND_MESSAGE 18
+          (sha256tree (list "RATIFY_REOPEN" gen (nth 1 bill) (nth 2 bill)))
+          (calculate_full_puzzle_hash registry target_inner)))
+        (if (= (f bill) "MINT_TEST_ONLY")
+          (list (list SEND_MESSAGE 18 (sha256tree (list "MINT_TEST_ONLY" gen bill))
+            (calculate_full_puzzle_hash (nth 6 bindings) target_inner)))
+          (if (any (= (f bill) "PARAMETERS") (= (f bill) "STATUTES"))
+            (list (list SEND_MESSAGE 18 (sha256tree (list
+                (if (= (f bill) "PARAMETERS") "APPLY_PARAMETERS" "APPLY_STATUTES") gen bill))
+              (calculate_full_puzzle_hash
+                (c (f (f bindings)) (c (nth 2 bill) (r (r (f bindings))))) target_inner)))
+          (if (= (f bill) "FUND_REDEMPTION")
+            (assert (= (nth 8 bill) (redemption-source-id (f bindings) bill)) (list
+              (list SEND_MESSAGE 0x10 (redemption-funding-message bill))
+              (list ASSERT_CONCURRENT_SPEND (nth 8 bill))))
+          (assert (= (f bill) "GRANT")
+            (list
+              (list SEND_MESSAGE 18 (transfer-message gen (nth 1 bill) "ALLOCATE" (nth 2 bill))
+                (sgt-full-hash (nth 4 bindings) (nth 3 bindings) 3 (nth 3 (nth 3 bindings)) ()))
+              (list RECEIVE_MESSAGE 58 (transfer-message gen (nth 1 bill) "ALLOCATE" (nth 2 bill))
+                (nth 1 bill))))))))))
+  ; Finalization closes voting and releases stakes even when a passed action
+  ; cannot execute yet. The authenticated pending action is consumed exactly
+  ; once by EXECUTE, independently of whichever proposal is currently open.
+  (defun-inline action-key (gen proposal bill)
+    (sha256tree (list "APPROVED_ACTION" gen proposal bill)))
+  (defun finalize (self gen registry id logic version compat
+                    (bindings nonce (proposal bill root ledger_sequence tally clock opened) closed approved reserved)
+                    (closed_proof approved_proof))
+    (assert (> opened 0)
+      (list (list ASSERT_SECONDS_ABSOLUTE (+ opened 3600))
+        (recreate self gen registry id logic version compat bindings nonce ()
+          (add-closed closed proposal closed_proof)
+          (if (not (> (nth 1 root) (* tally 2)))
+            (add-closed approved (action-key gen proposal bill) approved_proof) approved)
+          (if (and (= (f bill) "UPGRADE") (> (nth 1 root) (* tally 2))) 0 reserved)))))
+  (defun execute (self gen registry id logic version compat
+                   (bindings nonce active closed approved reserved)
+                   (proposal bill proof target_inner registry_inner))
+    (assert (is-size-b32 proposal) (valid-bill bill)
+      (is-closed approved (action-key gen proposal bill) proof)
+      (merge-lists
+        (list
+          (recreate self gen registry id logic version compat bindings nonce active closed
+            (closed-root (concat 0x00 (action-key gen proposal bill)) (sha256 1) proof 256)
+            (if (= (f bill) "UPGRADE") 0 reserved)))
+        (merge-lists
+          (if (any (= (f bill) "MINT_TEST_ONLY") (= (f bill) "FUND_REDEMPTION"))
+            (list (list RECEIVE_MESSAGE 18
+              (sha256tree (list "ALLOW_NEW" gen
+                (if (= (f bill) "MINT_TEST_ONLY") 2 8) (action-key gen proposal bill) bill))
+              (calculate_full_puzzle_hash registry registry_inner))) ())
+          (dispatch gen registry bindings bill target_inner)))))
+  (defun unlock-one (gen bindings closed (coin_id (ph amount kind owner proposal) proof))
+    (assert (= kind 2) (is-size-b32 proposal) (is-closed closed proposal proof)
+      (= ph (sgt-full-hash (nth 4 bindings) (nth 3 bindings) kind owner proposal))
+      (list
+        (list SEND_MESSAGE 18 (transfer-message gen coin_id "UNLOCK" (list (list 1 owner () amount))) ph)
+        (list RECEIVE_MESSAGE 58 (transfer-message gen coin_id "UNLOCK" (list (list 1 owner () amount))) coin_id))))
+  (defun unlocks (gen bindings closed claims)
+    (if claims (merge-lists (unlock-one gen bindings closed (f claims)) (unlocks gen bindings closed (r claims))) ()))
+  (defun upgrade (self gen registry id logic version compat state
+                  (registry_inner plan new_logic new_version new_compat))
+    (assert (not (nth 2 state)) ; Affected open proposals must finish first.
+      (is-size-b32 plan) (is-size-b32 new_logic) (not (= logic new_logic))
+      (= new_version (+ version 1)) (= new_compat compat)
+      (list
+        (list RECEIVE_MESSAGE 18
+          (sha256tree (list "COMPONENT_UPGRADE" gen plan id logic new_logic new_version compat))
+          (calculate_full_puzzle_hash registry registry_inner))
+        (list SEND_MESSAGE 18 (sha256tree (list "COMPONENT_READY" gen plan id (sha256tree state)))
+          (calculate_full_puzzle_hash registry registry_inner))
+        (list SEND_MESSAGE 18 (sha256tree (list "ACTIVATION_CLEARANCE" gen plan))
+          (calculate_full_puzzle_hash registry registry_inner))
+        (list CREATE_COIN (next-ph self gen registry id new_logic new_version compat state) 1))))
+  (defun activation-clearance (self gen registry id logic version compat state (registry_inner plan))
+    (assert (not (nth 2 state)) (is-size-b32 registry_inner) (is-size-b32 plan)
+      (list
+        (list CREATE_COIN (next-ph self gen registry id logic version compat state) 1)
+        (list SEND_MESSAGE 18 (sha256tree (list "ACTIVATION_CLEARANCE" gen plan))
+          (calculate_full_puzzle_hash registry registry_inner)))))
+  (defun read-state (self gen registry id logic version compat state (program request))
+    (assert (= (sha256tree program) logic) (= (a program (list request)) 1)
+      (list (list CREATE_COIN (next-ph self gen registry id logic version compat state) 1)
+        (list REMARK "SOLSLOT_GOVERNANCE_STATE" gen id version (sha256tree state)))))
+  (assert (is-size-b32 my_id) (is-size-b32 GENERATION) (is-size-b32 COMPONENT_ID)
+    (= GENERATION (f (nth 3 (f STATE))))
+    (c (list ASSERT_MY_AMOUNT 1) (c (list ASSERT_MY_COIN_ID my_id)
+      (if (= action "OPEN")
+        (open-proposal SELF GENERATION REGISTRY_STRUCT COMPONENT_ID LOGIC_HASH VERSION COMPAT my_id STATE args)
+        (if (= action "ANCHOR")
+          (anchor SELF GENERATION REGISTRY_STRUCT COMPONENT_ID LOGIC_HASH VERSION COMPAT STATE args)
+          (if (= action "VOTE")
+            (vote SELF GENERATION REGISTRY_STRUCT COMPONENT_ID LOGIC_HASH VERSION COMPAT STATE args)
+            (if (= action "FINALIZE")
+              (finalize SELF GENERATION REGISTRY_STRUCT COMPONENT_ID LOGIC_HASH VERSION COMPAT STATE args)
+              (if (= action "EXECUTE")
+                (execute SELF GENERATION REGISTRY_STRUCT COMPONENT_ID LOGIC_HASH VERSION COMPAT STATE args)
+              (if (= action "UNLOCK")
+                (c (list CREATE_COIN (next-ph SELF GENERATION REGISTRY_STRUCT COMPONENT_ID LOGIC_HASH VERSION COMPAT STATE) 1)
+                  (unlocks GENERATION (f STATE) (nth 3 STATE) args))
+                (if (= action "UPGRADE")
+                  (upgrade SELF GENERATION REGISTRY_STRUCT COMPONENT_ID LOGIC_HASH VERSION COMPAT STATE args)
+                  (if (= action "READ")
+                    (read-state SELF GENERATION REGISTRY_STRUCT COMPONENT_ID LOGIC_HASH VERSION COMPAT STATE args)
+                    (if (= action "ACTIVATION_CLEARANCE")
+                      (activation-clearance SELF GENERATION REGISTRY_STRUCT COMPONENT_ID LOGIC_HASH VERSION COMPAT STATE args)
+                      (x))))))))))))))

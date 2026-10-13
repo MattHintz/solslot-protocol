@@ -1,0 +1,19 @@
+; Exact delegated action signed by the existing owner-plus-one authority.
+; This module never ratifies code, changes quorum or bypasses recovery.
+(mod (GENERATION TARGET KIND SUBJECT ISSUED EXPIRES)
+  (include condition_codes.clib)
+  (include utils.clib)
+  (include utility_macros.clib)
+  (assert (is-size-b32 GENERATION) (is-size-b32 TARGET)
+    (if (= KIND "PUBLICATION_APPROVAL")
+      (assert (is-size-b32 SUBJECT) (is-uint64 ISSUED) (= EXPIRES (+ ISSUED 86400))
+        (list
+          (list ASSERT_SECONDS_ABSOLUTE ISSUED)
+          (list ASSERT_BEFORE_SECONDS_ABSOLUTE EXPIRES)
+          (list SEND_MESSAGE 18
+            (sha256tree (list KIND GENERATION SUBJECT ISSUED EXPIRES)) TARGET)))
+      (assert (= KIND "PAUSE_NEW_OPERATIONS") (not ISSUED) (not EXPIRES)
+        (is-uint64 (f SUBJECT)) (is-uint64 (f (r SUBJECT)))
+        (> (f (r SUBJECT)) 0) (> 32 (f (r SUBJECT))) (not (r (r SUBJECT)))
+        (list (list SEND_MESSAGE 18
+          (sha256tree (list KIND GENERATION (f SUBJECT) (f (r SUBJECT)))) TARGET))))))

@@ -1,0 +1,13 @@
+(
+  ; Mutability is limited to the existing bounded economic parameters. Voting
+  ; supply, 50% quorum, 10k sponsorship, delays and treasury identity are not
+  ; fields in this vector and cannot be changed by a parameter bill.
+  (defun valid-parameters ((nav_age oracle_age fee protocol_fee rewards_fee reward_epoch))
+    (and (is-uint64 nav_age) (> nav_age 59) (> 2592001 nav_age)
+      (is-uint64 oracle_age) (> oracle_age 29) (> 3601 oracle_age)
+      (is-uint64 fee) (> 101 fee)
+      (is-uint64 protocol_fee) (is-uint64 rewards_fee) (= fee (+ protocol_fee rewards_fee))
+      (is-uint64 reward_epoch) (> reward_epoch 59) (> 2592001 reward_epoch)))
+  (defun-inline parameters-bill (id launcher revision old parameters)
+    (list "PARAMETERS" id launcher revision old parameters))
+)

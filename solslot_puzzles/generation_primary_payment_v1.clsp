@@ -1,0 +1,61 @@
+; One exact primary subtotal, with its mandatory fee paid once. A linked
+; primary acquisition must authenticate this full receipt atomically. This
+; component does not authorize acquisition or release of a SmartDeed itself.
+(mod (SELF BINDINGS STATUTES ASSET CAT_MOD FEE_MOD EPOCH_MOD SGT_KERNEL LEAF_MOD OWNER_MOD P2_VAULT_MOD
+      SOURCE_PH ROUTE BASE_MINOR FEE_MINOR SUBTOTAL_MINOR TOTAL PRINCIPAL_DEST TREASURY_DEST
+      my_id my_amount statutes_inner parameters)
+  (include condition_codes.clib)
+  (include utils.clib)
+  (include utility_macros.clib)
+  (include generation_parameters_v1.clib)
+  (defconstant ZERO_B32 0x0000000000000000000000000000000000000000000000000000000000000000)
+  (defun-inline ceil-div (a b) (/ (+ a (- b 1)) b))
+  (defun count (xs) (if xs (+ 1 (count (r xs))) 0))
+  (defun nth (n xs) (if n (nth (- n 1) (r xs)) (f xs)))
+  (defun-inline reward-inner (bindings statutes asset cat fee epoch kernel leaf owner vault)
+    (curry_hashes fee (sha256 1 fee) (sha256tree bindings) (sha256tree statutes)
+      (sha256 1 asset) (sha256 1 cat) (sha256 1 epoch) (sha256 1 kernel)
+      (sha256 1 leaf) (sha256 1 owner) (sha256 1 vault)))
+  (defun payouts (principal_dest treasury_dest rewards_dest principal protocol rewards)
+    (c (list CREATE_COIN principal_dest principal)
+      (if protocol (c (list CREATE_COIN treasury_dest protocol)
+        (if rewards (list (list CREATE_COIN rewards_dest rewards)) ()))
+        (if rewards (list (list CREATE_COIN rewards_dest rewards)) ()))))
+  (defun main (gen statutes asset source route base fee subtotal total principal_dest treasury_dest rewards_dest my_id my_amount statutes_inner parameters)
+    (assert (is-size-b32 my_id) (= my_amount total)
+      (is-uint64 base) (> base 0) (is-uint64 fee)
+      (= fee (ceil-div (* base 100) 10000))
+      (is-uint64 subtotal) (= subtotal (+ base fee))
+      (is-uint64 total) (> total 0) (> total (ceil-div (* total fee) subtotal))
+      (= (count parameters) 6) (valid-parameters parameters) (> (nth 2 parameters) 0) (is-size-b32 statutes_inner)
+      (merge-lists
+        (list
+          (list ASSERT_MY_COIN_ID my_id) (list ASSERT_MY_AMOUNT total)
+          (list SEND_MESSAGE 18 (sha256tree (list "REWARD_PARAMETERS" gen route))
+            (calculate_full_puzzle_hash statutes statutes_inner))
+          (list RECEIVE_MESSAGE 18 (sha256tree (list "REWARD_EVIDENCE" gen route parameters))
+            (calculate_full_puzzle_hash statutes statutes_inner))
+          (list RECEIVE_MESSAGE 18
+            (sha256tree (list "PRIMARY_FEE_ROUTE_V1" gen route my_id asset total
+              base fee subtotal (sha256tree parameters) principal_dest treasury_dest rewards_dest)) source)
+          (list SEND_MESSAGE 18
+            (sha256tree (list "PRIMARY_FEE_PAID_V1" gen route my_id asset total
+              (- total (ceil-div (* total fee) subtotal))
+              (ceil-div (* (ceil-div (* total fee) subtotal) (nth 3 parameters)) (nth 2 parameters))
+              (- (ceil-div (* total fee) subtotal) (ceil-div (* (ceil-div (* total fee) subtotal) (nth 3 parameters)) (nth 2 parameters)))
+              (sha256tree parameters)
+              principal_dest treasury_dest rewards_dest)) source))
+        (payouts principal_dest treasury_dest rewards_dest
+          (- total (ceil-div (* total fee) subtotal))
+          (ceil-div (* (ceil-div (* total fee) subtotal) (nth 3 parameters)) (nth 2 parameters))
+          (- (ceil-div (* total fee) subtotal) (ceil-div (* (ceil-div (* total fee) subtotal) (nth 3 parameters)) (nth 2 parameters)))))))
+  (assert (= (count BINDINGS) 6) (is-size-b32 SELF) (is-size-b32 (f BINDINGS)) (not (= (f BINDINGS) ZERO_B32))
+    (is-size-b32 ASSET) (is-size-b32 CAT_MOD) (is-size-b32 FEE_MOD) (is-size-b32 EPOCH_MOD)
+    (is-size-b32 SGT_KERNEL) (is-size-b32 LEAF_MOD) (is-size-b32 OWNER_MOD) (is-size-b32 P2_VAULT_MOD)
+    (is-size-b32 SOURCE_PH) (not (= SOURCE_PH ZERO_B32)) (is-size-b32 ROUTE) (not (= ROUTE ZERO_B32))
+    (is-size-b32 PRINCIPAL_DEST) (not (= PRINCIPAL_DEST ZERO_B32))
+    (is-size-b32 TREASURY_DEST) (not (= TREASURY_DEST ZERO_B32))
+    (main (f BINDINGS) STATUTES ASSET SOURCE_PH ROUTE BASE_MINOR FEE_MINOR SUBTOTAL_MINOR TOTAL PRINCIPAL_DEST TREASURY_DEST
+      (reward-inner BINDINGS STATUTES ASSET CAT_MOD FEE_MOD EPOCH_MOD SGT_KERNEL LEAF_MOD OWNER_MOD P2_VAULT_MOD)
+      my_id my_amount statutes_inner parameters))
+)

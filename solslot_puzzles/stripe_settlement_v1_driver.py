@@ -152,12 +152,18 @@ class PrimaryMintTermsV3:
     validator_pubkeys: tuple[bytes, bytes, bytes]
     provider_id: bytes32 = PRIMARY_PURCHASE_PROVIDER_ID
     inventory_version: int = 1
+    generation_batch_bindings: bytes | None = None
 
     def __post_init__(self) -> None:
-        if type(self.inventory_version) is not int or self.inventory_version not in (1, 2, 3):
+        if type(self.inventory_version) is not int or self.inventory_version not in (1, 2, 3, 4):
             raise PaymentArtifactError("unsupported inventory puzzle version")
-        if self.inventory_version == 3 and self.network != "testnet11":
+        if self.inventory_version in (3, 4) and self.network != "testnet11":
             raise PaymentArtifactError("alpha test-token inventory requires Chia Testnet11")
+        if self.inventory_version == 4:
+            if (not isinstance(self.generation_batch_bindings, bytes)
+                    or not 0 < len(self.generation_batch_bindings) <= 4096):
+                raise PaymentArtifactError('generation inventory requires its immutable batch bindings')
+            Program.from_bytes(self.generation_batch_bindings)
         if not self.network or len(self.network.encode("ascii")) > 32:
             raise PaymentArtifactError("network must be 1-32 ASCII bytes")
         for name in (
@@ -579,6 +585,9 @@ def _mint_immutable_args(terms: PrimaryMintTermsV3) -> tuple[object, ...]:
 
 
 def make_inventory_available_inner(terms: PrimaryMintTermsV3) -> Program:
+    if terms.inventory_version == 4:
+        from .generation_primary_inventory import inventory_inner
+        return inventory_inner(terms, Program.from_bytes(terms.generation_batch_bindings))
     mod = (mint_offer_inventory_available_v1_mod() if terms.inventory_version == 1 else
            Program.from_bytes(_INVENTORY_AVAILABLE_V2_MOD_BYTES if terms.inventory_version == 2
                               else _INVENTORY_AVAILABLE_V3_MOD_BYTES))
@@ -595,7 +604,7 @@ def make_mint_offer_v5_inner(
     reservation: InventoryReservationV1,
 ) -> Program:
     assert_artifact_matches_terms(reservation.artifact, terms)
-    mod = Program.from_bytes(_MINT_OFFER_V6_MOD_BYTES) if terms.inventory_version == 3 else mint_offer_delegate_v5_mod()
+    mod = Program.from_bytes(_MINT_OFFER_V6_MOD_BYTES) if terms.inventory_version in (3, 4) else mint_offer_delegate_v5_mod()
     artifact = reservation.artifact
     return mod.curry(
         bytes32(mod.get_tree_hash()),
@@ -615,7 +624,7 @@ def assert_artifact_matches_terms(
     artifact: PurchaseArtifactV3,
     terms: PrimaryMintTermsV3,
 ) -> None:
-    if terms.inventory_version == 3 and artifact.rail == PaymentRail.EVM_TEST_USD:
+    if terms.inventory_version in (3, 4) and artifact.rail == PaymentRail.EVM_TEST_USD:
         from .alpha_payment_profile import is_alpha_payment_tuple
         if not is_alpha_payment_tuple(artifact.network, artifact.rail_chain_id,
                                       artifact.rail_asset_id, artifact.rail_asset_decimals):
@@ -665,10 +674,10 @@ def inventory_terms_for_puzzle_hash(
     singleton lineage. This never migrates a coin or accepts a custom module.
     """
     _smart_deed_driver(terms, deed_singleton_struct)
-    for version in ((1, 2, 3) if terms.network == "testnet11" else (1, 2)):
+    for version in ((1, 2, 3, 4) if terms.network == "testnet11" and terms.generation_batch_bindings else (1, 2, 3) if terms.network == "testnet11" else (1, 2)):
         candidate = replace(terms, inventory_version=version)
         # A reservation from another network cannot be reinterpreted as V3.
-        if reservation is not None and version == 3 and reservation.artifact.rail == PaymentRail.EVM_TEST_USD:
+        if reservation is not None and version in (3, 4) and reservation.artifact.rail == PaymentRail.EVM_TEST_USD:
             from .alpha_payment_profile import is_alpha_payment_tuple
             a = reservation.artifact
             if not is_alpha_payment_tuple(a.network, a.rail_chain_id, a.rail_asset_id, a.rail_asset_decimals):

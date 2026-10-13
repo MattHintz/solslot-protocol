@@ -1,0 +1,136 @@
+; Stable canonical economic authority. State is (my_struct governance_struct
+; pool_struct permanent_rules revision parameters collections oracles routes liquidity).
+; Voting, fees, identity and supply bounds remain outside replaceable policy.
+(mod (SELF GENERATION REGISTRY_STRUCT COMPONENT_ID LOGIC_HASH VERSION COMPAT STATE action args)
+  (include condition_codes.clib)
+  (include utils.clib)
+  (include utility_macros.clib)
+  (include generation_parameters_v1.clib)
+  (include generation_statutes_records_v1.clib)
+  (defun-inline next-ph (self gen registry id logic version compat state)
+    (curry_hashes self (sha256 1 self) (sha256 1 gen) (sha256tree registry)
+      (sha256 1 id) (sha256 1 logic) (sha256 1 version) (sha256 1 compat) (sha256tree state)))
+  (defun replace-at (index replacement values)
+    (if index (c (f values) (replace-at (- index 1) replacement (r values))) (c replacement (r values))))
+  (defun-inline record-index (kind)
+    (if (= kind "COLLECTION") 6 (if (= kind "ORACLE") 7
+      (if (= kind "ROUTE") 8 (if (= kind "LIQUIDITY") 9 (x))))))
+  (defun update-parameters (self gen registry id logic version compat state
+      (gov_inner revision old_hash next program))
+    (assert (is-size-b32 gov_inner) (= revision (nth-value 4 state))
+      (= old_hash (sha256tree (nth-value 5 state))) (= (count-list next) 6)
+      (valid-parameters next) (not (= old_hash (sha256tree next)))
+      (= (sha256tree program) logic)
+      (= (sha256tree (a program (list "PARAMETERS" next))) (sha256tree next))
+      (list
+        (list RECEIVE_MESSAGE 18
+          (sha256tree (list "APPLY_PARAMETERS" gen
+            (parameters-bill id (f (r (f state))) revision old_hash next)))
+          (calculate_full_puzzle_hash (nth-value 1 state) gov_inner))
+        (list CREATE_COIN (next-ph self gen registry id logic version compat
+          (replace-at 4 (+ revision 1) (replace-at 5 next state))) 1))))
+  (defun mutate-record (self gen registry id logic version compat state
+      (gov_inner revision kind key replacement records program))
+    (assert (is-size-b32 gov_inner) (= revision (nth-value 4 state))
+      (is-size-b32 key) (= key (f replacement)) (valid-statute kind replacement)
+      (valid-statutes kind records () 128)
+      (valid-statute-successor kind (find-statute key records) replacement)
+      (= (nth-value (record-index kind) state) (sha256tree records))
+      (not (= (sha256tree records) (sha256tree (upsert-statute key replacement records))))
+      (valid-statutes kind (upsert-statute key replacement records) () 128)
+      (= (sha256tree program) logic)
+      (= (sha256tree (a program (list "STATUTES" (list kind replacement))))
+        (sha256tree (list kind replacement)))
+      (list
+        (list RECEIVE_MESSAGE 18
+          (sha256tree (list "APPLY_STATUTES" gen
+            (statutes-bill id (f (r (f state))) revision kind key replacement
+              (sha256tree records) (sha256tree (upsert-statute key replacement records)))))
+          (calculate_full_puzzle_hash (nth-value 1 state) gov_inner))
+        (list CREATE_COIN (next-ph self gen registry id logic version compat
+          (replace-at 4 (+ revision 1)
+            (replace-at (record-index kind) (sha256tree (upsert-statute key replacement records)) state))) 1))))
+  (defun sols-evidence (self gen registry id logic version compat state
+      (consumer collection records registry_inner operation) scope bill)
+    (assert (is-size-b32 consumer) (is-size-b32 collection) (is-size-b32 operation)
+      (is-size-b32 registry_inner) (valid-statutes "COLLECTION" records () 128)
+      (= (nth-value 6 state) (sha256tree records)) (find-statute collection records)
+      (list
+        (list RECEIVE_MESSAGE 18
+          (sha256tree (list "ALLOW_NEW" gen scope operation bill))
+          (calculate_full_puzzle_hash registry registry_inner))
+        (list CREATE_COIN (next-ph self gen registry id logic version compat state) 1)
+        (list CREATE_PUZZLE_ANNOUNCEMENT
+          (concat PROTOCOL_PREFIX (sha256tree (list "SOLV" consumer collection
+            (c 3600 (c 5000 (c 10000 (nth-value 5 state))))
+            (find-statute collection records) (list 0 ())
+            (sha256tree (c 3600 (c 5000 (c 10000 (nth-value 5 state)))))
+            (nth-value 6 state) (nth-value 7 state) (nth-value 8 state) (nth-value 9 state)
+            (sha256tree ()) (+ 1 (nth-value 4 state)) (sha256tree (nth-value 3 state)))))))))
+  ; One statutes successor proves both acquisition and exchange. GET status
+  ; cannot consume this state; only an explicitly built atomic bundle can.
+  (defun primary-evidence (self gen registry id logic version compat state
+      (consumer collection records registry_inner operation source route fee asset oracles decimals round price evidence expires routes))
+    (assert (is-size-b32 source) (is-size-b32 fee) (is-size-b32 route) (is-size-b32 asset)
+      (valid-statutes "ROUTE" routes () 128) (= (nth-value 8 state) (sha256tree routes))
+      (is-size-b32 round) (is-size-b32 evidence) (is-uint64 price) (> price 0) (is-uint64 expires)
+      (if (= asset 0x0000000000000000000000000000000000000000000000000000000000000000)
+        (= decimals 12) (valid-primary-cat routes gen asset decimals))
+      (merge-lists
+        (sols-evidence self gen registry id logic version compat state
+          (list consumer collection records registry_inner operation) 12
+          (list "PRIMARY_SOLS" consumer collection route source fee))
+        (list (list ASSERT_BEFORE_SECONDS_ABSOLUTE expires)
+          (list RECEIVE_MESSAGE 18 (sha256tree (list "PRIMARY_QUOTE_REQUEST" gen route)) source)
+          (list SEND_MESSAGE 18
+            (sha256tree (list "PRIMARY_QUOTE" gen route asset decimals round price evidence expires)) source)
+          (list RECEIVE_MESSAGE 18 (sha256tree (list "REWARD_PARAMETERS" gen route)) fee)
+          (list SEND_MESSAGE 18 (sha256tree (list "REWARD_EVIDENCE" gen route (nth-value 5 state))) fee)))))
+  (defun valid-primary-cat (routes gen asset decimals)
+    (if routes
+      (if (all (= (nth-value 1 (f routes)) gen) (= (nth-value 2 (f routes)) gen)
+        (= (nth-value 3 (f routes)) asset) (= (nth-value 4 (f routes)) asset)
+        (= (nth-value 5 (f routes)) decimals) (= (nth-value 6 (f routes)) 1)) 1
+        (valid-primary-cat (r routes) gen asset decimals)) ()))
+  (defun upgrade (self gen registry id logic version compat state
+      (registry_inner plan next next_version next_compat))
+    (assert (is-size-b32 registry_inner) (is-size-b32 plan) (is-size-b32 next)
+      (not (= logic next)) (= next_version (+ version 1)) (= next_compat compat)
+      (list
+        (list RECEIVE_MESSAGE 18
+          (sha256tree (list "COMPONENT_UPGRADE" gen plan id logic next next_version compat))
+          (calculate_full_puzzle_hash registry registry_inner))
+        (list SEND_MESSAGE 18 (sha256tree (list "COMPONENT_READY" gen plan id (sha256tree state)))
+          (calculate_full_puzzle_hash registry registry_inner))
+        (list CREATE_COIN (next-ph self gen registry id next next_version compat state) 1))))
+  (defun reward-evidence (self gen registry id logic version compat state (consumer epoch))
+    (assert (is-size-b32 consumer) (is-size-b32 epoch)
+      (list
+        (list RECEIVE_MESSAGE 18 (sha256tree (list "REWARD_PARAMETERS" gen epoch)) consumer)
+        (list SEND_MESSAGE 18 (sha256tree (list "REWARD_EVIDENCE" gen epoch (nth-value 5 state))) consumer)
+        (list CREATE_COIN (next-ph self gen registry id logic version compat state) 1))))
+  (defun read-state (self gen registry id logic version compat state (program request))
+    (assert (= (sha256tree program) logic) (= (a program (list "READ" request)) 1)
+      (list (list CREATE_COIN (next-ph self gen registry id logic version compat state) 1)
+        (list REMARK "SOLSLOT_STATUTES_STATE" gen id version (sha256tree state)))))
+  (assert (is-size-b32 SELF) (is-size-b32 GENERATION) (is-size-b32 COMPONENT_ID) (is-size-b32 LOGIC_HASH)
+    (is-uint64 VERSION) (> VERSION 0) (is-uint64 COMPAT) (> COMPAT 0)
+    (= (count-list STATE) 10) (is-uint64 (nth-value 4 STATE))
+    (= (count-list (nth-value 5 STATE)) 6) (valid-parameters (nth-value 5 STATE))
+    (c (list ASSERT_MY_AMOUNT 1)
+      (if (= action "UPDATE")
+        (update-parameters SELF GENERATION REGISTRY_STRUCT COMPONENT_ID LOGIC_HASH VERSION COMPAT STATE args)
+        (if (= action "MUTATE")
+          (mutate-record SELF GENERATION REGISTRY_STRUCT COMPONENT_ID LOGIC_HASH VERSION COMPAT STATE args)
+          (if (= action "SOLS_EVIDENCE")
+            (sols-evidence SELF GENERATION REGISTRY_STRUCT COMPONENT_ID LOGIC_HASH VERSION COMPAT STATE args
+              4 (list "SOLS_EXCHANGE" (f args) (nth-value 1 args)))
+            (if (= action "UPGRADE")
+              (upgrade SELF GENERATION REGISTRY_STRUCT COMPONENT_ID LOGIC_HASH VERSION COMPAT STATE args)
+              (if (= action "READ")
+                (read-state SELF GENERATION REGISTRY_STRUCT COMPONENT_ID LOGIC_HASH VERSION COMPAT STATE args)
+                (if (= action "REWARD_EVIDENCE")
+                  (reward-evidence SELF GENERATION REGISTRY_STRUCT COMPONENT_ID LOGIC_HASH VERSION COMPAT STATE args)
+                  (if (= action "PRIMARY_EVIDENCE")
+                    (primary-evidence SELF GENERATION REGISTRY_STRUCT COMPONENT_ID LOGIC_HASH VERSION COMPAT STATE args)
+                    (x)))))))))))

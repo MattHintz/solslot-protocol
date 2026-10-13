@@ -1,0 +1,49 @@
+; Immutable issuance authority. Each collection can be minted once, with all
+; governed outputs present atomically. State = (bindings minted_root count).
+; Mint policy is replaceable only through the registry. Permanent output,
+; treasury, identity-delivery and fee constraints are enforced by this kernel.
+(mod (SELF GENERATION REGISTRY_STRUCT COMPONENT_ID LOGIC_HASH VERSION COMPAT STATE action args)
+  (include condition_codes.clib)
+  (include utils.clib)
+  (include utility_macros.clib)
+  (include generation_closed_set_v1.clib)
+  (include generation_mint_v1.clib)
+  (defun-inline next-ph (self gen registry id logic version compat state)
+    (curry_hashes self (sha256 1 self) (sha256 1 gen) (sha256tree registry)
+      (sha256 1 id) (sha256 1 logic) (sha256 1 version) (sha256 1 compat) (sha256tree state)))
+  (defun mint (self gen registry id logic version compat (bindings issued count)
+               (governance_inner edition absence_proof policy))
+    (assert (is-size-b32 governance_inner) (valid-edition gen edition)
+      (= (sha256tree policy) logic) (= (a policy (list "MINT" edition)) 1)
+      (is-uint64 (+ count (list-length (nth 10 edition))))
+      (merge-lists
+        (list
+          (list RECEIVE_MESSAGE 18 (sha256tree (list "MINT_TEST_ONLY" gen (edition-bill edition)))
+            (calculate_full_puzzle_hash (nth 1 bindings) governance_inner))
+          (list CREATE_COIN
+            (next-ph self gen registry id logic version compat
+              (list bindings (add-closed issued (nth 2 edition) absence_proof)
+                (+ count (list-length (nth 10 edition))))) 1))
+        (issuance-conditions bindings edition (nth 10 edition)
+          (next-ph self gen registry id logic version compat (list bindings issued count))))))
+  (defun upgrade (self gen registry id logic version compat state (registry_inner plan next next_version next_compat))
+    (assert (is-size-b32 registry_inner) (is-size-b32 plan) (is-size-b32 next)
+      (not (= logic next)) (= next_version (+ version 1)) (= next_compat compat)
+      (list
+        (list RECEIVE_MESSAGE 18
+          (sha256tree (list "COMPONENT_UPGRADE" gen plan id logic next next_version compat))
+          (calculate_full_puzzle_hash registry registry_inner))
+        (list SEND_MESSAGE 18 (sha256tree (list "COMPONENT_READY" gen plan id (sha256tree state)))
+          (calculate_full_puzzle_hash registry registry_inner))
+        (list CREATE_COIN (next-ph self gen registry id next next_version compat state) 1))))
+  (defun read-state (self gen registry id logic version compat state (program request))
+    (assert (= (sha256tree program) logic) (= (a program (list "READ" request)) 1)
+      (list (list CREATE_COIN (next-ph self gen registry id logic version compat state) 1)
+        (list REMARK "SOLSLOT_MINT_STATE" gen id version (sha256tree state)))))
+  (assert (is-size-b32 SELF) (is-size-b32 GENERATION) (is-size-b32 COMPONENT_ID) (is-size-b32 LOGIC_HASH)
+    (is-uint64 VERSION) (> VERSION 0) (is-uint64 COMPAT) (> COMPAT 0)
+    (is-size-b32 (nth 1 STATE)) (is-uint64 (nth 2 STATE))
+    (c (list ASSERT_MY_AMOUNT 1)
+      (if (= action "MINT") (mint SELF GENERATION REGISTRY_STRUCT COMPONENT_ID LOGIC_HASH VERSION COMPAT STATE args)
+        (if (= action "UPGRADE") (upgrade SELF GENERATION REGISTRY_STRUCT COMPONENT_ID LOGIC_HASH VERSION COMPAT STATE args)
+          (if (= action "READ") (read-state SELF GENERATION REGISTRY_STRUCT COMPONENT_ID LOGIC_HASH VERSION COMPAT STATE args) (x)))))))

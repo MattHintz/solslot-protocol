@@ -1,0 +1,49 @@
+; Permanent earned CAT reward. No expiration, pause, withdrawal or alternate
+; recipient. Vault receipts need no private ID proof or wallet signature.
+(mod (SELF GENERATION ASSET EPOCH HOLDING OWNER AMOUNT VAULT_OWNER_MOD P2_VAULT_MOD
+      action my_id vault_launcher owner_program owner_solution)
+  (include condition_codes.clib)
+  (include utils.clib)
+  (include utility_macros.clib)
+  (defconstant SINGLETON_MOD
+    0x7faa3253bfddd1e0decb0906b2dc6247bbc4cf608f58345d173adb63e8b47c9f)
+  (defconstant LAUNCHER_MOD
+    0xeff07522495060c066f66f32acc2a77e3a3e737aca8baea4d1a64ea4cdc13da9)
+  (defun-inline vault-struct (id) (c SINGLETON_MOD (c id LAUNCHER_MOD)))
+  (defun-inline custody-owner (gen id)
+    (curry_hashes VAULT_OWNER_MOD (sha256 1 gen) (sha256tree (vault-struct id))))
+  (defun-inline payment-vault (id)
+    (curry_hashes P2_VAULT_MOD (sha256 1 SINGLETON_MOD) (sha256 1 id) (sha256 1 LAUNCHER_MOD)))
+  (defun has-authorization (conditions message)
+    (if conditions
+      (if (= (sha256tree (f conditions)) (sha256tree (list REMARK "REWARD_AUTHORIZE" message))) 1
+        (has-authorization (r conditions) message)) 0))
+  (defun safe-authorization (conditions)
+    (if conditions
+      ; An ownership reveal may enforce signatures and assertions, but cannot
+      ; add outputs, fees, mint conditions or arbitrary message authority.
+      (assert (or (= (f (f conditions)) REMARK)
+        (and (gte (f (f conditions)) 43) (gte 50 (f (f conditions))))
+        (in (f (f conditions)) (list ASSERT_MY_COIN_ID ASSERT_MY_PARENT_ID
+          ASSERT_MY_PUZZLEHASH ASSERT_MY_AMOUNT ASSERT_PUZZLE_ANNOUNCEMENT ASSERT_COIN_ANNOUNCEMENT
+          ASSERT_SECONDS_ABSOLUTE ASSERT_BEFORE_SECONDS_ABSOLUTE)))
+        (c (f conditions) (safe-authorization (r conditions)))) ()))
+  (defun owner-claim (owner program solution message amount gen epoch holding)
+    (assert (= (sha256tree program) owner)
+      (has-authorization (a program solution) message)
+      (c (list CREATE_COIN owner amount (list gen epoch holding))
+        (safe-authorization (a program solution)))))
+  (assert (is-size-b32 SELF) (is-size-b32 GENERATION) (is-size-b32 ASSET)
+    (is-size-b32 EPOCH) (is-size-b32 HOLDING) (is-size-b32 OWNER)
+    (is-uint64 AMOUNT) (> AMOUNT 0) (is-size-b32 my_id)
+    (c (list ASSERT_MY_COIN_ID my_id) (c (list ASSERT_MY_AMOUNT AMOUNT)
+      (if (= action "PAY_VAULT")
+        (assert (is-size-b32 vault_launcher) (not owner_program) (not owner_solution)
+          (= OWNER (custody-owner GENERATION vault_launcher))
+          (list (list CREATE_COIN (payment-vault vault_launcher) AMOUNT (list GENERATION EPOCH HOLDING))))
+        (if (= action "PAY_OWNER")
+          (assert (not vault_launcher)
+            (owner-claim OWNER owner_program owner_solution
+              (sha256tree (list "SGT_REWARD_CLAIM_V1" GENERATION ASSET EPOCH HOLDING my_id OWNER AMOUNT))
+              AMOUNT GENERATION EPOCH HOLDING))
+          (x)))))))

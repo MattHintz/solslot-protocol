@@ -1,0 +1,57 @@
+(
+  (defconstant ZERO_B32
+    0x0000000000000000000000000000000000000000000000000000000000000000)
+  ; Reuse the permanent claim leaf; pin the corrected treasury candidate.
+  ; These hashes are checked against the original modules in native tests.
+  ; A bill selects an exact funded input, never arbitrary target logic.
+  (defconstant REDEMPTION_TREASURY_MOD
+    0xdf97cfa290aa092f6b2d725ff5fb4c883e9d2b5201043a25af925d9bd4d723a9)
+  (defconstant REDEMPTION_LEAF_MOD
+    0x78a759362ae12e73aee1986043fb6e8e0df21ed6e104ed0dc0bd2831c10816dc)
+  (defconstant REDEMPTION_CAT_MOD
+    0x37bef360ee858133b69d595a906dc45d01af50379dad515eb9518abb7c1d2a7a)
+  (defconstant REDEMPTION_OFFER_MOD
+    0xcfbfdeed5c4ca2de3d0bf520b9cb4bb7743a359bd2e6a188d19ce7dffc21d3e7)
+  (defconstant REDEMPTION_SINGLETON_MOD
+    0x7faa3253bfddd1e0decb0906b2dc6247bbc4cf608f58345d173adb63e8b47c9f)
+
+  ; bill: (FUND_REDEMPTION parent collection settlement asset amount
+  ;        ((deed commitment share payment) ...) deed_launcher_puzzle_hash coin_id)
+  (defun-inline redemption-treasury-ph (gov bill)
+    (curry_hashes REDEMPTION_CAT_MOD
+      (sha256 1 REDEMPTION_CAT_MOD) (sha256 1 (nth 4 bill))
+      (curry_hashes REDEMPTION_TREASURY_MOD
+        (sha256 1 REDEMPTION_TREASURY_MOD) (sha256tree gov)
+        (sha256 1 REDEMPTION_CAT_MOD) (sha256 1 (nth 4 bill))
+        (sha256 1 REDEMPTION_OFFER_MOD) (sha256 1 REDEMPTION_LEAF_MOD)
+        (sha256 1 REDEMPTION_SINGLETON_MOD) (sha256 1 (nth 7 bill)))))
+  (defun-inline redemption-source-id (gov bill)
+    (sha256 (nth 1 bill) (redemption-treasury-ph gov bill) (nth 5 bill)))
+  (defun-inline redemption-funding-message (bill)
+    (concat PROTOCOL_PREFIX
+      (sha256tree (list "RDF1" (nth 2 bill) (nth 3 bill) (nth 4 bill)
+        (nth 5 bill) (list-length (nth 6 bill)) (sha256tree (nth 6 bill))))))
+  (defun redemption-rows (rows previous shares payments commitments)
+    (if rows
+      (assert (= (list-length (f rows)) 4)
+        (is-size-b32 (nth 0 (f rows))) (>s (nth 0 (f rows)) previous)
+        (is-size-b32 (nth 1 (f rows))) (not (= (nth 1 (f rows)) ZERO_B32))
+        (not (in (nth 1 (f rows)) commitments))
+        (is-uint64 (nth 2 (f rows))) (> (nth 2 (f rows)) 0)
+        (is-uint64 (nth 3 (f rows))) (> (nth 3 (f rows)) 0)
+        (redemption-rows (r rows) (nth 0 (f rows))
+          (+ shares (nth 2 (f rows))) (+ payments (nth 3 (f rows))) (c (nth 1 (f rows)) commitments)))
+      (list shares payments)))
+  (defun valid-redemption (bill)
+    (assert (= (list-length bill) 9)
+      (is-size-b32 (nth 1 bill)) (not (= (nth 1 bill) ZERO_B32))
+      (is-size-b32 (nth 2 bill)) (not (= (nth 2 bill) ZERO_B32))
+      (is-size-b32 (nth 3 bill)) (not (= (nth 3 bill) ZERO_B32))
+      (is-size-b32 (nth 4 bill)) (not (= (nth 4 bill) ZERO_B32))
+      (is-uint64 (nth 5 bill)) (> (nth 5 bill) 0)
+      (> (list-length (nth 6 bill)) 0) (not (> (list-length (nth 6 bill)) 100))
+      (is-size-b32 (nth 7 bill)) (not (= (nth 7 bill) ZERO_B32))
+      (is-size-b32 (nth 8 bill)) (not (= (nth 8 bill) ZERO_B32))
+      (= (sha256tree (redemption-rows (nth 6 bill) ZERO_B32 0 0 ()))
+        (sha256tree (list 1000000 (nth 5 bill)))) 1))
+)

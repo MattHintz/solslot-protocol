@@ -1,0 +1,2 @@
+; Initial extension intentionally does not support PROVE_STATE.
+(mod (request) (if (= request "VERSION") 1 (x)))

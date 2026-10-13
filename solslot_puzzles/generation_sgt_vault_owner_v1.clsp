@@ -1,0 +1,23 @@
+; Stable recipient authority for a vault-owned new-generation SGT holding.
+; The vault's current inner puzzle can change through its own checked policy;
+; neither the API nor this adapter can substitute its singleton launcher.
+(mod (GENERATION VAULT_STRUCT
+      vault_inner vault_coin_id sgt_coin_id action outputs expires)
+  (include condition_codes.clib)
+  (include utils.clib)
+  (include utility_macros.clib)
+  (defun-inline digest (generation coin action outputs)
+    (sha256tree (list "SGT_TRANSITION_V1" generation coin action outputs)))
+  (assert (is-size-b32 GENERATION) (is-size-b32 vault_inner)
+    (is-size-b32 vault_coin_id) (is-size-b32 sgt_coin_id)
+    (not (= vault_coin_id sgt_coin_id))
+    (any (= action "TRANSFER") (= action "LOCK"))
+    (is-uint64 expires) (> expires 0)
+    (list
+      (list REMARK "SGT_AUTHORIZE" (digest GENERATION sgt_coin_id action outputs))
+      (list ASSERT_MY_COIN_ID sgt_coin_id)
+      (list ASSERT_BEFORE_SECONDS_ABSOLUTE expires)
+      (list ASSERT_PUZZLE_ANNOUNCEMENT
+        (sha256 (calculate_full_puzzle_hash VAULT_STRUCT vault_inner)
+          (sha256tree (list "SGT_VAULT_AUTH_V1" GENERATION vault_coin_id sgt_coin_id
+            (digest GENERATION sgt_coin_id action outputs) expires)))))))

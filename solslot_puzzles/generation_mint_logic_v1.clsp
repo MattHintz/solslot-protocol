@@ -1,0 +1,5 @@
+; Initial policy. Kernel independently enforces every mint authorization and
+; immutable output. Policy cannot return conditions or write state.
+(mod (action value)
+  (if (= action "MINT") 1
+    (if (= action "READ") (if (= value "VERSION") 1 (x)) (x))))

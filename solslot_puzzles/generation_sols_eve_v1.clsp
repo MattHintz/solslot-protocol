@@ -1,0 +1,14 @@
+; Exact one-mojo Sols anchor. The permanent pool authorizes this one-use eve,
+; and this eve can create only its unchanged permanent reserve destination.
+(mod (GENERATION POOL_STRUCT RESERVE_INNER tail pool_inner pool_coin my_id)
+  (include condition_codes.clib)
+  (include utils.clib)
+  (include utility_macros.clib)
+  (assert (is-size-b32 GENERATION) (is-size-b32 RESERVE_INNER)
+    (is-size-b32 pool_inner) (is-size-b32 pool_coin) (is-size-b32 my_id)
+    (list (list ASSERT_MY_COIN_ID my_id) (list ASSERT_MY_AMOUNT 1)
+      (list CREATE_COIN RESERVE_INNER 1)
+      (list CREATE_COIN () -113 tail
+        (list (calculate_full_puzzle_hash POOL_STRUCT pool_inner) pool_inner pool_coin my_id 1 1))
+      (list CREATE_COIN_ANNOUNCEMENT
+        (sha256tree (list "SOLS_GENESIS_ANCHOR" GENERATION pool_coin my_id RESERVE_INNER))))))

@@ -1,0 +1,18 @@
+(
+  ; Bindings: (generation ledger_struct governance_struct reserve_owner cat_mod tail).
+  (defun-inline sgt-inner-hash (self bindings kind owner lock)
+    (curry_hashes self (sha256 1 self) (sha256tree bindings)
+      (sha256 1 kind) (sha256 1 owner) (sha256 1 lock)))
+  (defun-inline sgt-full-hash (self bindings kind owner lock)
+    (curry_hashes (f (r (r (r (r bindings)))))
+      (sha256 1 (f (r (r (r (r bindings))))))
+      (sha256 1 (f (r (r (r (r (r bindings)))))))
+      (sgt-inner-hash self bindings kind owner lock)))
+  (defun-inline valid-descriptor (bindings kind owner lock amount)
+    (and (is-uint64 kind) (> kind 0) (> 5 kind)
+      (is-size-b32 owner) (is-uint64 amount) (> amount 0) (not (> amount 1000000))
+      (if (= kind 2) (is-size-b32 lock) (not lock))
+      (if (= kind 3) (= owner (f (r (r (r bindings))))) 1)))
+  (defun-inline transfer-message (generation my_id action outputs)
+    (sha256tree (list "SGT_TRANSITION_V1" generation my_id action outputs)))
+)

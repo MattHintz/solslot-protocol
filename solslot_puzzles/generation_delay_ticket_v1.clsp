@@ -1,0 +1,21 @@
+; A one-use clock created in the ratification spend, not an API timestamp.
+; The registry commits to this exact child coin ID. A lookalike older ticket
+; cannot satisfy activation, and the ticket cannot be consumed independently.
+(mod (GENERATION REGISTRY_STRUCT COMMITMENT DELAY registry_inner_hash)
+  (include condition_codes.clib)
+  (include utils.clib)
+  (include utility_macros.clib)
+  (assert
+    (is-size-b32 GENERATION)
+    (is-size-b32 COMMITMENT)
+    (= DELAY 86400)
+    (is-size-b32 registry_inner_hash)
+    (list
+      (list ASSERT_MY_AMOUNT 0)
+      (list ASSERT_SECONDS_RELATIVE DELAY)
+      (list RECEIVE_MESSAGE 18
+        (sha256tree (list "ACTIVATE" GENERATION COMMITMENT))
+        (calculate_full_puzzle_hash REGISTRY_STRUCT registry_inner_hash))
+      (list SEND_MESSAGE 58
+        (sha256tree (list "MATURED" GENERATION COMMITMENT))
+        (calculate_full_puzzle_hash REGISTRY_STRUCT registry_inner_hash)))))

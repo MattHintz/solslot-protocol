@@ -10,7 +10,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
-from typing import Sequence
+from typing import Sequence,TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from solslot_puzzles.generation_statutes_settlement import GenerationStatutesSource
 
 from chia.consensus.default_constants import DEFAULT_CONSTANTS
 from chia.types.blockchain_format.coin import Coin
@@ -48,6 +51,7 @@ from chia_rs.sized_bytes import bytes32
 from chia_rs.sized_ints import uint64
 
 from solslot_puzzles import load_puzzle
+from solslot_puzzles.generation_pool import generation_pool_solution as _generation_pool_solution
 from solslot_puzzles.pool_v4_driver import (
     PoolV4Config,
     deed_to_sols_inner_solution,
@@ -380,9 +384,12 @@ def _assert_driver_config(config: PoolV4Config) -> None:
         "CAT": bytes32(CAT_MOD.get_tree_hash()),
         "offer": OFFER_MOD_HASH,
         "p2_vault": bytes32(load_puzzle("p2_vault.clsp").get_tree_hash()),
-        "vault": vault_v2_inner_mod_hash(),
+        "vault": load_puzzle('vault_singleton_inner_generation_v1.clsp').get_tree_hash()
+                 if config.pool_puzzle_version == 6 else vault_v2_inner_mod_hash(),
         "p2_pool": bytes32(load_puzzle("p2_pool_v2.clsp").get_tree_hash()),
-        "statutes": protocol_statutes_inner_mod_hash(),
+        "statutes": (load_puzzle('generation_statutes_v1.clsp').get_tree_hash()
+                     if config.pool_puzzle_version==6 and config.statutes_inner_mod_hash==load_puzzle('generation_statutes_v1.clsp').get_tree_hash()
+                     else protocol_statutes_inner_mod_hash()),
     }
     actual = {
         "CAT": config.cat_mod_hash,
@@ -609,6 +616,7 @@ def prepare_vault_sols_buyer_offer(
         quote_expires_at=receipt.quote_expires_at,
         pool_state=receipt.current_state,
         pool_inventory=receipt.inventory,
+        config=config,
     )
     bundle = unsigned_spend_bundle_for_spendable_cats(
         CAT_MOD,
@@ -743,6 +751,7 @@ def _assemble_sols_to_deed_protocol(
     custody_coin: Coin,
     custody_lineage_proof: LineageProof,
     quote_expires_at: int,
+    statutes_source: "GenerationStatutesSource | None" = None,
 ) -> _SolsSwapComponents:
     """Build the protocol half from live singleton coins and reviewed state."""
     _assert_driver_config(config)
@@ -766,40 +775,52 @@ def _assemble_sols_to_deed_protocol(
         vault_launcher_id=vault_launcher_id,
         vault_coin_id=vault_coin.name(),
     )
-    statutes_inner = make_statutes_inner(
-        singleton_struct=config.statutes_singleton_struct,
-        governance_singleton_struct=config.governance_singleton_struct,
-        permanent_rules=config.permanent_rules,
-        state=statutes_state,
-    )
-    statutes_full = puzzle_for_singleton(
-        statutes_launcher_id,
-        statutes_inner,
-    )
-    if statutes_coin.puzzle_hash != statutes_full.get_tree_hash():
-        raise SolsSwapOfferError(
-            "statutes coin does not match the governed statutes state"
+    registry_spends = ()
+    if config.statutes_inner_mod_hash == load_puzzle('generation_statutes_v1.clsp').get_tree_hash():
+        from solslot_puzzles.generation_statutes_settlement import GenerationStatutesSource
+        if not isinstance(statutes_source,GenerationStatutesSource):
+            raise SolsSwapOfferError('canonical statutes settlement requires its current registry permission')
+        statutes_inner,statutes_spend,registry_spends=statutes_source.build(config=config,view=statutes_state,
+            parameters=parameters,collections=collections,pauses=pauses,collection=collection,pause=pause,
+            coin=statutes_coin,launcher=statutes_launcher_id,lineage=statutes_lineage_proof,
+            consumer=pool_coin.name(),operation=receipt.operation_hash)
+    else:
+        if statutes_source is not None:
+            raise SolsSwapOfferError('generation statutes cannot substitute a legacy authority')
+        statutes_inner = make_statutes_inner(
+            singleton_struct=config.statutes_singleton_struct,
+            governance_singleton_struct=config.governance_singleton_struct,
+            permanent_rules=config.permanent_rules,
+            state=statutes_state,
         )
-    evidence = build_sols_evidence_spend(
-        my_id=statutes_coin.name(),
-        my_inner_puzzle_hash=bytes32(statutes_inner.get_tree_hash()),
-        my_amount=int(statutes_coin.amount),
-        consumer_coin_id=pool_coin.name(),
-        collection_id=collection.collection_id,
-        parameters=parameters,
-        collections=collections,
-        pauses=pauses,
-        state=statutes_state,
-    )
-    statutes_spend = make_spend(
-        statutes_coin,
-        statutes_full,
-        solution_for_singleton(
-            statutes_lineage_proof,
-            uint64(statutes_coin.amount),
-            evidence.inner_solution,
-        ),
-    )
+        statutes_full = puzzle_for_singleton(
+            statutes_launcher_id,
+            statutes_inner,
+        )
+        if statutes_coin.puzzle_hash != statutes_full.get_tree_hash():
+            raise SolsSwapOfferError(
+                "statutes coin does not match the governed statutes state"
+            )
+        evidence = build_sols_evidence_spend(
+            my_id=statutes_coin.name(),
+            my_inner_puzzle_hash=bytes32(statutes_inner.get_tree_hash()),
+            my_amount=int(statutes_coin.amount),
+            consumer_coin_id=pool_coin.name(),
+            collection_id=collection.collection_id,
+            parameters=parameters,
+            collections=collections,
+            pauses=pauses,
+            state=statutes_state,
+        )
+        statutes_spend = make_spend(
+            statutes_coin,
+            statutes_full,
+            solution_for_singleton(
+                statutes_lineage_proof,
+                uint64(statutes_coin.amount),
+                evidence.inner_solution,
+            ),
+        )
 
     vault_spend = build_vault_sols_swap_spend(
         vault_coin=vault_coin,
@@ -816,6 +837,7 @@ def _assemble_sols_to_deed_protocol(
         quote_expires_at=quote_expires_at,
         lineage_proof=vault_lineage_proof,
         signature_data=vault_signature_data,
+        generation_vault=config.pool_puzzle_version == 6,
     )
 
     pool_inner = make_pool_v4_inner(config, receipt.current_state)
@@ -847,7 +869,7 @@ def _assemble_sols_to_deed_protocol(
         solution_for_singleton(
             pool_lineage_proof,
             uint64(pool_coin.amount),
-            pool_inner_solution,
+            _generation_pool_solution(config, pool_inner_solution, bytes32(statutes_inner.get_tree_hash())),
         ),
     )
 
@@ -911,7 +933,7 @@ def _assemble_sols_to_deed_protocol(
     ]) != quote.buyer_total_sols_mojos:
         raise SolsSwapOfferError("protocol payment split does not balance")
     return _SolsSwapComponents(
-        coin_spends=(statutes_spend, vault_spend, pool_spend, custody_spend),
+        coin_spends=(statutes_spend, vault_spend, pool_spend, custody_spend, *registry_spends),
         requested_payments=notarized, driver_dict=drivers,
     )
 
@@ -950,6 +972,7 @@ def _assemble_deed_to_sols_protocol(
     reserve_cat_lineage_proof: LineageProof,
     reserve_inner_puzzle: Program,
     quote_expires_at: int,
+    statutes_source: "GenerationStatutesSource | None" = None,
 ) -> _SolsSwapComponents:
     """Build one self-balancing protocol Offer for a deed deposit and Sols payout."""
     _assert_driver_config(config)
@@ -989,40 +1012,52 @@ def _assemble_deed_to_sols_protocol(
         property_id=property_id,
     )
 
-    statutes_inner = make_statutes_inner(
-        singleton_struct=config.statutes_singleton_struct,
-        governance_singleton_struct=config.governance_singleton_struct,
-        permanent_rules=config.permanent_rules,
-        state=statutes_state,
-    )
-    statutes_full = puzzle_for_singleton(
-        statutes_launcher_id,
-        statutes_inner,
-    )
-    if statutes_coin.puzzle_hash != statutes_full.get_tree_hash():
-        raise SolsSwapOfferError(
-            "statutes coin does not match the governed statutes state"
+    registry_spends = ()
+    if config.statutes_inner_mod_hash == load_puzzle('generation_statutes_v1.clsp').get_tree_hash():
+        from solslot_puzzles.generation_statutes_settlement import GenerationStatutesSource
+        if not isinstance(statutes_source,GenerationStatutesSource):
+            raise SolsSwapOfferError('canonical statutes settlement requires its current registry permission')
+        statutes_inner,statutes_spend,registry_spends=statutes_source.build(config=config,view=statutes_state,
+            parameters=parameters,collections=collections,pauses=pauses,collection=collection,pause=pause,
+            coin=statutes_coin,launcher=statutes_launcher_id,lineage=statutes_lineage_proof,
+            consumer=pool_coin.name(),operation=receipt.operation_hash)
+    else:
+        if statutes_source is not None:
+            raise SolsSwapOfferError('generation statutes cannot substitute a legacy authority')
+        statutes_inner = make_statutes_inner(
+            singleton_struct=config.statutes_singleton_struct,
+            governance_singleton_struct=config.governance_singleton_struct,
+            permanent_rules=config.permanent_rules,
+            state=statutes_state,
         )
-    evidence = build_sols_evidence_spend(
-        my_id=statutes_coin.name(),
-        my_inner_puzzle_hash=bytes32(statutes_inner.get_tree_hash()),
-        my_amount=int(statutes_coin.amount),
-        consumer_coin_id=pool_coin.name(),
-        collection_id=collection.collection_id,
-        parameters=parameters,
-        collections=collections,
-        pauses=pauses,
-        state=statutes_state,
-    )
-    statutes_spend = make_spend(
-        statutes_coin,
-        statutes_full,
-        solution_for_singleton(
-            statutes_lineage_proof,
-            uint64(statutes_coin.amount),
-            evidence.inner_solution,
-        ),
-    )
+        statutes_full = puzzle_for_singleton(
+            statutes_launcher_id,
+            statutes_inner,
+        )
+        if statutes_coin.puzzle_hash != statutes_full.get_tree_hash():
+            raise SolsSwapOfferError(
+                "statutes coin does not match the governed statutes state"
+            )
+        evidence = build_sols_evidence_spend(
+            my_id=statutes_coin.name(),
+            my_inner_puzzle_hash=bytes32(statutes_inner.get_tree_hash()),
+            my_amount=int(statutes_coin.amount),
+            consumer_coin_id=pool_coin.name(),
+            collection_id=collection.collection_id,
+            parameters=parameters,
+            collections=collections,
+            pauses=pauses,
+            state=statutes_state,
+        )
+        statutes_spend = make_spend(
+            statutes_coin,
+            statutes_full,
+            solution_for_singleton(
+                statutes_lineage_proof,
+                uint64(statutes_coin.amount),
+                evidence.inner_solution,
+            ),
+        )
 
     p2_vault_inner = puzzle_for_p2_vault(vault_launcher_id)
     p2_vault_full = _deed_full_puzzle(
@@ -1038,7 +1073,12 @@ def _assemble_deed_to_sols_protocol(
             "SmartDeed is not held by the approved vault"
         )
     smart_deed_hash = bytes32(smart_deed_inner.get_tree_hash())
-    vault_inner = puzzle_for_vault_v2_full(
+    vault_constructor = puzzle_for_vault_v2_full
+    if config.pool_puzzle_version == 6:
+        from solslot_puzzles.generation_vault import vault_inner as generation_vault_inner
+        def vault_constructor(**kwargs):
+            return puzzle_for_singleton(kwargs['vault_launcher_id'], generation_vault_inner(**kwargs))
+    vault_inner = vault_constructor(
         vault_launcher_id=vault_launcher_id,
         owner_pubkey=vault_owner_pubkey,
         auth_type=vault_auth_type,
@@ -1152,6 +1192,7 @@ def _assemble_deed_to_sols_protocol(
         quote_expires_at=quote_expires_at,
         lineage_proof=vault_lineage_proof,
         signature_data=vault_signature_data,
+        generation_vault=config.pool_puzzle_version == 6,
         deed_launcher_id=receipt.record.deed_launcher_id,
         p2_vault_coin_id=p2_vault_deed_coin.name(),
         smart_deed_inner_puzzle_hash=smart_deed_hash,
@@ -1193,11 +1234,11 @@ def _assemble_deed_to_sols_protocol(
         solution_for_singleton(
             pool_lineage_proof,
             uint64(pool_coin.amount),
-            pool_inner_solution,
+            _generation_pool_solution(config, pool_inner_solution, bytes32(statutes_inner.get_tree_hash())),
         ),
     )
 
-    pool_token_tail = load_puzzle("pool_token_tail.clsp").curry(
+    pool_token_tail = load_puzzle("generation_sols_tail_v1.clsp" if config.pool_puzzle_version==6 else "pool_token_tail.clsp").curry(
         SINGLETON_MOD_HASH,
         config.pool_launcher_id,
         SINGLETON_LAUNCHER_HASH,
@@ -1261,6 +1302,15 @@ def _assemble_deed_to_sols_protocol(
     reserve_inner_solution = solution_for_conditions(
         reserve_conditions.as_python()
     )
+    reserve_mod, _ = reserve_inner_puzzle.uncurry()
+    if reserve_mod == load_puzzle('generation_sols_reserve_v1.clsp'):
+        from solslot_puzzles.generation_sols_reserve import reserve_solution
+        reserve_inner_solution = reserve_solution(config=config,state=receipt.current_state,
+            pool_coin=pool_coin,reserve_coin=reserve_cat_coin,
+            pool_params=list(pool_inner_solution.as_iter())[4])
+        # Signing/review conditions are the actual constrained program output,
+        # never the conditions accepted by historical faucet custody.
+        reserve_conditions = reserve_inner_puzzle.run(reserve_inner_solution)
     spendable = SpendableCAT(
         reserve_cat_coin,
         config.permanent_rules.sols_tail_hash,
@@ -1298,7 +1348,7 @@ def _assemble_deed_to_sols_protocol(
     }
     return _SolsSwapComponents(
         coin_spends=(statutes_spend, vault_spend, p2_vault_spend, smart_deed_spend,
-                     pool_spend, reserve_bundle.coin_spends[0]),
+                     pool_spend, *registry_spends, reserve_bundle.coin_spends[0]),
         requested_payments=_pool_payments(requested, pool_coin.name()), driver_dict=drivers,
         reserve_signing_conditions=reserve_conditions,
     )
@@ -1355,6 +1405,7 @@ def build_sols_to_deed_protocol_offer(
     custody_coin: Coin,
     custody_lineage_proof: LineageProof,
     quote_expires_at: int,
+    statutes_source: "GenerationStatutesSource | None" = None,
 ) -> SolsToDeedProtocolOffer:
     """Construct the existing strict Offer from canonical protocol components."""
     parts = _assemble_sols_to_deed_protocol(
@@ -1364,6 +1415,7 @@ def build_sols_to_deed_protocol_offer(
         collection=collection,
         pause=pause,
         statutes_state=statutes_state,
+        statutes_source=statutes_source,
         statutes_coin=statutes_coin,
         statutes_launcher_id=statutes_launcher_id,
         statutes_lineage_proof=statutes_lineage_proof,
@@ -1417,6 +1469,7 @@ def prepare_unsigned_sols_to_deed_swap(
     custody_coin: Coin,
     custody_lineage_proof: LineageProof,
     quote_expires_at: int,
+    statutes_source: "GenerationStatutesSource | None" = None,
 ) -> UnsignedSolsSwapEvidence:
     """Prepare protocol evidence only; owner authorization and funding remain pending."""
     parts = _assemble_sols_to_deed_protocol(
@@ -1426,6 +1479,7 @@ def prepare_unsigned_sols_to_deed_swap(
         collection=collection,
         pause=pause,
         statutes_state=statutes_state,
+        statutes_source=statutes_source,
         statutes_coin=statutes_coin,
         statutes_launcher_id=statutes_launcher_id,
         statutes_lineage_proof=statutes_lineage_proof,
@@ -1450,7 +1504,7 @@ def prepare_unsigned_sols_to_deed_swap(
         vault_launcher_id=vault_launcher_id)
     producer = buyer_offer.coin_spends()[0]
     base = (producer, *parts.coin_spends)
-    roles = ("sols_payment", "statutes", "vault", "pool", "deed_custody")
+    roles = ("sols_payment", "statutes", "vault", "pool", "deed_custody") + (("pause_registry",) if statutes_source else ())
     backing = 0
     return _unsigned_swap_evidence(parts=parts, base=base, roles=roles, producer=producer,
         auth_type=vault_auth_type, direction="SOLS_TO_DEED", backing=backing)
@@ -1490,6 +1544,7 @@ def build_deed_to_sols_protocol_offer(
     reserve_cat_lineage_proof: LineageProof,
     reserve_inner_puzzle: Program,
     quote_expires_at: int,
+    statutes_source: "GenerationStatutesSource | None" = None,
 ) -> DeedToSolsProtocolOffer:
     """Construct the existing strict Offer from canonical protocol components."""
     parts = _assemble_deed_to_sols_protocol(
@@ -1499,6 +1554,7 @@ def build_deed_to_sols_protocol_offer(
         collection=collection,
         pause=pause,
         statutes_state=statutes_state,
+        statutes_source=statutes_source,
         statutes_coin=statutes_coin,
         statutes_launcher_id=statutes_launcher_id,
         statutes_lineage_proof=statutes_lineage_proof,
@@ -1532,7 +1588,7 @@ def build_deed_to_sols_protocol_offer(
     return DeedToSolsProtocolOffer(offer=offer, statutes_spend=parts.coin_spends[0],
         vault_spend=parts.coin_spends[1], p2_vault_spend=parts.coin_spends[2],
         smart_deed_spend=parts.coin_spends[3], pool_spend=parts.coin_spends[4],
-        reserve_cat_spend=parts.coin_spends[5], reserve_signing_conditions=parts.reserve_signing_conditions)
+        reserve_cat_spend=parts.coin_spends[-1], reserve_signing_conditions=parts.reserve_signing_conditions)
 
 
 def prepare_unsigned_deed_to_sols_swap(
@@ -1568,6 +1624,7 @@ def prepare_unsigned_deed_to_sols_swap(
     reserve_cat_lineage_proof: LineageProof,
     reserve_inner_puzzle: Program,
     quote_expires_at: int,
+    statutes_source: "GenerationStatutesSource | None" = None,
 ) -> UnsignedSolsSwapEvidence:
     """Prepare protocol evidence only; owner authorization and funding remain pending."""
     parts = _assemble_deed_to_sols_protocol(
@@ -1577,6 +1634,7 @@ def prepare_unsigned_deed_to_sols_swap(
         collection=collection,
         pause=pause,
         statutes_state=statutes_state,
+        statutes_source=statutes_source,
         statutes_coin=statutes_coin,
         statutes_launcher_id=statutes_launcher_id,
         statutes_lineage_proof=statutes_lineage_proof,
@@ -1606,7 +1664,7 @@ def prepare_unsigned_deed_to_sols_swap(
     )
     producer = parts.coin_spends[-1]
     base = parts.coin_spends
-    roles = ("statutes", "vault", "held_deed", "smart_deed", "pool", "sols_reserve")
+    roles = ("statutes", "vault", "held_deed", "smart_deed", "pool") + (("pause_registry",) if statutes_source else ()) + ("sols_reserve",)
     backing = int(_reverse_quote(receipt).fresh_sols_mojos_minted)
     return _unsigned_swap_evidence(parts=parts, base=base, roles=roles, producer=producer,
         auth_type=vault_auth_type, direction="DEED_TO_SOLS", backing=backing)

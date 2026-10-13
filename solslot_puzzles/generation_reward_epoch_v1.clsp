@@ -1,0 +1,162 @@
+; Permanent fee custody. Mature complete fee inputs become exact, permanent
+; earned claims for a consensus-authenticated distributed-holder snapshot.
+; This is protected claim processing; it has no administrator withdrawal or
+; new-business pause gate. The current governed epoch duration is authenticated
+; by the stable statutes authority, never selected by the indexer.
+(mod (SELF BINDINGS STATUTES_STRUCT ASSET CAT_MOD FEE_MOD SGT_KERNEL LEAF_MOD VAULT_OWNER_MOD P2_VAULT_MOD
+      action my_id group root sequence ledger_inner statutes_inner parameters rows)
+  (include condition_codes.clib)
+  (include utils.clib)
+  (include utility_macros.clib)
+  (include generation_sgt_common_v1.clib)
+  (include sgt_holdings_merkle_v1.clib)
+  (include generation_parameters_v1.clib)
+  (include generation_reward_pins.clib)
+  (defconstant ZERO_B32
+    0x0000000000000000000000000000000000000000000000000000000000000000)
+  (defconstant MAX_FEE_INPUTS 64)
+  (defun-inline asset-ph (asset cat inner)
+    (if (= asset ZERO_B32) inner (curry_hashes cat (sha256 1 cat) (sha256 1 asset) inner)))
+  (defun nth (n values) (if n (nth (- n 1) (r values)) (f values)))
+  (defun count (values) (if values (+ 1 (count (r values))) 0))
+  (defun-inline fee-ph (self bindings statutes asset cat fee kernel leaf owner vault)
+    (asset-ph asset cat
+      (curry_hashes fee (sha256 1 fee) (sha256tree bindings) (sha256tree statutes)
+        (sha256 1 asset) (sha256 1 cat) (sha256 1 self) (sha256 1 kernel)
+        (sha256 1 leaf) (sha256 1 owner) (sha256 1 vault))))
+  (defun valid-group (items ph previous)
+    (if items
+      (assert (= (count (f items)) 2) (is-size-b32 (f (f items)))
+        (is-uint64 (nth 1 (f items))) (> (nth 1 (f items)) 0)
+        (>s (sha256 (f (f items)) ph (nth 1 (f items))) previous)
+        (valid-group (r items) ph (sha256 (f (f items)) ph (nth 1 (f items))))) 1))
+  (defun group-total (items) (if items (+ (nth 1 (f items)) (group-total (r items))) 0))
+  (defun group-assertions (items ph receipt gen asset epoch period)
+    (if items
+      (c (list ASSERT_COIN_ANNOUNCEMENT
+        (sha256 (sha256 (f (f items)) ph (nth 1 (f items)))
+          (sha256tree (list "SGT_FEE_SOURCE_V1" gen asset receipt epoch period
+            (sha256 (f (f items)) ph (nth 1 (f items))) (nth 1 (f items))))))
+        (group-assertions (r items) ph receipt gen asset epoch period)) ()))
+  (defun group-authorizations (items ph gen asset epoch period)
+    (if items
+      (c (list CREATE_COIN_ANNOUNCEMENT
+        (sha256tree (list "SGT_FEE_ACCEPT_V1" gen asset epoch period
+          (sha256 (f (f items)) ph (nth 1 (f items))) (nth 1 (f items)))))
+        (group-authorizations (r items) ph gen asset epoch period)) ()))
+  (defun valid-holders (rows bindings kernel root previous)
+    (if rows
+      (assert (= (count (f rows)) 3) (is-size-b32 (f (f rows))) (>s (f (f rows)) previous)
+        (= (count (nth 1 (f rows))) 5)
+        (in (nth 2 (nth 1 (f rows))) (list 1 2))
+        (valid-descriptor bindings (nth 2 (nth 1 (f rows))) (nth 3 (nth 1 (f rows)))
+          (nth 4 (nth 1 (f rows))) (nth 1 (nth 1 (f rows))))
+        (= (f (nth 1 (f rows))) (sgt-full-hash kernel bindings (nth 2 (nth 1 (f rows)))
+          (nth 3 (nth 1 (f rows))) (nth 4 (nth 1 (f rows)))))
+        (= (sha256tree root) (sha256tree (holdings-root (concat 0x00 (f (f rows)))
+          (holding-node (f (f rows)) (nth 1 (f rows))) (nth 2 (f rows)) 256)))
+        (+ (nth 1 (nth 1 (f rows))) (valid-holders (r rows) bindings kernel root (f (f rows))))) 0))
+  (defun insert-owner (owner amount owners)
+    (if owners
+      (if (= owner (f (f owners))) (c (list owner (+ amount (nth 1 (f owners)))) (r owners))
+        (if (>s (f (f owners)) owner) (c (list owner amount) owners)
+          (c (f owners) (insert-owner owner amount (r owners)))))
+      (list (list owner amount))))
+  (defun collect-owners (rows owners)
+    (if rows (collect-owners (r rows)
+      (insert-owner (nth 3 (nth 1 (f rows))) (nth 1 (nth 1 (f rows))) owners)) owners))
+  (defun floor-total (rows total supply)
+    (if rows (+ (/ (* total (nth 1 (f rows))) supply)
+      (floor-total (r rows) total supply)) 0))
+  (defun-inline remainder (numerator denominator)
+    (- numerator (* denominator (/ numerator denominator))))
+  (defun remainder-rank (row rows total supply)
+    (if rows
+      (+ (if (or
+        (> (remainder (* total (nth 1 (f rows))) supply) (remainder (* total (nth 1 row)) supply))
+        (and (= (remainder (* total (nth 1 (f rows))) supply) (remainder (* total (nth 1 row)) supply))
+          (>s (f row) (f (f rows))))) 1 0)
+        (remainder-rank row (r rows) total supply)) 0))
+  (defun payout (row rows total supply dust)
+    (+ (/ (* total (nth 1 row)) supply) (if (> dust (remainder-rank row rows total supply)) 1 0)))
+  (defun claims (leaf gen asset epoch owner vault rows all total supply dust)
+    (if rows
+      (if (payout (f rows) all total supply dust)
+        (c (list CREATE_COIN
+          (curry_hashes leaf (sha256 1 leaf) (sha256 1 gen) (sha256 1 asset) (sha256 1 epoch)
+            (sha256 1 (f (f rows))) (sha256 1 (f (f rows)))
+            (sha256 1 (payout (f rows) all total supply dust)) (sha256 1 owner) (sha256 1 vault))
+          (payout (f rows) all total supply dust) (list gen epoch (f (f rows))))
+          (claims leaf gen asset epoch owner vault (r rows) all total supply dust))
+        (claims leaf gen asset epoch owner vault (r rows) all total supply dust)) ()))
+  (defun epoch-conditions (bindings statutes asset kernel leaf owner vault my_id group root sequence ledger_inner statutes_inner parameters rows ph total epoch receipt_ph)
+    (assert (> (nth 1 root) 0) (= (nth 2 root) 1000000)
+      (> (count rows) 0) (not (> (count rows) 128))
+      (= (valid-holders rows bindings kernel root ZERO_B32) (nth 1 root))
+      (merge-lists
+        (list
+          (list SEND_MESSAGE 18 (sha256tree (list "REWARD_SNAPSHOT" (f bindings) epoch))
+            (calculate_full_puzzle_hash (nth 1 bindings) ledger_inner))
+          (list RECEIVE_MESSAGE 18 (sha256tree (list "REWARD_HOLDINGS" (f bindings) epoch root sequence))
+            (calculate_full_puzzle_hash (nth 1 bindings) ledger_inner))
+          (list SEND_MESSAGE 18 (sha256tree (list "REWARD_PARAMETERS" (f bindings) epoch))
+            (calculate_full_puzzle_hash statutes statutes_inner))
+          (list RECEIVE_MESSAGE 18 (sha256tree (list "REWARD_EVIDENCE" (f bindings) epoch parameters))
+            (calculate_full_puzzle_hash statutes statutes_inner)))
+        (merge-lists
+          (group-assertions group ph my_id (f bindings) asset epoch (nth 5 parameters))
+          (merge-lists (group-authorizations group ph (f bindings) asset epoch (nth 5 parameters))
+            (claims leaf (f bindings) asset epoch owner vault (collect-owners rows ()) (collect-owners rows ()) total (nth 1 root)
+              (- total (floor-total (collect-owners rows ()) total (nth 1 root)))))))))
+  (defun empty-parent (node) (sum-node node node))
+  (defun empty-root (depth)
+    (if depth (empty-parent (empty-root (- depth 1))) (holding-node ZERO_B32 ())))
+  (defun start-conditions (self bindings statutes asset cat fee kernel leaf owner vault my_id group root sequence ledger_inner statutes_inner parameters ph total epoch)
+    (assert (> (nth 1 root) 0) (= (nth 2 root) 1000000)
+      (merge-lists
+        (list
+          (list SEND_MESSAGE 18 (sha256tree (list "REWARD_SNAPSHOT" (f bindings) epoch))
+            (calculate_full_puzzle_hash (nth 1 bindings) ledger_inner))
+          (list RECEIVE_MESSAGE 18 (sha256tree (list "REWARD_HOLDINGS" (f bindings) epoch root sequence))
+            (calculate_full_puzzle_hash (nth 1 bindings) ledger_inner))
+          (list SEND_MESSAGE 18 (sha256tree (list "REWARD_PARAMETERS" (f bindings) epoch))
+            (calculate_full_puzzle_hash statutes statutes_inner))
+          (list RECEIVE_MESSAGE 18 (sha256tree (list "REWARD_EVIDENCE" (f bindings) epoch parameters))
+            (calculate_full_puzzle_hash statutes statutes_inner))
+          (list CREATE_COIN
+            (curry_hashes REWARD_RESUME_MOD (sha256 1 REWARD_RESUME_MOD)
+              (sha256tree bindings) (sha256 1 asset) (sha256 1 cat) (sha256 1 leaf)
+              (sha256 1 owner) (sha256 1 vault)
+              (sha256 1 (curry_hashes fee (sha256 1 fee) (sha256tree bindings) (sha256tree statutes)
+                (sha256 1 asset) (sha256 1 cat) (sha256 1 self) (sha256 1 kernel)
+                (sha256 1 leaf) (sha256 1 owner) (sha256 1 vault)))
+              (sha256 1 kernel) (sha256 1 epoch) (sha256 1 (nth 1 root)) (sha256 1 total)
+              (sha256 1 0) (sha256tree root) (sha256tree (empty-root 256))) total))
+        (merge-lists
+          (group-assertions group ph my_id (f bindings) asset epoch (nth 5 parameters))
+          (group-authorizations group ph (f bindings) asset epoch (nth 5 parameters))))))
+  (defun main (self bindings statutes asset cat fee kernel leaf owner vault action my_id group root sequence ledger_inner statutes_inner parameters rows ph receipt_ph)
+    (assert (in action (list "EPOCH" "START")) (is-size-b32 my_id)
+      (> (count group) 0) (not (> (count group) MAX_FEE_INPUTS)) (valid-group group ph ZERO_B32)
+      (is-uint64 (group-total group)) (> (group-total group) 0)
+      (= (count root) 3) (is-uint64 sequence) (is-size-b32 ledger_inner) (is-size-b32 statutes_inner)
+      (= (count parameters) 6) (valid-parameters parameters)
+      (c (list ASSERT_MY_COIN_ID my_id) (c (list ASSERT_MY_AMOUNT 0)
+        (c (list ASSERT_MY_PARENT_ID (sha256 (f (f group)) ph (nth 1 (f group))))
+          (c (list ASSERT_MY_PUZZLEHASH receipt_ph)
+            (if (= action "START")
+              (assert (not rows)
+                (start-conditions self bindings statutes asset cat fee kernel leaf owner vault my_id group root sequence ledger_inner statutes_inner parameters ph
+                  (group-total group) (sha256tree (list "SGT_FEE_EPOCH_V1" (f bindings) asset group root sequence parameters (sha256tree rows)))))
+              (epoch-conditions bindings statutes asset kernel leaf owner vault my_id group root sequence ledger_inner statutes_inner parameters rows ph
+                (group-total group) (sha256tree (list "SGT_FEE_EPOCH_V1" (f bindings) asset group root sequence parameters (sha256tree rows))) receipt_ph))))))))
+  (assert (is-size-b32 SELF) (is-size-b32 ASSET) (is-size-b32 CAT_MOD) (is-size-b32 FEE_MOD)
+    (is-size-b32 SGT_KERNEL) (is-size-b32 LEAF_MOD) (is-size-b32 VAULT_OWNER_MOD) (is-size-b32 P2_VAULT_MOD)
+    (main SELF BINDINGS STATUTES_STRUCT ASSET CAT_MOD FEE_MOD SGT_KERNEL LEAF_MOD VAULT_OWNER_MOD P2_VAULT_MOD
+      action my_id group root sequence ledger_inner statutes_inner parameters rows
+      (fee-ph SELF BINDINGS STATUTES_STRUCT ASSET CAT_MOD FEE_MOD SGT_KERNEL LEAF_MOD VAULT_OWNER_MOD P2_VAULT_MOD)
+      (asset-ph ASSET CAT_MOD
+        (curry_hashes SELF (sha256 1 SELF) (sha256tree BINDINGS) (sha256tree STATUTES_STRUCT)
+          (sha256 1 ASSET) (sha256 1 CAT_MOD) (sha256 1 FEE_MOD) (sha256 1 SGT_KERNEL)
+          (sha256 1 LEAF_MOD) (sha256 1 VAULT_OWNER_MOD) (sha256 1 P2_VAULT_MOD)))))
+)

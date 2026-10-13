@@ -47,6 +47,7 @@ def _domain(
     chain_id: int,
     *,
     version: str = EIP712_DOMAIN_VERSION,
+    generation_id: bytes32 | str | None = None,
 ) -> dict[str, Any]:
     if type(chain_id) is not int or chain_id not in (GENESIS_EVM_CHAIN_ID,84532,8453):
         raise ValueError("genesis administrator signatures require explicit Ethereum Sepolia, Base Sepolia or Base mainnet")
@@ -54,7 +55,14 @@ def _domain(
         "name": EIP712_DOMAIN_NAME,
         "version": version,
         "chainId": chain_id,
+        **({"salt": _hex32(generation_id, "generation_id")} if generation_id is not None else {}),
     }
+
+
+def _domain_fields(generation_id: bytes32 | str | None) -> list[dict[str, str]]:
+    return [dict(field) for field in _DOMAIN_FIELDS] + (
+        [{"name": "salt", "type": "bytes32"}] if generation_id is not None else []
+    )
 
 
 def genesis_admin_enrollment_typed_data(
@@ -66,6 +74,7 @@ def genesis_admin_enrollment_typed_data(
     expires_at: int,
     network: str = GENESIS_NETWORK,
     chain_id: int = GENESIS_EVM_CHAIN_ID,
+    generation_id: bytes32 | str | None = None,
 ) -> dict[str, Any]:
     """Bind one administrator wallet to one numbered, expiring roster slot."""
     if slot not in (1, 2, 3):
@@ -75,10 +84,10 @@ def genesis_admin_enrollment_typed_data(
     if expires_at <= 0:
         raise ValueError("expires_at must be positive")
     return {
-        "domain": _domain(chain_id),
+        "domain": _domain(chain_id, generation_id=generation_id),
         "primaryType": ADMIN_ENROLLMENT_TYPE,
         "types": {
-            "EIP712Domain": _DOMAIN_FIELDS,
+            "EIP712Domain": _domain_fields(generation_id),
             ADMIN_ENROLLMENT_TYPE: [
                 {"name": "ceremonyId", "type": "bytes32"},
                 {"name": "slot", "type": "uint8"},
@@ -107,6 +116,7 @@ def genesis_plan_signing_typed_data(
     expires_at: int,
     network: str = GENESIS_NETWORK,
     chain_id: int = GENESIS_EVM_CHAIN_ID,
+    generation_id: bytes32 | str | None = None,
 ) -> dict[str, Any]:
     """Bind administrator approval to one immutable deterministic plan."""
     if network != GENESIS_NETWORK:
@@ -114,10 +124,10 @@ def genesis_plan_signing_typed_data(
     if expires_at <= 0:
         raise ValueError("expires_at must be positive")
     return {
-        "domain": _domain(chain_id),
+        "domain": _domain(chain_id, generation_id=generation_id),
         "primaryType": GENESIS_PLAN_SIGNATURE_TYPE,
         "types": {
-            "EIP712Domain": _DOMAIN_FIELDS,
+            "EIP712Domain": _domain_fields(generation_id),
             GENESIS_PLAN_SIGNATURE_TYPE: [
                 {"name": "ceremonyId", "type": "bytes32"},
                 {"name": "rosterHash", "type": "bytes32"},

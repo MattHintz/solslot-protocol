@@ -1,0 +1,35 @@
+; 256-level sparse Merkle-sum tree, keyed by the entire coin ID. Every node
+; commits its hash, eligible holder sum and total SGT sum. API-supplied sums
+; are never trusted independently of the root. Empty leaves are all-zero.
+; Leaf record: (puzzle_hash amount kind owner_hash lock_id).
+; kind 1=holder, 2=locked holder, 3=reserve, 4=undelivered escrow.
+(
+  (defun holding-node (key record)
+    (if record
+      (list (sha256tree (list "SGT_HOLDING_V1" key record))
+        (if (any (= (f (r (r record))) 1) (= (f (r (r record))) 2))
+          (f (r record)) 0)
+        (f (r record)))
+      (list (sha256tree (list "SGT_EMPTY_V1")) 0 0)))
+  (defun-inline sum-node (left right)
+    (list (sha256tree (list "SGT_NODE_V1" left right))
+      (+ (f (r left)) (f (r right)))
+      (+ (f (r (r left))) (f (r (r right))))))
+  (defun holdings-root (bits node proof depth)
+    (if depth
+      (assert proof
+        (is-size-b32 (f (f proof)))
+        (is-uint64 (f (r (f proof))))
+        (is-uint64 (f (r (r (f proof)))))
+        (not (> (f (r (f proof))) (f (r (r (f proof))))))
+        (not (> (f (r (r (f proof)))) 1000000))
+        (holdings-root (lsh bits -1)
+          (if (logand bits 1) (sum-node (f proof) node) (sum-node node (f proof)))
+          (r proof) (- depth 1)))
+      (assert (not proof) (= bits 0) node)))
+  (defun-inline replace-holding (root key before after proof)
+    (assert (is-size-b32 key)
+      (= (sha256tree root)
+        (sha256tree (holdings-root (concat 0x00 key) (holding-node key before) proof 256)))
+      (holdings-root (concat 0x00 key) (holding-node key after) proof 256)))
+)

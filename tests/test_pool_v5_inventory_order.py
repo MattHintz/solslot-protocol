@@ -59,7 +59,8 @@ def test_legacy_pool_module_remains_exact_and_unknown_versions_reject():
     from solslot_puzzles.pool_v4_driver import pool_v4_inner_mod_hash,pool_puzzle_version_for_hash
     assert pool_v4_inner_mod_hash(4).hex()=='e01e8cb71b9612ba01ac9678e45e6cae6915cebffff6795f6809c081d973e27d'
     assert pool_puzzle_version_for_hash(pool_v4_inner_mod_hash(5))==5
-    for invalid in (True,'5',3,6):
+    assert pool_puzzle_version_for_hash(pool_v4_inner_mod_hash(6))==6
+    for invalid in (True,'5',3,7):
         with pytest.raises(ValueError,match='unsupported'):
             pool_v4_inner_mod_hash(invalid)
     with pytest.raises(ValueError,match='unsupported'):

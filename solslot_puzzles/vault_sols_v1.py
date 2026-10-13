@@ -32,6 +32,20 @@ def puzzle_for_vault_sols_inner(
 ) -> Program:
     if vault_launcher_id == bytes32.zeros:
         raise ValueError("vault_launcher_id must be non-zero")
+    if config.pool_puzzle_version == 6:
+        from solslot_puzzles.generation_pool import GenerationPoolConfig
+        from solslot_puzzles.generation_registry import singleton_struct
+        if not isinstance(config, GenerationPoolConfig):
+            raise ValueError('generation Sols custody requires the pinned stable pool')
+        config.market_config
+        module = load_puzzle('vault_sols_generation_v1.clsp')
+        # Current policy/version are deliberately absent from this permanent
+        # custody puzzle. Already-held Sols remain spendable after activation.
+        market = Program.to([*list(config.market_config.as_iter())[:8],
+            [config.generation, singleton_struct(config.registry_id), config.component_id,
+             load_puzzle('generation_sols_eve_v1.clsp').get_tree_hash()]])
+        return module.curry(module.get_tree_hash(), pool_v4_inner_mod_hash(6),
+            config.pool_singleton_struct, config.statutes_config, market, vault_launcher_id)
     return vault_sols_inner_mod().curry(
         vault_sols_inner_mod_hash(),
         pool_v4_inner_mod_hash(config.pool_puzzle_version),
@@ -65,6 +79,7 @@ def vault_sols_inner_solution_for_swap(
     quote_expires_at: int,
     pool_state: SolsPoolStateV4,
     pool_inventory: tuple[PoolInventoryRecord, ...],
+    config: PoolV4Config | None = None,
 ) -> Program:
     if payment_coin.name() == bytes32.zeros:
         raise ValueError("payment coin must be non-zero")
@@ -76,7 +91,7 @@ def vault_sols_inner_solution_for_swap(
         raise ValueError("quote expiry must be a positive uint64")
     state = pool_state.validate(pool_inventory)
     economics = state.economics
-    return Program.to(
+    result = Program.to(
         [
             payment_coin.name(),
             int(payment_coin.amount),
@@ -94,6 +109,13 @@ def vault_sols_inner_solution_for_swap(
             state.state_version,
         ]
     )
+    if config is not None and config.pool_puzzle_version == 6:
+        from solslot_puzzles.generation_pool import GenerationPoolConfig
+        if not isinstance(config, GenerationPoolConfig):
+            raise ValueError('generation Sols spend requires exact pool policy evidence')
+        config.market_config
+        result = Program.to([*result.as_iter(), config.module_hash, config.version, config.compatibility])
+    return result
 
 
 __all__ = [
