@@ -35,10 +35,23 @@ class GenerationPoolConfig(PoolV4Config):
     version: int = 1
     compatibility: int = 1
     pool_puzzle_version: int = 6
+    company_revenue_puzzle_hash: bytes32 | None = None
+
+    @property
+    def statutes_config(self):
+        base = super().statutes_config
+        if self.pool_puzzle_version == 6:
+            if self.company_revenue_puzzle_hash is not None:
+                raise ValueError('historical pool cannot claim separate company revenue')
+            return base
+        if (self.pool_puzzle_version != 7 or not isinstance(self.company_revenue_puzzle_hash, bytes32)
+                or self.company_revenue_puzzle_hash in (bytes32.zeros, self.permanent_rules.protocol_treasury_puzzle_hash)):
+            raise ValueError('restricted pool requires distinct exact company revenue custody')
+        return Program.to([*base.as_iter(), self.company_revenue_puzzle_hash])
 
     @property
     def market_config(self) -> Program:
-        if self.pool_puzzle_version != 6:
+        if self.pool_puzzle_version not in (6, 7):
             raise ValueError('generation pool requires its permanent generation kernel')
         if any(v == bytes32.zeros for v in (self.generation, self.registry_id,
                                            self.component_id, self.module_hash)):
@@ -64,6 +77,7 @@ class GenerationPool:
     module_hash: bytes32 | None = None
     version: int = 1
     compatibility: int = 1
+    company_revenue_puzzle_hash: bytes32 | None = None
 
     @property
     def launcher_id(self):
@@ -83,18 +97,20 @@ class GenerationPool:
                   if f.name != 'pool_puzzle_version'}
         return GenerationPoolConfig(**values, generation=self.generation, registry_id=self.registry_id,
             component_id=self.component_id, module_hash=self.logic_hash(),
-            version=self.version, compatibility=self.compatibility)
+            version=self.version, compatibility=self.compatibility,
+            pool_puzzle_version=7 if self.company_revenue_puzzle_hash is not None else 6,
+            company_revenue_puzzle_hash=self.company_revenue_puzzle_hash)
 
     def component(self):
         return Component(self.component_id, self.launcher_id,
-            load_puzzle('generation_pool_v1.clsp').get_tree_hash(),
+            load_puzzle('generation_pool_v2.clsp' if self.company_revenue_puzzle_hash is not None else 'generation_pool_v1.clsp').get_tree_hash(),
             self.logic_hash(), self.version, self.compatibility)
 
     def state(self):
         e = self.economics.economics.validate()
         if type(self.economics.state_version) is not int or not 0 < self.economics.state_version < 2**64:
             raise ValueError('pool state version must be positive uint64')
-        return Program.to([singleton_struct(self.launcher_id), self.permanent.statutes_config, self.permanent.market_config,
+        return Program.to([singleton_struct(self.launcher_id), self.config().statutes_config, self.permanent.market_config,
             load_puzzle('generation_sols_eve_v1.clsp').get_tree_hash(),
             self.economics.inventory_root, int(e.bootstrap_complete), e.inventory_nav_micro_usd,
             e.treasury_assets_micro_usd, e.proven_liabilities_micro_usd, e.deed_count,
@@ -125,8 +141,8 @@ def generation_pool_inner(config: GenerationPoolConfig, economics: SolsPoolState
     base = PoolV4Config(**{f.name: getattr(config, f.name) for f in fields(PoolV4Config)
                           if f.name != 'pool_puzzle_version'})
     state = GenerationPool(config.generation, config.registry_id, config.component_id,
-        base, economics, config.module_hash, config.version, config.compatibility).state()
-    module = load_puzzle('generation_pool_v1.clsp')
+        base, economics, config.module_hash, config.version, config.compatibility, config.company_revenue_puzzle_hash).state()
+    module = load_puzzle('generation_pool_v2.clsp' if config.pool_puzzle_version == 7 else 'generation_pool_v1.clsp')
     return module.curry(module.get_tree_hash(), config.generation, singleton_struct(config.registry_id),
         config.component_id, config.module_hash, config.version, config.compatibility, state)
 
@@ -137,7 +153,7 @@ def generation_pool_solution(config: PoolV4Config, solution: Program, statutes_i
     Older swap solutions remain byte-for-byte unchanged. Unsupported policies
     fail before review instead of guessing an extension's behavior.
     """
-    if config.pool_puzzle_version != 6:
+    if config.pool_puzzle_version not in (6, 7):
         return solution
     if not isinstance(config, GenerationPoolConfig):
         raise ValueError('generation pool solution requires exact reviewed bindings')
@@ -157,7 +173,11 @@ def decode_pool_state(state: Program, **common) -> GenerationPool:
     governance = common.pop('governance_id')
     if mine != singleton_struct(launcher):
         raise ValueError('pool state changes its permanent authority identity')
-    mod, statute_struct, gov_struct, sgt, supply, sols, zk, treasury, network = exact_list(statutes, 9)
+    entries = list(statutes.as_iter())
+    if len(entries) not in (9, 10) or Program.to(entries) != statutes:
+        raise ValueError('pool statutes bindings must be canonical')
+    mod, statute_struct, gov_struct, sgt, supply, sols, zk, treasury, network = entries[:9]
+    revenue = bytes32(entries[9].as_atom()) if len(entries) == 10 else None
     if gov_struct != singleton_struct(governance):
         raise ValueError('pool state binds another governance authority')
     cat, offer, p2_vault, vault, p2_pool, deed_launcher, reserve_puzzle, rewards = exact_list(market, 8)
@@ -169,7 +189,7 @@ def decode_pool_state(state: Program, **common) -> GenerationPool:
         *(bytes32(v.as_atom()) for v in (cat, offer, p2_vault, vault, p2_pool, deed_launcher, reserve_puzzle, rewards)))
     economics = SolsPoolStateV4(bytes32(root.as_atom()), SolsEconomicState(bool(uint(bootstrap)),
         *(uint(v) for v in (nav, assets, liabilities, count, total, reserve))), uint(sequence))
-    result = GenerationPool(**common, permanent=permanent, economics=economics)
+    result = GenerationPool(**common, permanent=permanent, economics=economics, company_revenue_puzzle_hash=revenue)
     if result.state() != state:
         raise ValueError('pool state is not reproduced canonically')
     return result

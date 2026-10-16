@@ -60,7 +60,7 @@ def decode_initial_economic_inner(inner:Program, *, generation:bytes32, registry
             validator_pubkeys=tuple(v.as_atom() for v in exact_list(keys,3)),provider_id=bytes32(provider.as_atom()),primary_batch_bindings=primary)
         # Reproduction below verifies all module pins, singleton structures,
         # empty issued-set root and counter, not just the descriptive fields.
-    elif module==load_puzzle('generation_pool_v1.clsp'):
+    elif module in (load_puzzle('generation_pool_v1.clsp'), load_puzzle('generation_pool_v2.clsp')):
         result=decode_pool_state(state, **common)
         e=result.economics.economics
         if (e.bootstrap_complete or e.inventory_nav_micro_usd or e.treasury_assets_micro_usd

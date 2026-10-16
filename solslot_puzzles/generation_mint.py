@@ -135,10 +135,12 @@ class GenerationMint:
                          self.logic_hash(),self.version,self.compatibility)
 
     def bindings(self):
+        from solslot_puzzles.generation_primary_inventory import inventory_module
+        inventory = inventory_module(self.primary_batch_bindings or Program.to([]))
         return [singleton_struct(self.launcher_id),singleton_struct(self.governance_id),singleton_struct(self.pool_id),
             self.treasury_puzzle_hash,self.protocol_puzzle_hash,list(self.validator_pubkeys),self.provider_id,
             [load_puzzle(name).get_tree_hash() for name in ('singleton_launcher_with_did.clsp',
-                'generation_primary_inventory_v1.clsp','mint_offer_delegate_v6.clsp','smart_deed_inner_v2.clsp',
+                'generation_primary_inventory_v2.clsp' if inventory == load_puzzle('generation_primary_inventory_v2.clsp') else 'generation_primary_inventory_v1.clsp','mint_offer_delegate_v6.clsp','smart_deed_inner_v2.clsp',
                 'p2_pool_v2.clsp','p2_vault.clsp')]+[CAT_MOD.get_tree_hash(),OFFER_MOD_HASH],self.primary_batch_bindings or Program.to([])]
 
     def state(self):return Program.to([self.bindings(),self.issued.root,self.issued_count])

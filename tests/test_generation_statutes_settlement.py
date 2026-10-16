@@ -24,19 +24,26 @@ from tests.test_sols_swap_v4_driver import (CONFIG,COLLECTION,EMPTY_POOL,STATUTE
     _fixture,_forward_arguments,_reverse_arguments,_singleton_child,_assert_signed_consensus,b32)
 
 
-def source(version=1):
+def source(version=1,restricted=False):
     acs=Program.to(1);fund=Coin(b32(220),acs.get_tree_hash(),uint64(100))
     registry_id=Coin(fund.name(),SINGLETON_LAUNCHER_HASH,uint64(1)).name()
     governance_id=type(registry_id)(CONFIG.governance_singleton_struct.rest().first().as_atom())
+    from solslot_puzzles.generation_sols_tail import pool_token_tail_hash
+    from solslot_puzzles.generation_revenue import BackingCustody,CompanyRevenue
+    rules=replace(CONFIG.permanent_rules,sols_tail_hash=pool_token_tail_hash(CONFIG.pool_launcher_id),network_id=b32(221))
+    revenue=None
+    if restricted:
+        revenue=CompanyRevenue(b32(221),b32(224)).inner().get_tree_hash()
+        rules=replace(rules,protocol_treasury_puzzle_hash=BackingCustody(b32(221)).inner().get_tree_hash())
     stat=GenerationStatutes(b32(221),registry_id,governance_id,STATUTES_LAUNCHER,b32(222),
-        pool_id=CONFIG.pool_launcher_id,permanent_rules=CONFIG.permanent_rules,
+        pool_id=CONFIG.pool_launcher_id,permanent_rules=rules,
         collections_root=keyed_root([COLLECTION]),revision=2,version=version)
     if version==2:
         successor=Program.to([2,(1,load_puzzle('generation_statutes_logic_v1.clsp')),1])
         stat=replace(stat,module_hash=successor.get_tree_hash())
-    permanent=replace(CONFIG,statutes_inner_mod_hash=load_puzzle('generation_statutes_v1.clsp').get_tree_hash(),
+    permanent=replace(CONFIG,permanent_rules=rules,statutes_inner_mod_hash=load_puzzle('generation_statutes_v1.clsp').get_tree_hash(),
         vault_v2_mod_hash=load_puzzle('vault_singleton_inner_generation_v1.clsp').get_tree_hash())
-    pool=GenerationPool(stat.generation,registry_id,b32(223),permanent,replace(EMPTY_POOL,state_version=2))
+    pool=GenerationPool(stat.generation,registry_id,b32(223),permanent,replace(EMPTY_POOL,state_version=2),company_revenue_puzzle_hash=revenue)
     registry=Registry(stat.generation,registry_id,governance_id,b32(224),(pool.component(),stat.component()))
     _,launch=launch_conditions_and_coinsol(fund,registry.inner(),[],uint64(1))
     from chia.wallet.puzzles.singleton_top_layer_v1_1 import puzzle_for_singleton
@@ -48,8 +55,9 @@ def source(version=1):
 
 @pytest.mark.parametrize('version',[1,2])
 @pytest.mark.parametrize('reverse',[False,True])
-def test_actual_native_swaps_use_canonical_statutes_and_registry_before_and_after_upgrade(version,reverse):
-    pool,context,stat_coin,lineage=source(version)
+@pytest.mark.parametrize('restricted',[False,True])
+def test_actual_native_swaps_use_canonical_statutes_and_registry_before_and_after_upgrade(version,reverse,restricted):
+    pool,context,stat_coin,lineage=source(version,restricted)
     config=pool.config();params=context.statutes.economic_parameters();view=context.statutes.economic_view()
     if reverse:
         args=_reverse_arguments(parameters=params,config=config,statutes_state=view)

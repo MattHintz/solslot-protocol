@@ -1,0 +1,12 @@
+; The authority's current owner-plus-one members sign this exact public
+; payment intent. It grants no standing budget or future withdrawal power.
+(mod (GENERATION TARGET ASSET GROUP OUTPUTS FEE PURPOSE ISSUED EXPIRES)
+  (include condition_codes.clib)
+  (include utils.clib)
+  (include utility_macros.clib)
+  (assert (is-size-b32 GENERATION) (is-size-b32 TARGET) (is-size-b32 ASSET)
+    (is-size-b32 PURPOSE) (is-uint64 ISSUED) (> ISSUED 0)
+    (is-uint64 EXPIRES) (> EXPIRES ISSUED) (not (> EXPIRES (+ ISSUED 86400)))
+    (list (list ASSERT_SECONDS_ABSOLUTE ISSUED) (list ASSERT_BEFORE_SECONDS_ABSOLUTE EXPIRES)
+      (list SEND_MESSAGE 18
+        (sha256tree (list "COMPANY_REVENUE_PAYMENT" GENERATION ASSET GROUP OUTPUTS FEE PURPOSE ISSUED EXPIRES)) TARGET))))

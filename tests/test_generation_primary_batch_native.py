@@ -156,7 +156,7 @@ async def prepare(c, native, deeds=1, wanted_offset=0):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('generation', ['batch'], indirect=True)
+@pytest.mark.parametrize('generation', ['batch','batch-revenue'], indirect=True)
 @pytest.mark.parametrize('native', [True, False], ids=['TXCH', 'synthetic-CAT'])
 async def test_whole_signed_orders_acquire_real_primary_deed_and_back_exact_sols(generation, native, tmp_path):
     c = generation
@@ -191,6 +191,11 @@ async def test_whole_signed_orders_acquire_real_primary_deed_and_back_exact_sols
         assert reopened_book.status('0x'+order.order_id.hex())['operationId'] == identity
     assert original_inputs == journal.reserved_input_coin_ids()
     assert settlement.routing.allocations() == (300000, 2100, 900)
+    if c['pool'].company_revenue_puzzle_hash is not None:
+        assert settlement.routing.treasury_destination == c['pool'].company_revenue_puzzle_hash
+        assert settlement.routing.treasury_destination != c['pool'].permanent.permanent_rules.protocol_treasury_puzzle_hash
+        assert settlement.routing.principal_destination == kwargs['inventory_item'].terms.protocol_puzhash
+        assert settlement.routing.principal_destination != settlement.routing.treasury_destination
     assert (await c['client'].push_tx(SpendBundle(bundle.coin_spends, G2Element())))[0] != MempoolInclusionStatus.SUCCESS
     # Removing ANY independent leg fails, including any buyer or fee/backing.
     for index in range(len(bundle.coin_spends)):
@@ -224,7 +229,7 @@ async def test_whole_signed_orders_acquire_real_primary_deed_and_back_exact_sols
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('generation', ['batch'], indirect=True)
+@pytest.mark.parametrize('generation', ['batch','batch-revenue'], indirect=True)
 @pytest.mark.parametrize('native', [True, False], ids=['TXCH', 'synthetic-CAT'])
 async def test_batch_rejects_changed_price_payout_identity_bypass_and_cancelled_offer(generation, native):
     c = generation
@@ -279,7 +284,7 @@ async def test_batch_rejects_changed_price_payout_identity_bypass_and_cancelled_
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('generation', ['batch'], indirect=True)
+@pytest.mark.parametrize('generation', ['batch','batch-revenue'], indirect=True)
 @pytest.mark.parametrize('native', [True, False], ids=['TXCH', 'synthetic-CAT'])
 async def test_one_whole_signed_order_spans_two_primary_deeds_and_preserves_its_minimum(generation, native):
     c = generation

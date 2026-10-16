@@ -77,7 +77,8 @@ def build_primary_batch(*, orders, inventory_item, inventory_lineage, pool, pool
     for tip in (pool_tip, statutes_tip, registry_tip): tip.validate()
     bindings = batch_bindings(generation=pool.generation, pool_id=pool.launcher_id,
         sgt=sgt_bindings, statutes_id=statutes.launcher_id,
-        treasury=pool.permanent.permanent_rules.protocol_treasury_puzzle_hash,
+        treasury=pool.company_revenue_puzzle_hash or pool.permanent.permanent_rules.protocol_treasury_puzzle_hash,
+        pool_kernel_version=2 if config.pool_puzzle_version == 7 else 1,
         oracle_pubkeys=tuple(v.as_atom() for v in list(inventory_item.inner.uncurry()[1].as_iter())[-1].at('rrrrrrrf').as_iter()))
     source_inner = inventory_inner(terms, bindings)
     if source_inner != inventory_item.inner:
@@ -142,8 +143,9 @@ def build_primary_batch(*, orders, inventory_item, inventory_lineage, pool, pool
         batch.commitment, asset, local_payment, decimals, round_hash, price,
         oracle.source_evidence_root, expires_at, sd.get_tree_hash(), operation]).get_tree_hash()
     routing = PrimaryFeeRouting(sgt_bindings, statutes.launcher_id, asset, source_full.get_tree_hash(),
-        route, terms.base_amount_minor, local_payment, terms.protocol_treasury_puzzle_hash,
-        config.permanent_rules.protocol_treasury_puzzle_hash, statutes.inner().get_tree_hash(), statutes.values)
+        route, terms.base_amount_minor, local_payment,
+        terms.protocol_puzhash if config.pool_puzzle_version == 7 else terms.protocol_treasury_puzzle_hash,
+        pool.company_revenue_puzzle_hash or config.permanent_rules.protocol_treasury_puzzle_hash, statutes.inner().get_tree_hash(), statutes.values)
     payment_parent = original.get_offered_coins()[batch.payment_asset][0]
     fee_coin = Coin(payment_parent.name(), routing.full().get_tree_hash(), uint64(local_payment))
     source_args = [source_coin.name(), source_coin.parent_coin_info, source_full.get_tree_hash(),
@@ -192,7 +194,8 @@ def build_primary_batch(*, orders, inventory_item, inventory_lineage, pool, pool
             routing.inner(), routing.solution(fee_coin.name()), lineage_proof=LineageProof(
                 payment_parent.parent_coin_info, OFFER_MOD_HASH, payment_parent.amount))]).coin_spends)
     reserve = reserve_inner(generation=pool.generation, registry_id=pool.registry_id,
-        pool_id=pool.launcher_id, component_id=pool.component_id)
+        pool_id=pool.launcher_id, component_id=pool.component_id,
+        pool_kernel_version=2 if config.pool_puzzle_version == 7 else 1)
     reserve_params = Program.to(params)
     tail = load_puzzle('generation_sols_tail_v1.clsp').curry(SINGLETON_MOD_HASH, pool.launcher_id, SINGLETON_LAUNCHER_HASH)
     tail_solution = Program.to([pool_tip.coin.puzzle_hash, pool.inner().get_tree_hash(), pool_tip.coin.name(),
@@ -257,7 +260,8 @@ def build_primary_batches(*, inventory_items, inventory_lineages, validator_sign
             reserve_spend = next(s for s in leg.protocol_offer._bundle.coin_spends
                 if s.coin.name() == ctx['reserve_coin'].name())
             reserve = reserve_inner(generation=ctx['pool'].generation, registry_id=ctx['pool'].registry_id,
-                pool_id=ctx['pool'].launcher_id, component_id=ctx['pool'].component_id)
+                pool_id=ctx['pool'].launcher_id, component_id=ctx['pool'].component_id,
+                pool_kernel_version=2 if ctx['pool'].config().pool_puzzle_version == 7 else 1)
             next_reserve = [c for c in compute_additions(reserve_spend)
                 if c.puzzle_hash == ctx['reserve_coin'].puzzle_hash]
             if len(next_reserve) != 1: raise ValueError('batch loses its exact remaining protocol reserve')

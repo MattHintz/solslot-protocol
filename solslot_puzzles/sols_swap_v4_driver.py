@@ -385,10 +385,10 @@ def _assert_driver_config(config: PoolV4Config) -> None:
         "offer": OFFER_MOD_HASH,
         "p2_vault": bytes32(load_puzzle("p2_vault.clsp").get_tree_hash()),
         "vault": load_puzzle('vault_singleton_inner_generation_v1.clsp').get_tree_hash()
-                 if config.pool_puzzle_version == 6 else vault_v2_inner_mod_hash(),
+                 if config.pool_puzzle_version in (6, 7) else vault_v2_inner_mod_hash(),
         "p2_pool": bytes32(load_puzzle("p2_pool_v2.clsp").get_tree_hash()),
         "statutes": (load_puzzle('generation_statutes_v1.clsp').get_tree_hash()
-                     if config.pool_puzzle_version==6 and config.statutes_inner_mod_hash==load_puzzle('generation_statutes_v1.clsp').get_tree_hash()
+                     if config.pool_puzzle_version in (6, 7) and config.statutes_inner_mod_hash==load_puzzle('generation_statutes_v1.clsp').get_tree_hash()
                      else protocol_statutes_inner_mod_hash()),
     }
     actual = {
@@ -456,9 +456,9 @@ def _sols_payments(
     if quote.fee_split.protocol_fee_sols_mojos:
         payments.append(
             CreateCoin(
-                config.permanent_rules.protocol_treasury_puzzle_hash,
+                getattr(config, "company_revenue_puzzle_hash", None) or config.permanent_rules.protocol_treasury_puzzle_hash,
                 uint64(quote.fee_split.protocol_fee_sols_mojos),
-                [config.permanent_rules.protocol_treasury_puzzle_hash],
+                [getattr(config, "company_revenue_puzzle_hash", None) or config.permanent_rules.protocol_treasury_puzzle_hash],
             )
         )
     if quote.fee_split.sgt_rewards_fee_sols_mojos:
@@ -837,7 +837,7 @@ def _assemble_sols_to_deed_protocol(
         quote_expires_at=quote_expires_at,
         lineage_proof=vault_lineage_proof,
         signature_data=vault_signature_data,
-        generation_vault=config.pool_puzzle_version == 6,
+        generation_vault=config.pool_puzzle_version in (6, 7),
     )
 
     pool_inner = make_pool_v4_inner(config, receipt.current_state)
@@ -1074,7 +1074,7 @@ def _assemble_deed_to_sols_protocol(
         )
     smart_deed_hash = bytes32(smart_deed_inner.get_tree_hash())
     vault_constructor = puzzle_for_vault_v2_full
-    if config.pool_puzzle_version == 6:
+    if config.pool_puzzle_version in (6, 7):
         from solslot_puzzles.generation_vault import vault_inner as generation_vault_inner
         def vault_constructor(**kwargs):
             return puzzle_for_singleton(kwargs['vault_launcher_id'], generation_vault_inner(**kwargs))
@@ -1192,7 +1192,7 @@ def _assemble_deed_to_sols_protocol(
         quote_expires_at=quote_expires_at,
         lineage_proof=vault_lineage_proof,
         signature_data=vault_signature_data,
-        generation_vault=config.pool_puzzle_version == 6,
+        generation_vault=config.pool_puzzle_version in (6, 7),
         deed_launcher_id=receipt.record.deed_launcher_id,
         p2_vault_coin_id=p2_vault_deed_coin.name(),
         smart_deed_inner_puzzle_hash=smart_deed_hash,
@@ -1238,7 +1238,7 @@ def _assemble_deed_to_sols_protocol(
         ),
     )
 
-    pool_token_tail = load_puzzle("generation_sols_tail_v1.clsp" if config.pool_puzzle_version==6 else "pool_token_tail.clsp").curry(
+    pool_token_tail = load_puzzle("generation_sols_tail_v1.clsp" if config.pool_puzzle_version in (6, 7) else "pool_token_tail.clsp").curry(
         SINGLETON_MOD_HASH,
         config.pool_launcher_id,
         SINGLETON_LAUNCHER_HASH,

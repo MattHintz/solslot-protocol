@@ -14,14 +14,16 @@ from solslot_puzzles.generation_pool import GenerationPool, GenerationPoolConfig
 from solslot_puzzles.generation_registry import singleton_struct
 
 
-def reserve_inner(*, generation, registry_id, pool_id, component_id):
+def reserve_inner(*, generation, registry_id, pool_id, component_id, pool_kernel_version=1):
     from chia_rs.sized_bytes import bytes32
     if any(not isinstance(v,bytes32) or v==bytes32.zeros for v in
            (generation,registry_id,pool_id,component_id)):
         raise ValueError('reserve requires exact nonzero generation authority bindings')
     mod=load_puzzle('generation_sols_reserve_v1.clsp')
+    if type(pool_kernel_version) is not int or pool_kernel_version not in (1, 2):
+        raise ValueError('reserve requires an exact supported pool kernel')
     return mod.curry(mod.get_tree_hash(),generation,singleton_struct(registry_id),singleton_struct(pool_id),
-        component_id,load_puzzle('generation_pool_v1.clsp').get_tree_hash(),CAT_MOD.get_tree_hash(),
+        component_id,load_puzzle(f'generation_pool_v{pool_kernel_version}.clsp').get_tree_hash(),CAT_MOD.get_tree_hash(),
         load_puzzle('generation_sols_tail_v1.clsp').get_tree_hash(),OFFER_MOD_HASH)
 
 
@@ -29,7 +31,8 @@ def reserve_solution(*, config, state, pool_coin, reserve_coin, pool_params, coi
     if not isinstance(config,GenerationPoolConfig):
         raise ValueError('constrained reserve requires the stable generation pool')
     inner=reserve_inner(generation=config.generation,registry_id=config.registry_id,
-        pool_id=config.pool_launcher_id,component_id=config.component_id)
+        pool_id=config.pool_launcher_id,component_id=config.component_id,
+        pool_kernel_version=2 if config.pool_puzzle_version == 7 else 1)
     if inner.get_tree_hash()!=config.reserve_puzzle_hash:
         raise ValueError('reserve differs from the permanently bound pool destination')
     from dataclasses import fields
@@ -37,7 +40,7 @@ def reserve_solution(*, config, state, pool_coin, reserve_coin, pool_params, coi
     permanent=PoolV4Config(**{f.name:getattr(config,f.name) for f in fields(PoolV4Config)
                             if f.name!='pool_puzzle_version'})
     pool=GenerationPool(config.generation,config.registry_id,config.component_id,permanent,state,
-        config.module_hash,config.version,config.compatibility)
+        config.module_hash,config.version,config.compatibility,config.company_revenue_puzzle_hash)
     full=construct_cat_puzzle(CAT_MOD,config.permanent_rules.sols_tail_hash,inner)
     selected=tuple(sorted(coins or (reserve_coin,),key=lambda c:bytes(c.name())))
     if (not 0<len(selected)<=64 or len({c.name() for c in selected})!=len(selected)
@@ -61,7 +64,8 @@ def merge_reserve(*, config, coins, lineages):
     if not isinstance(config,GenerationPoolConfig):
         raise ValueError('reserve merge requires its actual generation pool')
     inner=reserve_inner(generation=config.generation,registry_id=config.registry_id,
-        pool_id=config.pool_launcher_id,component_id=config.component_id)
+        pool_id=config.pool_launcher_id,component_id=config.component_id,
+        pool_kernel_version=2 if config.pool_puzzle_version == 7 else 1)
     if inner.get_tree_hash()!=config.reserve_puzzle_hash:
         raise ValueError('reserve merge changes the permanent custody destination')
     full=construct_cat_puzzle(CAT_MOD,config.permanent_rules.sols_tail_hash,inner)

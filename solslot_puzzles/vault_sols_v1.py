@@ -32,7 +32,7 @@ def puzzle_for_vault_sols_inner(
 ) -> Program:
     if vault_launcher_id == bytes32.zeros:
         raise ValueError("vault_launcher_id must be non-zero")
-    if config.pool_puzzle_version == 6:
+    if config.pool_puzzle_version in (6, 7):
         from solslot_puzzles.generation_pool import GenerationPoolConfig
         from solslot_puzzles.generation_registry import singleton_struct
         if not isinstance(config, GenerationPoolConfig):
@@ -44,7 +44,7 @@ def puzzle_for_vault_sols_inner(
         market = Program.to([*list(config.market_config.as_iter())[:8],
             [config.generation, singleton_struct(config.registry_id), config.component_id,
              load_puzzle('generation_sols_eve_v1.clsp').get_tree_hash()]])
-        return module.curry(module.get_tree_hash(), pool_v4_inner_mod_hash(6),
+        return module.curry(module.get_tree_hash(), pool_v4_inner_mod_hash(config.pool_puzzle_version),
             config.pool_singleton_struct, config.statutes_config, market, vault_launcher_id)
     return vault_sols_inner_mod().curry(
         vault_sols_inner_mod_hash(),
@@ -109,7 +109,7 @@ def vault_sols_inner_solution_for_swap(
             state.state_version,
         ]
     )
-    if config is not None and config.pool_puzzle_version == 6:
+    if config is not None and config.pool_puzzle_version in (6, 7):
         from solslot_puzzles.generation_pool import GenerationPoolConfig
         if not isinstance(config, GenerationPoolConfig):
             raise ValueError('generation Sols spend requires exact pool policy evidence')

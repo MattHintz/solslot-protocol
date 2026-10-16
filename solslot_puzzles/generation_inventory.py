@@ -1,5 +1,9 @@
 """Separate inventory for the replacement generation; historical pins stay intact."""
 GENERATION_PUZZLE_FILENAMES = (
+    'generation_revenue_custody_v1.clsp',
+    'generation_revenue_action_v1.clsp',
+    'generation_primary_fee_split_v1.clsp',
+    'generation_backing_custody_v1.clsp',
     'generation_reward_resume_v1.clsp',
     'generation_sols_tail_v1.clsp',
     "generation_batch_payout_v1.clsp",
@@ -23,6 +27,8 @@ GENERATION_PUZZLE_FILENAMES = (
     'generation_statutes_logic_v1.clsp',
     'generation_statutes_v1.clsp',
     'generation_pool_v1.clsp',
+    'generation_pool_v2.clsp',
+    'generation_primary_inventory_v2.clsp',
     'generation_pool_logic_v1.clsp',
     'generation_pool_logic_v2.clsp',
     'generation_sols_eve_v1.clsp',

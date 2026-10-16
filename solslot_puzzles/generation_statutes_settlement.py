@@ -38,7 +38,7 @@ class GenerationStatutesSource:
             raise ValueError('settlement requires the actual canonical generation statutes and pause registry')
         from solslot_puzzles import load_puzzle
         expected_pool=Component(config.component_id,config.pool_launcher_id,
-            load_puzzle('generation_pool_v1.clsp').get_tree_hash(),config.module_hash,config.version,config.compatibility)
+            load_puzzle('generation_pool_v2.clsp' if config.pool_puzzle_version == 7 else 'generation_pool_v1.clsp').get_tree_hash(),config.module_hash,config.version,config.compatibility)
         if expected_pool not in r.components:
             raise ValueError('pool policy differs from the confirmed registry')
         tip.validate()

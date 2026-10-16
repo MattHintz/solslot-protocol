@@ -40,7 +40,7 @@ async def generation(request):
     async with SpendSim.managed(None, defaults=DEFAULT_CONSTANTS) as sim:
         client = SimClient(sim)
         acs = Program.to(1)
-        for _ in range(18 if getattr(request,'param',False) in ('mint','batch') else 6 if getattr(request,'param',False)=='rewards' else 4): await sim.farm_block(acs.get_tree_hash())
+        for _ in range(18 if getattr(request,'param',False) in ('mint','batch','batch-revenue') else 6 if getattr(request,'param',False)=='rewards' else 4): await sim.farm_block(acs.get_tree_hash())
         origins = [r.coin for r in await client.get_coin_records_by_puzzle_hash(
             acs.get_tree_hash(), include_spent_coins=False)]
         ids = [Coin(c.name(), SINGLETON_LAUNCHER_HASH, uint64(1)).name() for c in origins]
@@ -93,7 +93,7 @@ async def generation(request):
                 custody=reserve_inner(generation=bindings.generation,registry_id=ids[3],
                     pool_id=ids[5],component_id=pool.component_id)
                 pool=replace(pool,permanent=replace(permanent,reserve_puzzle_hash=custody.get_tree_hash()))
-        if getattr(request,'param',False) == 'batch':
+        if getattr(request,'param',False) in ('batch','batch-revenue'):
             from solslot_puzzles.generation_statutes import GenerationStatutes
             from solslot_puzzles.generation_primary_inventory import batch_bindings
             from solslot_puzzles.generation_sols_reserve import reserve_inner
@@ -108,14 +108,27 @@ async def generation(request):
                 primary_batch_bindings=batch_bindings(generation=bindings.generation,pool_id=ids[7],
                     sgt=bindings,statutes_id=ids[5],treasury=parameters.permanent_rules.protocol_treasury_puzzle_hash,
                     oracle_pubkeys=tuple(bytes(AugSchemeMPL.key_gen(bytes([n])*32).get_g1()) for n in (81,82,83))))
-            custody=reserve_inner(generation=bindings.generation,registry_id=ids[3],pool_id=ids[7],component_id=b32(13))
+            restricted = request.param == 'batch-revenue'
+            revenue = None
+            if restricted:
+                from solslot_puzzles.generation_revenue import CompanyRevenue, BackingCustody
+                revenue = CompanyRevenue(bindings.generation, ids[4]).inner().get_tree_hash()
+                parameters = replace(parameters, permanent_rules=replace(parameters.permanent_rules,
+                    protocol_treasury_puzzle_hash=BackingCustody(bindings.generation).inner().get_tree_hash()))
+                mint = replace(mint, treasury_puzzle_hash=revenue, primary_batch_bindings=batch_bindings(
+                    generation=bindings.generation, pool_id=ids[7], sgt=bindings, statutes_id=ids[5],
+                    treasury=revenue, pool_kernel_version=2,
+                    oracle_pubkeys=tuple(bytes(AugSchemeMPL.key_gen(bytes([n])*32).get_g1()) for n in (81,82,83))))
+            custody=reserve_inner(generation=bindings.generation,registry_id=ids[3],pool_id=ids[7],component_id=b32(13),
+                pool_kernel_version=2 if restricted else 1)
             launcher=load_puzzle('singleton_launcher_with_did.clsp').curry(singleton_struct(mint.launcher_id))
             permanent=replace(CONFIG,pool_launcher_id=ids[7],governance_singleton_struct=singleton_struct(ids[2]),
                 statutes_inner_mod_hash=load_puzzle('generation_statutes_v1.clsp').get_tree_hash(),
                 statutes_singleton_struct=singleton_struct(ids[5]),permanent_rules=parameters.permanent_rules,
                 reserve_puzzle_hash=custody.get_tree_hash(),deed_launcher_puzzle_hash=launcher.get_tree_hash(),
                 vault_v2_mod_hash=load_puzzle('vault_singleton_inner_generation_v1.clsp').get_tree_hash())
-            pool=GenerationPool(bindings.generation,ids[3],b32(13),permanent,EMPTY_POOL)
+            pool=GenerationPool(bindings.generation,ids[3],b32(13),permanent,EMPTY_POOL,
+                company_revenue_puzzle_hash=revenue)
             governance=replace(governance,mint_id=mint.launcher_id)
         registry = Registry(bindings.generation, ids[3], ids[2], ids[4],
                             (component,parameters.component(),mint.component(),pool.component()) if parameters and mint and pool else (component,parameters.component()) if parameters else (component,mint.component()) if mint
@@ -147,8 +160,8 @@ async def generation(request):
                    snapshot=issue.holdings, sequence=0, lineage=lineage, locked={},
                    vaults=vaults,custody_keys=custody_keys,custody_types=custody_types,pending_custody=[],
                    parameters=parameters,parameters_coin=objects[4] if parameters else None,
-                   pool=pool,pool_coin=objects[6] if getattr(request,'param',False)=='batch' else objects[4] if pool else None,
-                   mint=mint,mint_coin=objects[5] if getattr(request,'param',False)=='batch' else objects[4] if mint else None,mint_funding=origins[8:33] if getattr(request,'param',False)=='batch' else origins[6:31] if mint else [])
+                   pool=pool,pool_coin=objects[6] if getattr(request,'param',False) in ('batch','batch-revenue') else objects[4] if pool else None,
+                   mint=mint,mint_coin=objects[5] if getattr(request,'param',False) in ('batch','batch-revenue') else objects[4] if mint else None,mint_funding=origins[8:33] if getattr(request,'param',False) in ('batch','batch-revenue') else origins[6:31] if mint else [])
 
 
 def upgrade_plan(c):

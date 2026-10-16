@@ -1,0 +1,33 @@
+; Primary technology fees are already paid once. Split that exact fee input
+; 70% to company revenue, 30% to native SGT rewards. No spending key, merge,
+; recipient substitution or second fee. Rounding matches existing fee routes.
+(mod (SELF BINDINGS STATUTES REVENUE CAT_MOD REWARD_MOD EPOCH_MOD SGT_KERNEL LEAF_MOD OWNER_MOD VAULT_MOD
+      asset my_id my_amount)
+  (include condition_codes.clib)
+  (include utils.clib)
+  (include utility_macros.clib)
+  (defconstant ZERO_B32 0x0000000000000000000000000000000000000000000000000000000000000000)
+  (defun-inline own-ph (self bindings statutes revenue cat reward epoch kernel leaf owner vault)
+    (curry_hashes self (sha256 1 self) (sha256tree bindings) (sha256tree statutes)
+      (sha256 1 revenue) (sha256 1 cat) (sha256 1 reward) (sha256 1 epoch)
+      (sha256 1 kernel) (sha256 1 leaf) (sha256 1 owner) (sha256 1 vault)))
+  (defun-inline rewards (bindings statutes asset cat reward epoch kernel leaf owner vault)
+    (curry_hashes reward (sha256 1 reward) (sha256tree bindings) (sha256tree statutes)
+      (sha256 1 asset) (sha256 1 cat) (sha256 1 epoch) (sha256 1 kernel)
+      (sha256 1 leaf) (sha256 1 owner) (sha256 1 vault)))
+  (defun-inline full-ph (own asset cat)
+    (if (= asset ZERO_B32) own (curry_hashes cat (sha256 1 cat) (sha256 1 asset) own)))
+  (defun split-fee (bindings statutes asset revenue cat reward epoch kernel leaf owner vault id amount own company)
+    (c (list ASSERT_MY_COIN_ID id)
+      (c (list ASSERT_MY_AMOUNT amount)
+        (c (list ASSERT_MY_PUZZLEHASH (full-ph own asset cat))
+          (c (list CREATE_COIN revenue company (list revenue))
+            (c (list REMARK "SOLSLOT_PRIMARY_FEE_SPLIT" (f bindings) asset amount company (- amount company))
+              (if (> amount company)
+                (list (list CREATE_COIN (rewards bindings statutes asset cat reward epoch kernel leaf owner vault)
+                  (- amount company))) ())))))))
+  (assert (is-size-b32 asset) (is-size-b32 my_id) (is-uint64 my_amount) (> my_amount 0)
+    (is-size-b32 REVENUE) (not (= REVENUE ZERO_B32))
+    (split-fee BINDINGS STATUTES asset REVENUE CAT_MOD REWARD_MOD EPOCH_MOD SGT_KERNEL LEAF_MOD OWNER_MOD VAULT_MOD
+      my_id my_amount (own-ph SELF BINDINGS STATUTES REVENUE CAT_MOD REWARD_MOD EPOCH_MOD SGT_KERNEL LEAF_MOD OWNER_MOD VAULT_MOD)
+      (/ (+ (* my_amount 70) 99) 100))))

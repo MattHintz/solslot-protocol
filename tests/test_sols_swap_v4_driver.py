@@ -262,8 +262,9 @@ def _fixture(*, auth_type=AUTH_TYPE_BLS, owner_pubkey=OWNER_PK,
     # defaults and never have their signed fixtures silently reinterpreted.
     PARAMETERS = parameters if parameters is not None else globals()['PARAMETERS']
     CONFIG = config if config is not None else globals()['CONFIG']
+    RULES = CONFIG.permanent_rules
     STATUTES_STATE = statutes_state if statutes_state is not None else globals()['STATUTES_STATE']
-    EMPTY_POOL = replace(globals()['EMPTY_POOL'], state_version=2) if CONFIG.pool_puzzle_version==6 else globals()['EMPTY_POOL']
+    EMPTY_POOL = replace(globals()['EMPTY_POOL'], state_version=2) if CONFIG.pool_puzzle_version in (6, 7) else globals()['EMPTY_POOL']
     empty_pool_inner = make_pool_v4_full(CONFIG, EMPTY_POOL).uncurry()
     assert empty_pool_inner is not None
     _, empty_pool_args = empty_pool_inner
@@ -321,7 +322,7 @@ def _fixture(*, auth_type=AUTH_TYPE_BLS, owner_pubkey=OWNER_PK,
     )
     assert parent_pool_coin == empty_pool_coin
     vault_constructor = puzzle_for_vault_v2_full
-    if CONFIG.pool_puzzle_version == 6:
+    if CONFIG.pool_puzzle_version in (6, 7):
         from solslot_puzzles.generation_vault import vault_inner
         vault_constructor = lambda **kwargs: puzzle_for_singleton(kwargs['vault_launcher_id'], vault_inner(**kwargs))
     vault_full = vault_constructor(
@@ -670,8 +671,9 @@ def _reverse_arguments(*, auth_type=AUTH_TYPE_BLS, owner_pubkey=OWNER_PK,
                        parameters=None, config=None, statutes_state=None):
     PARAMETERS = parameters if parameters is not None else globals()['PARAMETERS']
     CONFIG = config if config is not None else globals()['CONFIG']
+    RULES = CONFIG.permanent_rules
     STATUTES_STATE = statutes_state if statutes_state is not None else globals()['STATUTES_STATE']
-    EMPTY_POOL = replace(globals()['EMPTY_POOL'], state_version=2) if CONFIG.pool_puzzle_version==6 else globals()['EMPTY_POOL']
+    EMPTY_POOL = replace(globals()['EMPTY_POOL'], state_version=2) if CONFIG.pool_puzzle_version in (6, 7) else globals()['EMPTY_POOL']
     empty_pool_full = make_pool_v4_full(CONFIG, EMPTY_POOL)
     uncurried_pool = empty_pool_full.uncurry()
     assert uncurried_pool is not None
@@ -685,7 +687,7 @@ def _reverse_arguments(*, auth_type=AUTH_TYPE_BLS, owner_pubkey=OWNER_PK,
     )
 
     vault_constructor = puzzle_for_vault_v2_full
-    if CONFIG.pool_puzzle_version == 6:
+    if CONFIG.pool_puzzle_version in (6, 7):
         from solslot_puzzles.generation_vault import vault_inner
         vault_constructor = lambda **kwargs: puzzle_for_singleton(kwargs['vault_launcher_id'], vault_inner(**kwargs))
     vault_full = vault_constructor(
