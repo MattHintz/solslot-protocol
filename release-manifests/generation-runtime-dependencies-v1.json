@@ -1,0 +1,18 @@
+{
+  "schema": "solslot.generation-runtime-dependencies.v1",
+  "network": "testnet11",
+  "purpose": "Exact generation runtime; historical RC23 evidence remains unchanged",
+  "retainedRecoveryManifestHash": "66c4d3c002311ef964e3326cafc87922e277babbf1c1dba8888c980b4cf8d1a1",
+  "requirementsLockSha256": "3dc0b7180e3c66d29e8cd2d4f728357b786d1438241d39c3a8e8f91f07e02808",
+  "runtimeVersions": {
+    "chia-blockchain": "2.7.4",
+    "chia_rs": "0.48.0",
+    "chia-puzzles-py": "0.20.3",
+    "zstd": "1.5.7.2",
+    "PyJWT": "2.15.0",
+    "setuptools": "83.0.0",
+    "fastapi": "0.139.2",
+    "starlette": "1.7.0",
+    "uvicorn": "0.51.0"
+  }
+}

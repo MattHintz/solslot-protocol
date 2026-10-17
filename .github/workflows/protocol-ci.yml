@@ -14,6 +14,7 @@ jobs:
         working-directory: protocol
     env:
       PIP_BUILD_CONSTRAINT: ${{ github.workspace }}/protocol/build-constraints.lock
+      PYTHONPATH: ${{ github.workspace }}/solslot-api
     steps:
       - uses: actions/checkout@v4
         with:
@@ -25,21 +26,33 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: MattHintz/solslot-portal
-          ref: 4fc251319e44641a9e82287a99100b19258a4d1c
+          ref: 58b6aae0f4df61b45e37d8c0ce53a206a7f3382d
           path: admin-portal
           persist-credentials: false
 
+      # Native generation integration tests import the matching API, rather
+      # than skipping reconstruction and durable-dispatch coverage in CI.
+      - uses: actions/checkout@v4
+        with:
+          repository: MattHintz/solslot-api
+          ref: 6f49e5f95a8b95b65569741560b066824b1c15d7
+          path: solslot-api
+          persist-credentials: false
+
+      - name: Expose the canonical portal sibling for schema checks
+        run: ln -s admin-portal ../solslot-portal
+
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.11"
           cache: pip
           cache-dependency-path: protocol/requirements-test.lock
 
       - name: Install hash-locked dependencies
         run: |
-          python -m pip install pip==26.2
+          python -m pip install pip==26.2.1
           python -m pip install --require-hashes -r requirements-test.lock
-          python -m pip install --no-deps -e .
+          python -m pip install --no-deps -e . -e ../solslot-api
           python -m pip check
 
       - run: python scripts/check_namespace.py
