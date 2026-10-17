@@ -59,6 +59,11 @@ jobs:
 
       - run: python scripts/check_clsp_hex_drift.py
 
+      - name: Check portable identity amendment fixtures
+        run: >-
+          python -m pytest tests/test_identity_deployment_amendment.py
+          tests/test_identity_network_amendment.py -q
+
       - run: python -m pytest tests/test_compile.py tests/test_puzzle_integrity.py -q
 
       - run: python -m pytest -q

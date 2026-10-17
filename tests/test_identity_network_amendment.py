@@ -2,10 +2,10 @@
 import copy
 from dataclasses import replace
 import hashlib
-import json
-from pathlib import Path
 
 import pytest
+
+from .identity_amendment_fixtures import SYNTHETIC_PLAN_HASH, synthetic_identity_records
 
 from solslot_puzzles import identity_network_amendment as network
 from solslot_puzzles import identity_deployment_amendment as v1
@@ -17,9 +17,8 @@ def seal(record):
 
 @pytest.fixture
 def records():
-    base = json.loads(Path('/home/hiram/solslot-work/e2e-audit-draft144/evidence/public-artifact.json').read_text())
-    old = json.loads(Path('/home/hiram/secure/solslot-deployments/AE-SOLSLOT-IDENTITY-COMPATIBILITY-20260928-148/deployment.json').read_text())
-    old_plan = '0xdb9912f4e47ec349d6fb67aa95f78058f8c64c757a22a2244af8f0d9a73a381b'
+    base, old = synthetic_identity_records()
+    old_plan = SYNTHETIC_PLAN_HASH
     boundary = {
         'authorityLauncherId': base['launcherIds']['adminAuthority'],
         'authorityCoinId': '0x' + 'aa' * 32, 'authorityVersion': 2,
