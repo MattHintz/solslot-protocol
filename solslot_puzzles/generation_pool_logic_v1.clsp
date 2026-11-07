@@ -1,0 +1,4 @@
+; ABI 1 policy is bounded by the permanent pool settlement kernel.
+(mod (action request . rest)
+  (if (= action "SWAP") (if (any (= request 1) (= request 2) (= request 3)) 1 (x))
+    (if (all (= action "READ") (= request "STATE")) 1 (x))))

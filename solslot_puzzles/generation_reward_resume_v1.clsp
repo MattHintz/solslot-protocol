@@ -1,0 +1,97 @@
+; Funded, permissionless continuation. Each transaction proves bounded rows
+; against the remaining tree, removes them and conserves the entire balance.
+; No holder-count limit, owner key, pause authority or arbitrary destination.
+(mod (SELF BINDINGS ASSET CAT_MOD LEAF_MOD OWNER_MOD VAULT_MOD FEE_INNER SGT_KERNEL
+      EPOCH ELIGIBLE BUDGET PHASE ROOT OWNERS
+      action my_id my_amount rows)
+  (include condition_codes.clib)
+  (include utils.clib)
+  (include utility_macros.clib)
+  (include generation_sgt_common_v1.clib)
+  (include sgt_holdings_merkle_v1.clib)
+  (defconstant ZERO 0x0000000000000000000000000000000000000000000000000000000000000000)
+  (defun nth (n xs) (if n (nth (- n 1) (r xs)) (f xs)))
+  (defun count (xs) (if xs (+ 1 (count (r xs))) 0))
+  (defun-inline asset-ph (asset cat inner)
+    (if (= asset ZERO) inner (curry_hashes cat (sha256 1 cat) (sha256 1 asset) inner)))
+  (defun-inline own (self bindings asset cat leaf owner vault fee kernel epoch eligible budget phase root owners)
+    (curry_hashes self (sha256 1 self) (sha256tree bindings) (sha256 1 asset)
+      (sha256 1 cat) (sha256 1 leaf) (sha256 1 owner) (sha256 1 vault) (sha256 1 fee)
+      (sha256 1 kernel) (sha256 1 epoch) (sha256 1 eligible) (sha256 1 budget)
+      (sha256 1 phase) (sha256tree root) (sha256tree owners)))
+  (defun-inline owner-record (owner weight)
+    (if weight (list ZERO weight 1 owner ()) ()))
+  (defun owner-add (owners owner before quantity proof)
+    (assert (is-size-b32 owner) (is-uint64 before) (not (> (+ before quantity) 1000000))
+      (replace-holding owners owner (owner-record owner before)
+        (owner-record owner (+ before quantity)) proof)))
+  ; row: holding ID, exact descriptor, current removal proof, previous
+  ; aggregated owner quantity, current owner update proof.
+  (defun scan (bindings kernel root owners rows)
+    (if rows
+      (assert (= (count (f rows)) 5) (= (count (nth 1 (f rows))) 5)
+        (in (nth 2 (nth 1 (f rows))) (list 1 2))
+        (valid-descriptor bindings (nth 2 (nth 1 (f rows))) (nth 3 (nth 1 (f rows)))
+          (nth 4 (nth 1 (f rows))) (nth 1 (nth 1 (f rows))))
+        (= (f (nth 1 (f rows))) (sgt-full-hash kernel bindings (nth 2 (nth 1 (f rows)))
+          (nth 3 (nth 1 (f rows))) (nth 4 (nth 1 (f rows)))))
+        (scan bindings kernel
+          (replace-holding root (f (f rows)) (nth 1 (f rows)) () (nth 2 (f rows)))
+          (owner-add owners (nth 3 (nth 1 (f rows))) (nth 3 (f rows))
+            (nth 1 (nth 1 (f rows))) (nth 4 (f rows))) (r rows)))
+      (list root owners)))
+  (defun-inline entitlement (budget quantity eligible) (/ (* budget quantity) eligible))
+  (defun-inline claim-ph (leaf gen asset epoch owner amount owner_mod vault)
+    (curry_hashes leaf (sha256 1 leaf) (sha256 1 gen) (sha256 1 asset) (sha256 1 epoch)
+      (sha256 1 owner) (sha256 1 owner) (sha256 1 amount) (sha256 1 owner_mod) (sha256 1 vault)))
+  ; row: owner, complete aggregated quantity, current removal proof.
+  (defun pay (leaf gen asset epoch owner_mod vault budget eligible owners rows paid conditions)
+    (if rows
+      (assert (= (count (f rows)) 3) (is-size-b32 (f (f rows)))
+        (is-uint64 (nth 1 (f rows))) (> (nth 1 (f rows)) 0)
+        (pay leaf gen asset epoch owner_mod vault budget eligible
+          (replace-holding owners (f (f rows)) (owner-record (f (f rows)) (nth 1 (f rows))) () (nth 2 (f rows)))
+          (r rows) (+ paid (entitlement budget (nth 1 (f rows)) eligible))
+          (if (entitlement budget (nth 1 (f rows)) eligible)
+            (c (list CREATE_COIN
+              (claim-ph leaf gen asset epoch (f (f rows)) (entitlement budget (nth 1 (f rows)) eligible) owner_mod vault)
+              (entitlement budget (nth 1 (f rows)) eligible) (list gen epoch (f (f rows)))) conditions)
+            conditions)))
+      (list owners paid conditions)))
+  (defun scan-output (self bindings asset cat leaf owner vault fee kernel epoch eligible budget balance result)
+    (assert (= (+ (nth 1 (f result)) (nth 1 (nth 1 result))) eligible)
+      (= (nth 1 (nth 1 result)) (nth 2 (nth 1 result)))
+      (= (+ (nth 2 (f result)) (nth 1 (nth 1 result))) 1000000)
+      (list (list CREATE_COIN
+        (own self bindings asset cat leaf owner vault fee kernel epoch eligible budget
+          (if (nth 1 (f result)) 0 1) (f result) (nth 1 result)) balance))))
+  (defun pay-output (self bindings asset cat leaf owner vault fee kernel epoch eligible budget balance root result)
+    (assert (not (> (nth 1 result) balance))
+      (merge-lists (nth 2 result)
+        (if (nth 1 (f result))
+          (list (list CREATE_COIN (own self bindings asset cat leaf owner vault fee kernel epoch eligible budget 1 root (f result))
+            (- balance (nth 1 result))))
+          ; Integer dust is retained for the next funded holder epoch.
+          (if (- balance (nth 1 result)) (list (list CREATE_COIN fee (- balance (nth 1 result)))) ())))))
+  (assert (is-size-b32 SELF) (is-size-b32 ASSET) (is-size-b32 CAT_MOD)
+    (is-size-b32 EPOCH) (is-size-b32 FEE_INNER) (is-size-b32 SGT_KERNEL)
+    (is-uint64 BUDGET) (> BUDGET 0) (is-uint64 ELIGIBLE) (> ELIGIBLE 0) (not (> ELIGIBLE 1000000))
+    (is-uint64 my_amount) (not (> my_amount BUDGET)) (is-size-b32 my_id)
+    (= (count ROOT) 3) (= (count OWNERS) 3) (> (count rows) 0) (not (> (count rows) 16))
+    (merge-lists
+      (list (list ASSERT_MY_COIN_ID my_id) (list ASSERT_MY_AMOUNT my_amount)
+        (list ASSERT_MY_PUZZLEHASH (asset-ph ASSET CAT_MOD
+          (own SELF BINDINGS ASSET CAT_MOD LEAF_MOD OWNER_MOD VAULT_MOD FEE_INNER SGT_KERNEL
+            EPOCH ELIGIBLE BUDGET PHASE ROOT OWNERS)))
+        (list REMARK "SGT_REWARD_PROGRESS" (f BINDINGS) EPOCH PHASE))
+      (if (= PHASE 0)
+        (assert (= action "SCAN") (= my_amount BUDGET)
+          (> (nth 1 ROOT) 0) (= (+ (nth 1 ROOT) (nth 1 OWNERS)) ELIGIBLE)
+          (scan-output SELF BINDINGS ASSET CAT_MOD LEAF_MOD OWNER_MOD VAULT_MOD FEE_INNER SGT_KERNEL
+            EPOCH ELIGIBLE BUDGET my_amount (scan BINDINGS SGT_KERNEL ROOT OWNERS rows)))
+        (assert (= PHASE 1) (= action "PAY") (not (nth 1 ROOT))
+          (> (nth 1 OWNERS) 0) (= (nth 1 OWNERS) (nth 2 OWNERS))
+          (pay-output SELF BINDINGS ASSET CAT_MOD LEAF_MOD OWNER_MOD VAULT_MOD FEE_INNER SGT_KERNEL
+            EPOCH ELIGIBLE BUDGET my_amount ROOT
+            (pay LEAF_MOD (f BINDINGS) ASSET EPOCH OWNER_MOD VAULT_MOD BUDGET ELIGIBLE OWNERS rows 0 ()))))))
+)

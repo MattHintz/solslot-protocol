@@ -1,0 +1,145 @@
+; Separate company revenue from permanently non-withdrawable backing.
+; Stable pool authority. The uniform registry ABI curries immutable state.
+; Dispatch adds (generation registry component logic version compat eve_mod
+; statutes_current_inner) to the eight permanent market bindings. The current
+; statutes inner is a proof input, never mutable state or a custody binding.
+; Policy can restrict supported operations but cannot rewrite conditions,
+; destinations, token identities, inventory, fees or the economic successor.
+(mod (SELF GENERATION REGISTRY COMPONENT LOGIC VERSION COMPAT STATE
+      my_id my_inner_puzzlehash my_amount spend_case params policy statutes_inner_hash)
+  (include condition_codes.clib)
+  (include utils.clib)
+  (include utility_macros.clib)
+  (include generation_pool_settlement_v2.clib)
+  (defun length (xs) (if xs (+ 1 (length (r xs))) 0))
+  (defun base-market (market)
+    (list (nth 0 market) (nth 1 market) (nth 2 market) (nth 3 market)
+          (nth 4 market) (nth 5 market) (nth 6 market) (nth 7 market)))
+  (defun pool-state (mine statutes market root bootstrap nav assets liabilities count total reserve version)
+    (list mine statutes (base-market market) (nth 6 (nth 8 market))
+          root bootstrap nav assets liabilities count total reserve version))
+  (defun upgrade-market (market next next_version next_compat)
+    (append (base-market market)
+      (list (list (nth 0 (nth 8 market)) (nth 1 (nth 8 market)) (nth 2 (nth 8 market))
+                  next next_version next_compat (nth 6 (nth 8 market))))))
+  (defun append (a b) (if a (c (f a) (append (r a) b)) b))
+  (defun seed-sols (self mine statutes market root bootstrap nav assets liabilities count total reserve version
+                   my_id (parent eve_id))
+    (assert (= version 1) (not bootstrap) (not nav) (not assets) (not liabilities) (not count)
+      (= total 1) (= reserve 1) (= root (sha256tree ()))
+      (is-size-b32 parent) (is-size-b32 eve_id)
+      (= eve_id (sha256 parent
+        (curry_hashes (cat-mod market) (sha256 1 (cat-mod market)) (sha256 1 (sols-tail statutes))
+          (curry_hashes (nth 6 (nth 8 market))
+            (sha256 1 (nth 0 (nth 8 market))) (sha256tree mine) (sha256 1 (reserve-puzhash market)))) 0x01))
+      (list
+        (list CREATE_COIN (compute-inner-ph self mine statutes market
+          root bootstrap nav assets liabilities count total reserve 2) 1)
+        (list CREATE_PUZZLE_ANNOUNCEMENT (token-mint-message eve_id 1))
+        (list CREATE_COIN_ANNOUNCEMENT (token-mint-message eve_id 1))
+        (list ASSERT_COIN_ANNOUNCEMENT
+          (sha256 eve_id (sha256tree (list "SOLS_GENESIS_ANCHOR" (nth 0 (nth 8 market)) my_id eve_id (reserve-puzhash market)))))
+        (list REMARK "SOLSLOT_INITIAL_SOLS" (nth 0 (nth 8 market)) eve_id))))
+  (defun upgrade (self mine statutes market root bootstrap nav assets liabilities count total reserve version
+                   (registry_inner plan next next_version next_compat))
+    (assert (is-size-b32 registry_inner) (is-size-b32 plan) (is-size-b32 next)
+      (not (= next (nth 3 (nth 8 market))))
+      (= next_version (+ 1 (nth 4 (nth 8 market)))) (= next_compat (nth 5 (nth 8 market)))
+      (list
+        (list RECEIVE_MESSAGE 18
+          (sha256tree (list "COMPONENT_UPGRADE" (nth 0 (nth 8 market)) plan
+            (nth 2 (nth 8 market)) (nth 3 (nth 8 market)) next next_version next_compat))
+          (calculate_full_puzzle_hash (nth 1 (nth 8 market)) registry_inner))
+        (list SEND_MESSAGE 18
+          (sha256tree (list "COMPONENT_READY" (nth 0 (nth 8 market)) plan (nth 2 (nth 8 market))
+            (sha256tree (pool-state mine statutes market root bootstrap nav assets liabilities count total reserve version))))
+          (calculate_full_puzzle_hash (nth 1 (nth 8 market)) registry_inner))
+        (list CREATE_COIN (compute-inner-ph self mine statutes
+          (upgrade-market market next next_version next_compat)
+          root bootstrap nav assets liabilities count total reserve version) 1))))
+  (defun read-state (self mine statutes market root bootstrap nav assets liabilities count total reserve version
+                    request program)
+    (assert (= (sha256tree program) (nth 3 (nth 8 market)))
+      (= (a program (list "READ" request)) 1)
+      (list (list CREATE_COIN (compute-inner-ph self mine statutes market
+        root bootstrap nav assets liabilities count total reserve version) 1)
+        (list REMARK "SOLSLOT_POOL_STATE" (nth 0 (nth 8 market)) (nth 2 (nth 8 market))
+          (nth 4 (nth 8 market))
+          (sha256tree (pool-state mine statutes market root bootstrap nav assets liabilities count total reserve version))))))
+  (defun dispatch (MOD_HASH SINGLETON_STRUCT STATUTES_CONFIG MARKET_CONFIG
+      INVENTORY_ROOT BOOTSTRAP_COMPLETE INVENTORY_NAV TREASURY_ASSETS
+      PROVEN_LIABILITIES DEED_COUNT TOTAL_SOLS RESERVE_SOLS STATE_VERSION
+      my_id my_inner_puzzlehash my_amount spend_case params policy)
+  (assert (= (length MARKET_CONFIG) 9) (= (length (nth 8 MARKET_CONFIG)) 8)
+    (is-size-b32 (nth 0 (nth 8 MARKET_CONFIG))) (is-size-b32 (nth 2 (nth 8 MARKET_CONFIG)))
+    (is-size-b32 (nth 3 (nth 8 MARKET_CONFIG)))
+    (is-uint64 (nth 4 (nth 8 MARKET_CONFIG))) (> (nth 4 (nth 8 MARKET_CONFIG)) 0)
+    (is-uint64 (nth 5 (nth 8 MARKET_CONFIG))) (> (nth 5 (nth 8 MARKET_CONFIG)) 0)
+    (is-size-b32 my_id) (is-size-b32 my_inner_puzzlehash) (= my_amount 1)
+    (= my_inner_puzzlehash (compute-inner-ph MOD_HASH SINGLETON_STRUCT STATUTES_CONFIG MARKET_CONFIG
+      INVENTORY_ROOT BOOTSTRAP_COMPLETE INVENTORY_NAV TREASURY_ASSETS PROVEN_LIABILITIES
+      DEED_COUNT TOTAL_SOLS RESERVE_SOLS STATE_VERSION))
+    (merge-lists (identity-conditions SINGLETON_STRUCT my_id my_inner_puzzlehash my_amount)
+      (if (= spend_case "SEED_SOLS")
+        (seed-sols MOD_HASH SINGLETON_STRUCT STATUTES_CONFIG MARKET_CONFIG
+          INVENTORY_ROOT BOOTSTRAP_COMPLETE INVENTORY_NAV TREASURY_ASSETS PROVEN_LIABILITIES
+          DEED_COUNT TOTAL_SOLS RESERVE_SOLS STATE_VERSION my_id params)
+      (if (= spend_case "UPGRADE")
+        (upgrade MOD_HASH SINGLETON_STRUCT STATUTES_CONFIG MARKET_CONFIG
+          INVENTORY_ROOT BOOTSTRAP_COMPLETE INVENTORY_NAV TREASURY_ASSETS PROVEN_LIABILITIES
+          DEED_COUNT TOTAL_SOLS RESERVE_SOLS STATE_VERSION params)
+        (if (= spend_case "READ")
+          (read-state MOD_HASH SINGLETON_STRUCT STATUTES_CONFIG MARKET_CONFIG
+            INVENTORY_ROOT BOOTSTRAP_COMPLETE INVENTORY_NAV TREASURY_ASSETS PROVEN_LIABILITIES
+            DEED_COUNT TOTAL_SOLS RESERVE_SOLS STATE_VERSION params policy)
+          (assert (> STATE_VERSION 1)
+            (is-size-b32 (nth 7 (nth 8 MARKET_CONFIG))) (not (= (nth 7 (nth 8 MARKET_CONFIG)) ZERO_B32))
+            (= (sha256tree policy) (nth 3 (nth 8 MARKET_CONFIG)))
+            (= (a policy (list "SWAP" spend_case (nth 1 params))) 1)
+    (if (any (= spend_case DEED_TO_SOLS) (= spend_case 3))
+      (spend-deed-to-sols
+        MOD_HASH SINGLETON_STRUCT STATUTES_CONFIG MARKET_CONFIG
+        INVENTORY_ROOT BOOTSTRAP_COMPLETE INVENTORY_NAV TREASURY_ASSETS
+        PROVEN_LIABILITIES DEED_COUNT TOTAL_SOLS RESERVE_SOLS STATE_VERSION
+        my_id my_inner_puzzlehash my_amount
+        (nth 0 params) (nth 1 params) (nth 2 params) (nth 3 params)
+        (nth 4 params) (nth 5 params) (nth 6 params) (nth 7 params)
+        (nth 8 params) (nth 9 params) (nth 10 params) (nth 11 params)
+        (nth 12 params) (nth 13 params) (nth 14 params) (nth 15 params)
+        (nth 16 params) (nth 17 params) (nth 18 params) (nth 19 params)
+        (nth 20 params) (nth 21 params) (nth 22 params) (nth 23 params)
+        (nth 24 params) (nth 25 params) (nth 26 params) (nth 27 params)
+        (nth 28 params) (nth 29 params) (nth 30 params) (nth 31 params)
+        (nth 32 params) (nth 33 params) (nth 34 params) (nth 35 params)
+        (nth 36 params) (nth 37 params) (nth 38 params)
+        (if (= spend_case 3) PRIMARY_INVENTORY_MOD_HASH ())
+        (if (= spend_case 3) (nth 39 params) ())
+        (if (= spend_case 3) (nth 40 params) ()))
+      (if (= spend_case SOLS_TO_DEED)
+        (spend-sols-to-deed
+          MOD_HASH SINGLETON_STRUCT STATUTES_CONFIG MARKET_CONFIG
+          INVENTORY_ROOT BOOTSTRAP_COMPLETE INVENTORY_NAV TREASURY_ASSETS
+          PROVEN_LIABILITIES DEED_COUNT TOTAL_SOLS RESERVE_SOLS STATE_VERSION
+          my_id my_inner_puzzlehash my_amount
+          (nth 0 params) (nth 1 params) (nth 2 params) (nth 3 params)
+          (nth 4 params) (nth 5 params) (nth 6 params) (nth 7 params)
+          (nth 8 params) (nth 9 params) (nth 10 params) (nth 11 params)
+          (nth 12 params) (nth 13 params) (nth 14 params) (nth 15 params)
+          (nth 16 params) (nth 17 params) (nth 18 params) (nth 19 params)
+          (nth 20 params) (nth 21 params) (nth 22 params) (nth 23 params)
+          (nth 24 params) (nth 25 params) (nth 26 params) (nth 27 params)
+          (nth 28 params) (nth 29 params) (nth 30 params) (nth 31 params)
+          (nth 32 params))
+        (x "UNSUPPORTED RC22 POOL ACTION"))))))))))
+  (defun execute (self gen registry component logic version compat
+       (mine statutes market eve root bootstrap nav assets liabilities count total reserve state_version)
+       my_id my_inner my_amount action params policy statutes_inner_hash)
+    (assert (= (length market) 8) (= (length statutes) 10)
+      (is-size-b32 (nth 9 statutes)) (not (= (nth 9 statutes) ZERO_B32))
+      (not (= (nth 9 statutes) (protocol-treasury statutes)))
+      (dispatch self mine statutes
+        (append market (list (list gen registry component logic version compat eve statutes_inner_hash)))
+        root bootstrap nav assets liabilities count total reserve state_version
+        my_id my_inner my_amount action params policy)))
+  (execute SELF GENERATION REGISTRY COMPONENT LOGIC VERSION COMPAT STATE
+    my_id my_inner_puzzlehash my_amount spend_case params policy statutes_inner_hash))

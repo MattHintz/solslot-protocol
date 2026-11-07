@@ -1,0 +1,37 @@
+; Permanent bounded CAT fee custody. All funding is consumed by one
+; authenticated ephemeral epoch receipt. There is no withdrawal branch.
+(mod (SELF BINDINGS STATUTES_STRUCT ASSET CAT_MOD RECEIPT_MOD SGT_KERNEL LEAF_MOD VAULT_OWNER_MOD P2_VAULT_MOD
+      my_id my_amount receipt_parent epoch period)
+  (include condition_codes.clib)
+  (include utils.clib)
+  (include utility_macros.clib)
+  (defconstant ZERO_B32 0x0000000000000000000000000000000000000000000000000000000000000000)
+  (defun-inline asset-ph (asset cat inner)
+    (if (= asset ZERO_B32) inner (curry_hashes cat (sha256 1 cat) (sha256 1 asset) inner)))
+  (defun-inline receipt-inner (self bindings statutes asset cat receipt kernel leaf owner vault)
+    (curry_hashes receipt (sha256 1 receipt) (sha256tree bindings) (sha256tree statutes)
+      (sha256 1 asset) (sha256 1 cat) (sha256 1 self) (sha256 1 kernel)
+      (sha256 1 leaf) (sha256 1 owner) (sha256 1 vault)))
+  (defun main (bindings asset my_id my_amount receipt_parent epoch period receipt_inner receipt_ph)
+    (assert (is-size-b32 my_id) (is-uint64 my_amount) (> my_amount 0)
+      (is-size-b32 receipt_parent) (is-size-b32 epoch) (is-uint64 period)
+      (> period 59) (not (> period 2592000))
+      (list
+        (list ASSERT_MY_COIN_ID my_id)
+        (list ASSERT_MY_AMOUNT my_amount)
+        (list ASSERT_SECONDS_RELATIVE period)
+        (list ASSERT_COIN_ANNOUNCEMENT
+          (sha256 (sha256 receipt_parent receipt_ph ())
+            (sha256tree (list "SGT_FEE_ACCEPT_V1" (f bindings) asset epoch period my_id my_amount))))
+        (list CREATE_COIN_ANNOUNCEMENT
+          (sha256tree (list "SGT_FEE_SOURCE_V1" (f bindings) asset
+            (sha256 receipt_parent receipt_ph ()) epoch period my_id my_amount)))
+        (if (= my_id receipt_parent) (list CREATE_COIN receipt_inner 0)
+          (list REMARK "SGT_REWARD_FEE_INPUT" epoch)))))
+  (assert (is-size-b32 SELF) (is-size-b32 ASSET) (is-size-b32 CAT_MOD) (is-size-b32 RECEIPT_MOD)
+    (is-size-b32 SGT_KERNEL) (is-size-b32 LEAF_MOD) (is-size-b32 VAULT_OWNER_MOD) (is-size-b32 P2_VAULT_MOD)
+    (main BINDINGS ASSET my_id my_amount receipt_parent epoch period
+      (receipt-inner SELF BINDINGS STATUTES_STRUCT ASSET CAT_MOD RECEIPT_MOD SGT_KERNEL LEAF_MOD VAULT_OWNER_MOD P2_VAULT_MOD)
+      (asset-ph ASSET CAT_MOD
+        (receipt-inner SELF BINDINGS STATUTES_STRUCT ASSET CAT_MOD RECEIPT_MOD SGT_KERNEL LEAF_MOD VAULT_OWNER_MOD P2_VAULT_MOD))))
+)

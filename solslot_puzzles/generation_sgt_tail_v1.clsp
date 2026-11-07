@@ -1,0 +1,32 @@
+; Fixed supply AND destinations. The only eve accepted has this genesis
+; parent, amount 1,000,000 and one canonical inner puzzle hash. Creating two
+; such eves would create the same coin ID and is rejected by consensus.
+; All future CAT rings conserve supply; no mint/melt/reissue path exists.
+; SOURCE commits the frozen preparation manifest and reserved coordinates.
+(mod (GENESIS GENERATION LEDGER_STRUCT GOV_STRUCT RESERVE RECIPIENTS
+      EVE_MOD SGT_KERNEL LEDGER_KERNEL CAT_MOD SOURCE
+      Truths parent_is_cat lineage_proof delta inner_conditions extra)
+  (include cat_truths.clib)
+  (include utils.clib)
+  (include utility_macros.clib)
+  (defun-inline canonical-eve (eve kernel ledger_kernel gen ledger gov reserve recipients cat tail)
+    (curry_hashes eve
+      (sha256tree (list gen ledger gov reserve cat tail))
+      (sha256tree recipients) (sha256 1 kernel) (sha256 1 ledger_kernel)))
+  (defun valid-recipients (recipients reserve)
+    (if recipients
+      (and (is-size-b32 (f recipients)) (not (= (f recipients) 0x0000000000000000000000000000000000000000000000000000000000000000))
+        (not (= (f recipients) reserve)) (not (in (f recipients) (r recipients)))
+        (valid-recipients (r recipients) reserve)) 1))
+  (defun list-length (items) (if items (+ 1 (list-length (r items))) 0))
+  (assert (not delta) (not parent_is_cat)
+    (is-size-b32 GENESIS) (is-size-b32 GENERATION) (is-size-b32 SOURCE)
+    (is-size-b32 EVE_MOD) (is-size-b32 SGT_KERNEL) (is-size-b32 LEDGER_KERNEL) (is-size-b32 RESERVE)
+    (= (list-length RECIPIENTS) 3) (valid-recipients RECIPIENTS RESERVE)
+    (= (my_parent_cat_truth Truths) GENESIS)
+    (= (my_amount_cat_truth Truths) 1000000)
+    (= (cat_mod_hash_truth Truths) CAT_MOD)
+    (= (my_inner_puzzle_hash_cat_truth Truths)
+      (canonical-eve EVE_MOD SGT_KERNEL LEDGER_KERNEL GENERATION LEDGER_STRUCT GOV_STRUCT RESERVE
+        RECIPIENTS CAT_MOD (cat_tail_program_hash_truth Truths)))
+    ()))

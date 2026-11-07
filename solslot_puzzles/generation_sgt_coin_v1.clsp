@@ -1,0 +1,91 @@
+; Immutable CAT inner boundary: outputs always retain this kernel, generation,
+; CAT identity and ledger. There is no melt, arbitrary inner replacement, or
+; reserve voting path. Ownership authorizes the exact transition digest.
+(mod (SELF BINDINGS KIND OWNER LOCK
+      action my_id my_amount ledger_inner owner_puzzle owner_solution gov_inner outputs)
+  (include condition_codes.clib)
+  (include utils.clib)
+  (include utility_macros.clib)
+  (include generation_sgt_common_v1.clib)
+  (defun outputs-conditions (self bindings outputs)
+    (if outputs
+      (c (output-condition self bindings (f outputs))
+        (outputs-conditions self bindings (r outputs))) ()))
+  (defun output-condition (self bindings (kind owner lock amount))
+    (assert (valid-descriptor bindings kind owner lock amount)
+      (list CREATE_COIN (sgt-inner-hash self bindings kind owner lock) amount (list owner))))
+  (defun valid-free-outputs (outputs)
+    (if outputs
+      (and (any (= (f (f outputs)) 1) (= (f (f outputs)) 3))
+        (valid-free-outputs (r outputs))) 1))
+  (defun valid-reserve-outputs (outputs)
+    (if outputs
+      (and (any (= (f (f outputs)) 3) (= (f (f outputs)) 4))
+        (valid-reserve-outputs (r outputs))) 1))
+  (defun-inline one-output (outputs kind owner lock amount)
+    (= (sha256tree outputs) (sha256tree (list (list kind owner lock amount)))))
+  (defun owner-conditions (conditions digest found)
+    (if conditions
+      (if (= (f (f conditions)) REMARK)
+        (assert (= (sha256tree (f conditions))
+                   (sha256tree (list REMARK "SGT_AUTHORIZE" digest)))
+          (owner-conditions (r conditions) digest 1))
+        (assert
+          (in (f (f conditions)) (list AGG_SIG_ME ASSERT_COIN_ANNOUNCEMENT
+              ASSERT_PUZZLE_ANNOUNCEMENT RECEIVE_MESSAGE ASSERT_MY_COIN_ID
+              ASSERT_SECONDS_ABSOLUTE ASSERT_BEFORE_SECONDS_ABSOLUTE))
+          (c (f conditions) (owner-conditions (r conditions) digest found))))
+      (assert found ())))
+  (defun-inline authorized (owner puzzle solution digest)
+    (assert (= (sha256tree puzzle) owner)
+      (owner-conditions (a puzzle solution) digest 0)))
+  (defun-inline gov-authorized (bindings gov_inner digest)
+    (assert (is-size-b32 gov_inner)
+      (list
+        (list RECEIVE_MESSAGE 18 digest
+          (calculate_full_puzzle_hash (f (r (r bindings))) gov_inner))
+        ; Only the kernel emits SEND_MESSAGE. An owner's delegated RECEIVE
+        ; cannot masquerade as a real voting lock or governed allocation.
+        (list SEND_MESSAGE 58 digest
+          (calculate_full_puzzle_hash (f (r (r bindings))) gov_inner)))))
+  (defun authority-conditions (bindings kind owner lock action my_id my_amount
+                               owner_puzzle owner_solution gov_inner outputs digest)
+    (if (= kind 1)
+      (merge-lists (authorized owner owner_puzzle owner_solution digest)
+        (if (= action "TRANSFER")
+          (assert (valid-free-outputs outputs) ())
+          (assert (= action "LOCK") outputs
+            (one-output outputs 2 owner (f (r (r (f outputs)))) my_amount)
+            (gov-authorized bindings gov_inner digest))))
+      (if (= kind 2)
+        (if (= action "UNLOCK")
+          (assert (one-output outputs 1 owner () my_amount)
+            (gov-authorized bindings gov_inner digest))
+          (assert (= action "LOCK") outputs
+            (not (= lock (f (r (r (f outputs))))))
+            (one-output outputs 2 owner (f (r (r (f outputs)))) my_amount)
+            (merge-lists (authorized owner owner_puzzle owner_solution digest)
+              (gov-authorized bindings gov_inner digest))))
+        (if (= kind 3)
+          (assert (= action "ALLOCATE") (valid-reserve-outputs outputs)
+            (gov-authorized bindings gov_inner digest))
+          (if (= action "DELIVER")
+            (assert (one-output outputs 1 owner () my_amount) ())
+            (assert (= action "RETURN")
+              (one-output outputs 3 (f (r (r (r bindings)))) () my_amount)
+              (gov-authorized bindings gov_inner digest)))))))
+  (assert
+    (is-size-b32 SELF) (is-size-b32 my_id) (is-size-b32 ledger_inner)
+    (valid-descriptor BINDINGS KIND OWNER LOCK my_amount)
+    (merge-lists
+      (list (list ASSERT_MY_COIN_ID my_id) (list ASSERT_MY_AMOUNT my_amount)
+        (list CREATE_COIN_ANNOUNCEMENT (transfer-message (f BINDINGS) my_id action outputs))
+        (list SEND_MESSAGE 58 (transfer-message (f BINDINGS) my_id action outputs)
+          (calculate_full_puzzle_hash (f (r BINDINGS)) ledger_inner))
+        (list RECEIVE_MESSAGE 23 (transfer-message (f BINDINGS) my_id action outputs)
+          (calculate_full_puzzle_hash (f (r BINDINGS)) ledger_inner)))
+      (merge-lists
+        (authority-conditions BINDINGS KIND OWNER LOCK action my_id my_amount
+          owner_puzzle owner_solution gov_inner outputs
+          (transfer-message (f BINDINGS) my_id action outputs))
+        (outputs-conditions SELF BINDINGS outputs)))))

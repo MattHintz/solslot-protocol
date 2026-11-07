@@ -1,0 +1,43 @@
+; Canonical one-use SGT eve. TAIL authenticates this exact curried module,
+; parent and amount. TAIL reveal is solution data, avoiding a hash cycle.
+(mod (BINDINGS RECIPIENTS SGT_KERNEL LEDGER_KERNEL tail_reveal my_id insertion_proofs)
+  (include condition_codes.clib)
+  (include utils.clib)
+  (include utility_macros.clib)
+  (include generation_sgt_common_v1.clib)
+  (include sgt_holdings_merkle_v1.clib)
+  (defun empty-root (root depth)
+    (if depth (empty-root (sum-node root root) (- depth 1)) root))
+  (defun add-recipient (root bindings kernel parent owner kind amount proof)
+    (replace-holding root (sha256 parent (sgt-full-hash kernel bindings kind owner ()) amount) ()
+      (list (sgt-full-hash kernel bindings kind owner ()) amount kind owner ()) proof))
+  (defun genesis-root (root bindings recipients kernel parent proofs)
+    (assert proofs
+      (if recipients
+        (genesis-root (add-recipient root bindings kernel parent (f recipients) 1 10000 (f proofs))
+          bindings (r recipients) kernel parent (r proofs))
+        (assert (not (r proofs))
+          (add-recipient root bindings kernel parent (f (r (r (r bindings)))) 3 970000 (f proofs))))))
+  (defun finish (bindings recipients kernel ledger tail my_id root)
+    (assert (= (f (r root)) 30000) (= (f (r (r root))) 1000000)
+      (merge-lists
+        (list (list ASSERT_MY_COIN_ID my_id)
+          (list CREATE_COIN () -113 tail ())
+          (list SEND_MESSAGE 18 (sha256tree (list "GENESIS_HOLDINGS" (f bindings) my_id root))
+            (calculate_full_puzzle_hash (f (r bindings))
+              (curry_hashes ledger (sha256 1 ledger) (sha256tree bindings)
+                (sha256 1 kernel) (sha256tree root) (sha256 1 0))))
+          (list RECEIVE_MESSAGE 18 (sha256tree (list "GENESIS_HOLDINGS" (f bindings) my_id root))
+            (calculate_full_puzzle_hash (f (r bindings))
+              (curry_hashes ledger (sha256 1 ledger) (sha256tree bindings)
+                (sha256 1 kernel) (sha256tree root) (sha256 1 0)))))
+        (grants bindings recipients kernel))))
+  (defun grants (bindings recipients kernel)
+    (if recipients
+      (c (list CREATE_COIN (sgt-inner-hash kernel bindings 1 (f recipients) ()) 10000)
+        (grants bindings (r recipients) kernel))
+      (list (list CREATE_COIN
+        (sgt-inner-hash kernel bindings 3 (f (r (r (r bindings)))) ()) 970000))))
+  (finish BINDINGS RECIPIENTS SGT_KERNEL LEDGER_KERNEL tail_reveal my_id
+    (genesis-root (empty-root (holding-node () ()) 256)
+      BINDINGS RECIPIENTS SGT_KERNEL my_id insertion_proofs)))

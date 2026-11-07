@@ -1,0 +1,48 @@
+; Stable parameter authority with replaceable bounded policy. State is
+; (my_struct governance_struct revision parameters). No administrator action
+; can mutate it; recovery and parameter proposals cannot replace the kernel.
+(mod (SELF GENERATION REGISTRY_STRUCT COMPONENT_ID LOGIC_HASH VERSION COMPAT STATE action args)
+  (include condition_codes.clib)
+  (include utils.clib)
+  (include utility_macros.clib)
+  (include generation_parameters_v1.clib)
+  (defun-inline next-ph (self gen registry id logic version compat state)
+    (curry_hashes self (sha256 1 self) (sha256 1 gen) (sha256tree registry)
+      (sha256 1 id) (sha256 1 logic) (sha256 1 version) (sha256 1 compat) (sha256tree state)))
+  (defun update-parameters (self gen registry id logic version compat
+                            (mine gov revision old) (gov_inner expected_revision old_hash next program))
+    (assert (is-size-b32 gov_inner) (= revision expected_revision) (= old_hash (sha256tree old))
+      (valid-parameters next) (= (list-length next) 6) (not (= (sha256tree next) old_hash))
+      (= (sha256tree program) logic)
+      (= (sha256tree (a program (list "PARAMETERS" next))) (sha256tree next))
+      (list
+        (list RECEIVE_MESSAGE 18
+          (sha256tree (list "APPLY_PARAMETERS" gen
+            (parameters-bill id (f (r mine)) revision old_hash next)))
+          (calculate_full_puzzle_hash gov gov_inner))
+        (list CREATE_COIN
+          (next-ph self gen registry id logic version compat (list mine gov (+ revision 1) next)) 1))))
+  (defun list-length (values) (if values (+ 1 (list-length (r values))) 0))
+  (defun upgrade (self gen registry id logic version compat state (registry_inner plan next next_version next_compat))
+    (assert (is-size-b32 registry_inner) (is-size-b32 plan) (is-size-b32 next)
+      (not (= logic next)) (= next_version (+ version 1)) (= next_compat compat)
+      (list
+        (list RECEIVE_MESSAGE 18
+          (sha256tree (list "COMPONENT_UPGRADE" gen plan id logic next next_version compat))
+          (calculate_full_puzzle_hash registry registry_inner))
+        (list SEND_MESSAGE 18 (sha256tree (list "COMPONENT_READY" gen plan id (sha256tree state)))
+          (calculate_full_puzzle_hash registry registry_inner))
+        (list CREATE_COIN (next-ph self gen registry id next next_version compat state) 1))))
+  (defun read-state (self gen registry id logic version compat state (program request))
+    (assert (= (sha256tree program) logic) (= (a program (list "READ" request)) 1)
+      (list (list CREATE_COIN (next-ph self gen registry id logic version compat state) 1)
+        (list REMARK "SOLSLOT_PARAMETER_STATE" gen id version (sha256tree state)))))
+  (assert (is-size-b32 SELF) (is-size-b32 GENERATION) (is-size-b32 COMPONENT_ID) (is-size-b32 LOGIC_HASH)
+    (is-uint64 VERSION) (> VERSION 0) (is-uint64 COMPAT) (> COMPAT 0)
+    (c (list ASSERT_MY_AMOUNT 1)
+      (if (= action "UPDATE")
+        (update-parameters SELF GENERATION REGISTRY_STRUCT COMPONENT_ID LOGIC_HASH VERSION COMPAT STATE args)
+        (if (= action "UPGRADE")
+          (upgrade SELF GENERATION REGISTRY_STRUCT COMPONENT_ID LOGIC_HASH VERSION COMPAT STATE args)
+          (if (= action "READ")
+            (read-state SELF GENERATION REGISTRY_STRUCT COMPONENT_ID LOGIC_HASH VERSION COMPAT STATE args) (x)))))))

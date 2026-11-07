@@ -1,0 +1,181 @@
+; Stable protocol authority for a new deployment generation. No administrator
+; code/parameter fast-track and no rollback opcode. Mutable business modules
+; sit inside fixed component kernels. All affected kernels co-spend on activate.
+;
+; COMPONENTS: ((id launcher kernel module version compatibility) ...)
+; PENDING: () or (plan_hash ticket_coin_id). Plan: (source_manifest changes).
+; change: (id old_module new_module next_version compatibility "PRESERVE_STATE")
+; REOPEN: () or (commitment ticket_coin_id mask pause_epoch).
+; pause bits ONLY: 1 new proposals, 2 mint, 4 new offers, 8 new unfunded
+; obligations, 16 code activation. No bit exists for transfers/votes/unlocks/
+; funded claims. Asset kernels must consult the registry for gated operations.
+(mod (SELF GENERATION MY_STRUCT GOVERNANCE_STRUCT ADMIN_STRUCT TICKET_MOD
+      COMPONENTS NONCE PENDING PAUSE_MASK PAUSE_EPOCH REOPENING
+      action my_id args)
+  (include condition_codes.clib)
+  (include utils.clib)
+  (include utility_macros.clib)
+
+  (defun-inline state-ph (self gen mine gov admin ticket components nonce pending mask epoch reopen)
+    (curry_hashes self (sha256 1 self) (sha256 1 gen) (sha256tree mine)
+      (sha256tree gov) (sha256tree admin) (sha256 1 ticket)
+      (sha256tree components) (sha256 1 nonce) (sha256tree pending)
+      (sha256 1 mask) (sha256 1 epoch) (sha256tree reopen)))
+  (defun-inline clock-ph (ticket gen mine commitment)
+    (curry_hashes ticket (sha256 1 gen) (sha256tree mine)
+      (sha256 1 commitment) (sha256 1 86400)))
+  (defun lookup (id entries)
+    (if entries (if (= id (f (f entries))) (f entries) (lookup id (r entries))) (x)))
+  (defun replace (id value entries)
+    (if entries
+      (if (= id (f (f entries))) (c value (r entries))
+        (c (f entries) (replace id value (r entries)))) (x)))
+  (defun changed-entry ((id launcher kernel old version compat)
+                         (change_id expected next next_version next_compat policy))
+    (assert (= id change_id) (= expected old) (is-size-b32 next)
+      (not (= next old)) (= next_version (+ version 1)) (= next_compat compat)
+      (= policy "PRESERVE_STATE")
+      (list id launcher kernel next next_version compat)))
+  (defun apply-changes (entries changes)
+    (if changes
+      (apply-changes
+        (replace (f (f changes))
+          (changed-entry (lookup (f (f changes)) entries) (f changes)) entries)
+        (r changes)) entries))
+  (defun-inline commitment (gen nonce plan)
+    (sha256tree (list "CODE_UPGRADE" gen nonce plan)))
+  (defun-inline ratification (gen nonce plan)
+    (sha256tree (list "RATIFY_CODE_UPGRADE" gen nonce plan)))
+  (defun-inline auth (authority inner message)
+    (list RECEIVE_MESSAGE 18 message (calculate_full_puzzle_hash authority inner)))
+  (defun component-messages (gen mine plan entries changes states registry_inner)
+    (if changes
+      (assert states
+        (merge-lists
+          (component-pair gen mine plan (lookup (f (f changes)) entries)
+            (f changes) (f states) registry_inner)
+          (component-messages gen mine plan entries (r changes) (r states) registry_inner)))
+      (assert (not states) ())))
+  (defun component-pair (gen mine plan (id launcher kernel old version compat)
+                          (change_id expected next next_version next_compat policy)
+                          (state_id state) registry_inner)
+    (assert (= state_id id)
+      (list
+        (list SEND_MESSAGE 18
+          (sha256tree (list "COMPONENT_UPGRADE" gen plan id old next next_version compat))
+          (calculate_full_puzzle_hash
+            (c (f mine) (c launcher (r (r mine))))
+            (curry_hashes kernel (sha256 1 kernel) (sha256 1 gen) (sha256tree mine)
+              (sha256 1 id) (sha256 1 old) (sha256 1 version) (sha256 1 compat) (sha256tree state))))
+        (list RECEIVE_MESSAGE 18
+          (sha256tree (list "COMPONENT_READY" gen plan id (sha256tree state)))
+          (calculate_full_puzzle_hash
+            (c (f mine) (c launcher (r (r mine))))
+            (curry_hashes kernel (sha256 1 kernel) (sha256 1 gen) (sha256tree mine)
+              (sha256 1 id) (sha256 1 old) (sha256 1 version) (sha256 1 compat) (sha256tree state)))))))
+  (defun-inline valid-plan (plan)
+    (and (is-size-b32 (f plan)) (f (r plan)) (not (r (r plan)))
+      (has-no-duplicate-firsts (f (r plan)) ())))
+  (defun ratify (self gen mine gov admin ticket entries nonce pending mask epoch reopen my_id
+                  (gov_inner plan))
+    (assert (not pending) (not (logand mask 16)) (valid-plan plan)
+      ; Evaluate every change now as well as at activation.
+      (apply-changes entries (f (r plan)))
+      (list
+        (auth gov gov_inner (ratification gen nonce plan))
+        (list CREATE_COIN (clock-ph ticket gen mine (commitment gen nonce plan)) 0)
+        (list CREATE_COIN
+          (state-ph self gen mine gov admin ticket entries (+ nonce 1)
+            (list (commitment gen nonce plan)
+              (sha256 my_id (clock-ph ticket gen mine (commitment gen nonce plan)) ()))
+            mask epoch reopen) 1))))
+  (defun activate (self gen mine gov admin ticket entries nonce pending mask epoch reopen my_id
+                    (plan states governance_inner))
+    (assert pending (not (logand mask 16)) (valid-plan plan) (is-size-b32 governance_inner)
+      (= (f pending) (commitment gen (- nonce 1) plan))
+      (merge-lists
+        (list
+          ; Check proposal closure even when governance itself is not one of
+          ; the components being upgraded. This is an activation-only gate;
+          ; voting and transfers remain available during the waiting period.
+          (auth gov governance_inner (sha256tree (list "ACTIVATION_CLEARANCE" gen (f pending))))
+          (list SEND_MESSAGE 18 (sha256tree (list "ACTIVATE" gen (f pending)))
+            (clock-ph ticket gen mine (f pending)))
+          (list RECEIVE_MESSAGE 58 (sha256tree (list "MATURED" gen (f pending))) (f (r pending)))
+          (list CREATE_COIN
+            (state-ph self gen mine gov admin ticket (apply-changes entries (f (r plan)))
+              nonce () mask epoch reopen) 1))
+        (component-messages gen mine (f pending) entries (f (r plan)) states
+          (state-ph self gen mine gov admin ticket entries nonce pending mask epoch reopen)))))
+  (defun pause (self gen mine gov admin ticket entries nonce pending mask epoch reopen my_id
+                (admin_inner requested))
+    (assert (is-uint64 requested) (> requested 0) (> 32 requested)
+      (list
+        (auth admin admin_inner (sha256tree (list "PAUSE_NEW_OPERATIONS" gen epoch requested)))
+        (list CREATE_COIN
+          (state-ph self gen mine gov admin ticket entries nonce pending
+            (logior mask requested) (+ epoch 1) ()) 1))))
+  (defun-inline reopen-hash (gen epoch requested)
+    (sha256tree (list "REOPEN" gen epoch requested)))
+  (defun ratify-reopen (self gen mine gov admin ticket entries nonce pending mask epoch reopen my_id
+                        (gov_inner requested))
+    (assert (not reopen) (is-uint64 requested) (> requested 0)
+      (= (logand mask requested) requested)
+      (list
+        (auth gov gov_inner (sha256tree (list "RATIFY_REOPEN" gen epoch requested)))
+        (list CREATE_COIN (clock-ph ticket gen mine (reopen-hash gen epoch requested)) 0)
+        (list CREATE_COIN
+          (state-ph self gen mine gov admin ticket entries nonce pending mask epoch
+            (list (reopen-hash gen epoch requested)
+              (sha256 my_id (clock-ph ticket gen mine (reopen-hash gen epoch requested)) ())
+              requested epoch)) 1))))
+  (defun reopen-now (self gen mine gov admin ticket entries nonce pending mask epoch reopen my_id)
+    (assert reopen (= epoch (f (r (r (r reopen)))))
+      (list
+        (list SEND_MESSAGE 18 (sha256tree (list "ACTIVATE" gen (f reopen)))
+          (clock-ph ticket gen mine (f reopen)))
+        (list RECEIVE_MESSAGE 58 (sha256tree (list "MATURED" gen (f reopen))) (f (r reopen)))
+        (list CREATE_COIN
+          (state-ph self gen mine gov admin ticket entries nonce pending
+            (logxor mask (f (r (r reopen)))) epoch ()) 1))))
+  (defun allow-new (self gen mine gov admin ticket entries nonce pending mask epoch reopen
+                    (scope target_ph operation bill))
+    ; A pause on new business proposals must not deadlock the holder vote
+    ; needed to reopen. Only the typed REOPEN proposal can cross that gate.
+    (assert (in scope (list 1 2 4 8 12))
+      (or (not (logand mask scope)) (and (= scope 1) (= (f bill) "REOPEN")))
+      (is-size-b32 target_ph) (is-size-b32 operation)
+      (if (= (f bill) "UPGRADE")
+        (assert (= scope 1) (not pending) (not (logand mask 16))
+          (= (f (r bill)) nonce) (valid-plan (f (r (r bill))))
+          (apply-changes entries (f (r (f (r (r bill))))))) 1)
+      (if (any (= (f bill) "PARAMETERS") (= (f bill) "STATUTES"))
+        (assert (= scope 1)
+          (= (f (r (lookup (f (r bill)) entries))) (f (r (r bill)))) 1) 1)
+      (list
+        (list CREATE_COIN (state-ph self gen mine gov admin ticket entries nonce pending mask epoch reopen) 1)
+        (list SEND_MESSAGE 18 (sha256tree (list "ALLOW_NEW" gen scope operation bill)) target_ph))))
+  (assert
+    (is-size-b32 SELF) (is-size-b32 GENERATION) (is-size-b32 TICKET_MOD) (is-size-b32 my_id)
+    (is-uint64 NONCE) (is-uint64 PAUSE_MASK) (> 32 PAUSE_MASK) (is-uint64 PAUSE_EPOCH)
+    (has-no-duplicate-firsts COMPONENTS ())
+    (c (list ASSERT_MY_AMOUNT 1) (c (list ASSERT_MY_COIN_ID my_id)
+      (if (= action "RATIFY_UPGRADE")
+        (ratify SELF GENERATION MY_STRUCT GOVERNANCE_STRUCT ADMIN_STRUCT TICKET_MOD
+          COMPONENTS NONCE PENDING PAUSE_MASK PAUSE_EPOCH REOPENING my_id args)
+        (if (= action "ACTIVATE")
+          (activate SELF GENERATION MY_STRUCT GOVERNANCE_STRUCT ADMIN_STRUCT TICKET_MOD
+            COMPONENTS NONCE PENDING PAUSE_MASK PAUSE_EPOCH REOPENING my_id args)
+          (if (= action "PAUSE")
+            (pause SELF GENERATION MY_STRUCT GOVERNANCE_STRUCT ADMIN_STRUCT TICKET_MOD
+              COMPONENTS NONCE PENDING PAUSE_MASK PAUSE_EPOCH REOPENING my_id args)
+            (if (= action "RATIFY_REOPEN")
+              (ratify-reopen SELF GENERATION MY_STRUCT GOVERNANCE_STRUCT ADMIN_STRUCT TICKET_MOD
+                COMPONENTS NONCE PENDING PAUSE_MASK PAUSE_EPOCH REOPENING my_id args)
+              (if (= action "REOPEN")
+                (reopen-now SELF GENERATION MY_STRUCT GOVERNANCE_STRUCT ADMIN_STRUCT TICKET_MOD
+                  COMPONENTS NONCE PENDING PAUSE_MASK PAUSE_EPOCH REOPENING my_id)
+                (if (= action "AUTHORIZE_NEW")
+                  (allow-new SELF GENERATION MY_STRUCT GOVERNANCE_STRUCT ADMIN_STRUCT TICKET_MOD
+                    COMPONENTS NONCE PENDING PAUSE_MASK PAUSE_EPOCH REOPENING args)
+                  (x)))))))))))

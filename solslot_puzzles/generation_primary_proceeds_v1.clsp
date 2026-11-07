@@ -1,0 +1,30 @@
+; Local R1 candidate. Fixed primary proceeds split, following CHIP-0008's
+; immutable payout and rest-to-last pattern (CHIP text is CC0).
+; Issuer gets its immutable weight of gross, and the technology-fee splitter
+; gets the remainder. Weights come from the exact base/rounded fee USD minors.
+; For a $3,000 deed those reduce to 100:1. This preserves one fee included
+; in the subtotal. It adds no platform fee or financial signing key.
+; https://github.com/Chia-Network/chips/blob/main/CHIPs/chip-0008.md
+(mod (GENERATION ISSUER FEE_SPLITTER PRINCIPAL_WEIGHT FEE_WEIGHT my_amount)
+  (include condition_codes.clib)
+  (include utils.clib)
+  (include utility_macros.clib)
+  (defconstant ZERO_B32 0x0000000000000000000000000000000000000000000000000000000000000000)
+  (defun split (gen issuer fees amount principal)
+    (assert (> principal 0) (> amount principal)
+      (list
+        (list ASSERT_MY_AMOUNT amount)
+        (list CREATE_COIN_ANNOUNCEMENT ())
+        (list CREATE_COIN issuer principal (list issuer))
+        (list CREATE_COIN fees (- amount principal) (list fees))
+        (list REMARK "SOLSLOT_PRIMARY_PROCEEDS_V1" gen amount principal (- amount principal)))))
+  (assert (is-size-b32 GENERATION) (not (= GENERATION ZERO_B32))
+    (is-size-b32 ISSUER) (not (= ISSUER ZERO_B32))
+    (is-size-b32 FEE_SPLITTER) (not (= FEE_SPLITTER ZERO_B32))
+    (not (= ISSUER FEE_SPLITTER))
+    (is-uint64 PRINCIPAL_WEIGHT) (> PRINCIPAL_WEIGHT 0)
+    (is-uint64 FEE_WEIGHT) (> FEE_WEIGHT 0)
+    (is-uint64 (+ PRINCIPAL_WEIGHT FEE_WEIGHT))
+    (is-uint64 my_amount) (> my_amount 1)
+    (split GENERATION ISSUER FEE_SPLITTER my_amount
+      (/ (* my_amount PRINCIPAL_WEIGHT) (+ PRINCIPAL_WEIGHT FEE_WEIGHT)))))

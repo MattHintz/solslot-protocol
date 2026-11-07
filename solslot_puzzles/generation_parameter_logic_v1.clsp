@@ -1,0 +1,5 @@
+; Replaceable parameter policy; the immutable kernel enforces hard bounds,
+; exact approved values and holder authorization irrespective of this code.
+(mod (action request)
+  (if (= action "PARAMETERS") request
+    (if (all (= action "READ") (= request "VERSION")) 1 (x))))

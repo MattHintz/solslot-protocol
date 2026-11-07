@@ -1,0 +1,4 @@
+; Rehearsal successor adds read-only state proof; asset rules stay in kernel.
+(mod (action request . rest)
+  (if (= action "SWAP") (if (any (= request 1) (= request 2) (= request 3)) 1 (x))
+    (if (all (= action "READ") (any (= request "STATE") (= request "PROVE_STATE"))) 1 (x))))

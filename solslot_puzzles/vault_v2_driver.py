@@ -594,6 +594,7 @@ def build_vault_sols_swap_spend(
     deed_launcher_id: bytes32 | None = None,
     p2_vault_coin_id: bytes32 | None = None,
     smart_deed_inner_puzzle_hash: bytes32 | None = None,
+    generation_vault: bool = False,
 ) -> CoinSpend:
     if identity_attest_root == DEFAULT_IDENTITY_ATTEST_ROOT:
         raise ValueError("vault must have a zkPassport attestation")
@@ -602,7 +603,13 @@ def build_vault_sols_swap_spend(
         == DEFAULT_ZKPASSPORT_BRIDGE_POLICY_HASH
     ):
         raise ValueError("zkPassport bridge policy must be pinned")
-    inner = puzzle_for_vault_v2_inner(
+    if type(generation_vault) is not bool:
+        raise ValueError('vault generation selection must be boolean')
+    constructor = puzzle_for_vault_v2_inner
+    if generation_vault:
+        from solslot_puzzles.generation_vault import vault_inner
+        constructor = vault_inner
+    inner = constructor(
         vault_launcher_id=vault_launcher_id,
         owner_pubkey=owner_pubkey,
         auth_type=auth_type,

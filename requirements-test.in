@@ -1,16 +1,27 @@
+-c requirements-test-runtime.constraints
 aiosqlite==0.21.0
-aiohttp==3.14.3
-chia-blockchain==2.7.2
+aiohttp==3.14.4
+chia-blockchain==2.7.4
+chia_rs==0.48.0
 # Official upstream metadata fix; executable Python/puzzle bytes match PyPI 0.20.3.
 chia-puzzles-py @ https://codeload.github.com/Chia-Network/chia_puzzles/tar.gz/8ac1b8f794b6de159a74af334d562f71f4883798#sha256=b30f696398995845888f950d86351e203de534fec697a78710eec0758bf8ad64
-cryptography==50.0.0
-# Chia 2.7.2 requires this exact release. It is yanked upstream for
-# thread-safety concerns, but no compatible non-yanked build exists.
-# Solslot protocol tooling is single-process; keep this visible and pinned.
-zstd @ https://files.pythonhosted.org/packages/11/c4/db4807d6a68b4628c74fd379de7e3c67ec34f19a2a80ac246b3837cde6cb/zstd-1.5.7.3-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.manylinux_2_28_x86_64.whl
+cryptography==50.0.2
+zstd==1.5.7.2
 eth-keys==0.7.0
 pip-audit==2.9.0
 pycryptodome==3.23.0
 # Patched temporary-directory handling; no advisory waiver.
 pytest==9.0.3
 pytest-asyncio==1.3.0
+# Matching API runtime dependencies for native generation reconstruction.
+# These use the already-tested AE214 runtime pins.
+fastapi==0.139.2
+httpx==0.28.1
+httpx2==2.12.0
+pydantic==2.13.4
+pydantic-settings==2.14.2
+eth-account==0.13.7
+web3==7.16.0
+pyjwt==2.15.0
+setuptools==83.0.0
+uvicorn[standard]==0.51.0
