@@ -283,7 +283,8 @@ def test_v5_external_result_rules_fail_closed() -> None:
         )
 
 
-def test_v5_native_batch_bundles_two_exact_smartdeeds_in_one_offer() -> None:
+@pytest.mark.parametrize('quantity', [2, 3])
+def test_v5_native_batch_bundles_two_exact_smartdeeds_in_one_offer(quantity) -> None:
     observations = tuple(
         OracleObservationV1(
             source_id=b32(seed),
@@ -323,7 +324,7 @@ def test_v5_native_batch_bundles_two_exact_smartdeeds_in_one_offer() -> None:
             quote_expires_at=1_700_000_500,
             oracle_round=oracle,
         )
-        for seed in (101, 102)
+        for seed in range(101, 101+quantity)
     )
     batch = build_purchase_batch_v1(
         batch_nonce=b32(103),
@@ -386,18 +387,32 @@ def test_v5_native_batch_bundles_two_exact_smartdeeds_in_one_offer() -> None:
         deed_coins=deed_coins,
         deed_singleton_structs=structs,
         lineage_proofs=lineages,
-        signer_indices_by_artifact=((0, 2), (1, 2)),
+        signer_indices_by_artifact=tuple((0, 2) for _ in artifacts),
         terms=item_terms,
         reservations=reservations,
     )
 
-    assert len(purchase.deed_spends) == 2
-    assert len(purchase.issuer_offers) == 2
+    assert len(purchase.deed_spends) == quantity
+    assert len(purchase.issuer_offers) == quantity
     assert purchase.aggregate_offer.is_valid()
     assert set(purchase.aggregate_offer.arbitrage().values()) == {0}
     assert set(purchase.buyer_offer.requested_payments) == {
         item.deed_launcher_id for item in artifacts
     }
+    from chia.wallet.util.compute_additions import compute_additions
+    completed=purchase.to_valid_spend()
+    outputs=[coin for spend in completed.coin_spends for coin in compute_additions(spend)]
+    assert len(outputs)==len({coin.name() for coin in outputs})
+    # Check native announcement dependencies, not just Offer.is_valid() which
+    # measures amounts and missed the equal-price duplicate-output regression.
+    created=set();required=set()
+    for spend in completed.coin_spends:
+        _,conditions=Program.from_bytes(bytes(spend.puzzle_reveal)).run_with_cost(100_000_000,Program.from_bytes(bytes(spend.solution)))
+        for condition in conditions.as_iter():
+            fields=list(condition.as_iter());opcode=fields[0].as_int()
+            if opcode==62:created.add(hashlib.sha256(spend.coin.puzzle_hash+fields[1].as_atom()).digest())
+            if opcode==63:required.add(fields[1].as_atom())
+    assert required<=created
 
 
 def test_v5_stripe_batch_delivers_two_exact_smartdeeds_atomically() -> None:

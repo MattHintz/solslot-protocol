@@ -55,11 +55,22 @@ def build_testnet_primary_forwarding(*,bundle,artifact,terms,issuer_public_key,f
     if wallet.get_tree_hash()!=terms.protocol_puzhash:
         raise ValueError('the issuer cannot authorize the existing primary proceeds destination')
     spent={spend.coin.name() for spend in bundle.coin_spends}
-    candidates=[coin for spend in bundle.coin_spends
-        if spend.puzzle_reveal.get_tree_hash()==OFFER_MOD_HASH
-        for coin in compute_additions(spend)
-        if coin.puzzle_hash==terms.protocol_puzhash and int(coin.amount)==artifact.rail_amount
-        and coin.name() not in spent]
+    candidates=[]
+    for spend in bundle.coin_spends:
+        if spend.puzzle_reveal.get_tree_hash()!=OFFER_MOD_HASH:continue
+        # Equal-price batch payouts are distinguished by their exact child
+        # commitment as well as amount/destination. Memos do not change coin
+        # identity, so native completion must also give them distinct parents.
+        _,conditions=Program.from_bytes(bytes(spend.puzzle_reveal)).run_with_cost(
+            100_000_000,Program.from_bytes(bytes(spend.solution)))
+        for condition in conditions.as_iter():
+            fields=list(condition.as_iter())
+            if (len(fields)==4 and fields[0].as_int()==51
+                    and fields[1].as_atom()==terms.protocol_puzhash
+                    and fields[2].as_int()==artifact.rail_amount
+                    and [m.as_atom()for m in fields[3].as_iter()]==[artifact.purchase_id,artifact.artifact_hash]):
+                coin=Coin(spend.coin.name(),terms.protocol_puzhash,artifact.rail_amount)
+                if coin.name() not in spent:candidates.append(coin)
     if len(candidates)!=1:
         raise ValueError('forwarding requires one exact newly delivered offer proceeds coin')
     gross,=candidates

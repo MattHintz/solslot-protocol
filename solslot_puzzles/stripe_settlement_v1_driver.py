@@ -22,7 +22,7 @@ from chia.wallet.cat_wallet.cat_utils import (
     construct_cat_puzzle,
     unsigned_spend_bundle_for_spendable_cats,
 )
-from chia.wallet.trading.offer import OFFER_MOD_HASH, Offer
+from chia.wallet.trading.offer import OFFER_MOD, OFFER_MOD_HASH, Offer
 from chia.wallet.wallet_spend_bundle import WalletSpendBundle
 from chia.wallet.puzzles.p2_delegated_puzzle_or_hidden_puzzle import (
     puzzle_for_pk,
@@ -262,6 +262,58 @@ class ChiaPrimaryBatchOffer:
     issuer_offers: tuple[Offer, ...]
     aggregate_offer: Offer
     deed_spends: tuple[CoinSpend, ...]
+
+    def to_valid_spend(self) -> WalletSpendBundle:
+        """Complete native payouts without duplicate equal-price outputs.
+
+        The standard offer completer puts all payments for an asset under one
+        parent. Equal-priced deeds share their issuer destination, which would
+        create duplicate coins. A chain of ordinary settlement-puzzle coins
+        gives each exact notarized payment its own parent. Every original
+        payment announcement and the buyer's single signed input is preserved.
+        """
+        bundle = self.aggregate_offer.to_valid_spend()
+        native_payments = self.aggregate_offer.requested_payments.get(None)
+        if native_payments is None:
+            # CAT settlement requires its own ring-aware completion; never
+            # pass a duplicate-output bundle off as an executable payment.
+            from chia.wallet.util.compute_additions import compute_additions
+            additions = [c.name() for s in bundle.coin_spends for c in compute_additions(s)]
+            if len(additions) != len(set(additions)):
+                raise PaymentArtifactError("CAT batch settlement has duplicate outputs")
+            return bundle
+        payments = native_payments
+        if len(payments) != len(self.deed_spends):
+            raise PaymentArtifactError("batch completion must retain every exact issuer payment")
+        settlements = [s for s in bundle.coin_spends if s.puzzle_reveal.get_tree_hash() == OFFER_MOD_HASH]
+        if len(settlements) != 1 or len({p.nonce for p in payments}) != len(payments):
+            raise PaymentArtifactError("batch completion requires one native settlement input and unique nonces")
+        original = settlements[0]
+        total = sum(int(p.amount) for p in payments)
+        if int(original.coin.amount) != total or any(int(p.amount) <= 0 for p in payments):
+            raise PaymentArtifactError("batch settlement amount differs from reviewed total")
+        chain = []
+        coin = original.coin
+        remaining = total
+        nonces = {bytes(p.nonce) for p in payments}
+        for index, payment in enumerate(payments):
+            remaining -= int(payment.amount)
+            groups = [(payment.nonce, [payment.as_condition_args()])]
+            if remaining:
+                nonce = hashlib.sha256(b"SOLSLOT_NATIVE_BATCH_COMPLETION_V1" + original.coin.name() + index.to_bytes(4, "big")).digest()
+                if nonce in nonces:
+                    raise PaymentArtifactError("batch settlement nonce collision")
+                nonces.add(nonce)
+                groups.append((nonce, [[OFFER_MOD_HASH, remaining, [OFFER_MOD_HASH]]]))
+            chain.append(make_spend(coin, OFFER_MOD, Program.to(groups)))
+            if remaining:
+                coin = Coin(coin.name(), OFFER_MOD_HASH, uint64(remaining))
+        result = WalletSpendBundle([s for s in bundle.coin_spends if s != original] + chain, bundle.aggregated_signature)
+        from chia.wallet.util.compute_additions import compute_additions
+        additions = [c.name() for s in result.coin_spends for c in compute_additions(s)]
+        if len(additions) != len(set(additions)):
+            raise PaymentArtifactError("batch completion has duplicate outputs")
+        return result
 
 
 ExternalReceiptV1 = StripeSettlementReceiptV1 | ExternalSettlementReceiptV1
