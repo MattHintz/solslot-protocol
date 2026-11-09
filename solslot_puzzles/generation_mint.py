@@ -159,35 +159,46 @@ class GenerationMint:
     def inventories(self,edition: TestMintEdition) -> tuple[MintedInventory,...]:
         self.minted(edition) # Validate without changing state.
         launcher=load_puzzle('singleton_launcher_with_did.clsp').curry(singleton_struct(self.launcher_id))
+        # These immutable values are shared by every row in this invocation.
+        # Keep Programs local to the caller; do not cache mutable chain state.
+        launcher_hash=launcher.get_tree_hash()
+        protocol_did_hash=singleton_struct(self.launcher_id).get_tree_hash()
+        pool_mod_hash=load_puzzle('p2_pool_v2.clsp').get_tree_hash()
+        vault_mod_hash=load_puzzle('p2_vault.clsp').get_tree_hash()
+        mint_inner_hash=self.inner().get_tree_hash()
+        edition_hash=edition.commitment
+        bindings=self.primary_batch_bindings or Program.to([])
+        serialized_bindings=bytes(bindings)
         output=[]
         for row in edition.rows:
-            coin=Coin(row.launcher_parent,launcher.get_tree_hash(),uint64(1))
-            structure=Program.to((SINGLETON_MOD_HASH,(coin.name(),launcher.get_tree_hash())))
+            coin=Coin(row.launcher_parent,launcher_hash,uint64(1))
+            structure=Program.to((SINGLETON_MOD_HASH,(coin.name(),launcher_hash)))
             deed=make_smart_deed_inner(deed_singleton_struct_program=structure,
-                protocol_did_puzhash=singleton_struct(self.launcher_id).get_tree_hash(),
+                protocol_did_puzhash=protocol_did_hash,
                 par_value_mojos=row.sealed_par_mojos,asset_class=edition.asset_class,
                 property_id_canon=edition.property_id,collection_id_canon=edition.collection,
                 share_ppm=row.share_ppm,jurisdiction=edition.jurisdiction,
                 royalty_puzhash=self.treasury_puzzle_hash,royalty_bps=0,
                 pool_singleton_launcher_id=self.pool_id,pool_singleton_launcher_puzzle_hash=SINGLETON_LAUNCHER_HASH,
-                p2_pool_mod_hash=load_puzzle('p2_pool_v2.clsp').get_tree_hash(),
-                p2_vault_mod_hash=load_puzzle('p2_vault.clsp').get_tree_hash())
+                p2_pool_mod_hash=pool_mod_hash,
+                p2_vault_mod_hash=vault_mod_hash)
             fee=technology_fee_minor(row.base_usd_minor,edition.technology_fee_bps)
             terms=PrimaryMintTermsV3(network='testnet11',smart_deed_inner_hash=deed.get_tree_hash(),
-                deed_launcher_id=coin.name(),deed_launcher_puzzle_hash=launcher.get_tree_hash(),
-                collection_id=edition.collection,metadata_root=edition.metadata_root,metadata_anchor_id=edition.commitment,
+                deed_launcher_id=coin.name(),deed_launcher_puzzle_hash=launcher_hash,
+                collection_id=edition.collection,metadata_root=edition.metadata_root,metadata_anchor_id=edition_hash,
                 share_ppm=row.share_ppm,base_amount_minor=row.base_usd_minor,technology_fee_bps=edition.technology_fee_bps,
                 technology_fee_minor=fee,subtotal_minor=row.base_usd_minor+fee,
                 protocol_treasury_puzzle_hash=self.treasury_puzzle_hash,protocol_puzhash=self.protocol_puzzle_hash,
                 validator_pubkeys=self.validator_pubkeys,provider_id=self.provider_id,inventory_version=4,
-                generation_batch_bindings=bytes(self.primary_batch_bindings or Program.to([])))
+                generation_batch_bindings=serialized_bindings)
             from solslot_puzzles.generation_primary_inventory import inventory_inner
-            inner=inventory_inner(terms,self.primary_batch_bindings or Program.to([]))
+            inner=inventory_inner(terms,bindings)
             full=SINGLETON_MOD.curry(structure,inner)
-            solution=Program.to([self.inner().get_tree_hash(),full.get_tree_hash(),1,
-                [b'TEST_ONLY',self.generation,edition.collection,edition.commitment]])
+            full_hash=full.get_tree_hash()
+            solution=Program.to([mint_inner_hash,full_hash,1,
+                [b'TEST_ONLY',self.generation,edition.collection,edition_hash]])
             output.append(MintedInventory(make_spend(coin,launcher,solution),
-                Coin(coin.name(),full.get_tree_hash(),uint64(1)),terms,inner,deed))
+                Coin(coin.name(),full_hash,uint64(1)),terms,inner,deed))
         return tuple(output)
 
     def mint_solution(self,edition: TestMintEdition,governance_inner_hash: bytes32, *, policy: Program | None = None) -> Program:

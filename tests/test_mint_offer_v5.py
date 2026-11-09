@@ -47,6 +47,7 @@ from solslot_puzzles.stripe_settlement_v1_driver import (
     curry_stripe_settlement_receipt,
     make_mint_offer_v5_inner,
     prepare_chia_buyer_batch_offer_v3,
+    prepare_chia_buyer_offer_v3,
     prepare_purchase_batch_receipt_offer,
     prepare_stripe_receipt_offer,
     purchase_batch_child_settlement_message,
@@ -354,6 +355,24 @@ def test_v5_native_batch_bundles_two_exact_smartdeeds_in_one_offer(quantity) -> 
         terms=item_terms,
         deed_singleton_structs=structs,
     )
+    # Sage exposes the already-synthetic public key; it must prepare exactly
+    # the same standard-wallet spend as the original key, with no extra input.
+    from chia.wallet.puzzles.p2_delegated_puzzle_or_hidden_puzzle import calculate_synthetic_public_key, DEFAULT_HIDDEN_PUZZLE_HASH
+    sage = bytes(calculate_synthetic_public_key(payment_key.get_g1(), DEFAULT_HIDDEN_PUZZLE_HASH))
+    sage_buyer = prepare_chia_buyer_batch_offer_v3(payment_coin=payment_coin, payment_public_key=sage,
+        payment_public_key_kind="synthetic", batch=batch, terms=item_terms, deed_singleton_structs=structs)
+    assert bytes(sage_buyer.coin_spend) == bytes(buyer.coin_spend)
+    with pytest.raises(ValueError):
+        prepare_chia_buyer_batch_offer_v3(payment_coin=payment_coin, payment_public_key=sage,
+            payment_public_key_kind="raw", batch=batch, terms=item_terms, deed_singleton_structs=structs)
+    raw_single = prepare_chia_buyer_offer_v3(payment_coin=payment_coin, payment_public_key=bytes(payment_key.get_g1()),
+        artifact=artifacts[0], terms=item_terms[0], deed_singleton_struct=structs[0])
+    sage_single = prepare_chia_buyer_offer_v3(payment_coin=payment_coin, payment_public_key=sage,
+        payment_public_key_kind="synthetic", artifact=artifacts[0], terms=item_terms[0], deed_singleton_struct=structs[0])
+    assert bytes(sage_single.coin_spend) == bytes(raw_single.coin_spend)
+    with pytest.raises(ValueError):
+        prepare_chia_buyer_offer_v3(payment_coin=payment_coin, payment_public_key=sage,
+            payment_public_key_kind="raw", artifact=artifacts[0], terms=item_terms[0], deed_singleton_struct=structs[0])
     reservations = tuple(
         InventoryReservationV1(
             artifact=item,

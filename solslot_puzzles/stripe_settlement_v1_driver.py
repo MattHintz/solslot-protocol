@@ -26,6 +26,7 @@ from chia.wallet.trading.offer import OFFER_MOD, OFFER_MOD_HASH, Offer
 from chia.wallet.wallet_spend_bundle import WalletSpendBundle
 from chia.wallet.puzzles.p2_delegated_puzzle_or_hidden_puzzle import (
     puzzle_for_pk,
+    puzzle_for_synthetic_public_key,
     solution_for_conditions,
 )
 from chia_rs import G1Element, G2Element
@@ -1089,6 +1090,7 @@ def prepare_chia_buyer_offer_v3(
     *,
     payment_coin: Coin,
     payment_public_key: bytes,
+    payment_public_key_kind: str = "raw",
     artifact: PurchaseArtifactV3,
     terms: PrimaryMintTermsV3,
     deed_singleton_struct: Program,
@@ -1114,7 +1116,10 @@ def prepare_chia_buyer_offer_v3(
             "payment coin is smaller than the H-system quote"
         )
 
-    payment_puzzle = puzzle_for_pk(public_key)
+    if payment_public_key_kind not in ("raw", "synthetic"):
+        raise PaymentArtifactError("invalid payment public key kind")
+    payment_puzzle = (puzzle_for_pk(public_key) if payment_public_key_kind == "raw"
+                      else puzzle_for_synthetic_public_key(public_key))
     drivers = {
         artifact.deed_launcher_id: _smart_deed_driver(
             terms, deed_singleton_struct
@@ -1223,6 +1228,7 @@ def prepare_chia_buyer_batch_offer_v3(
     *,
     payment_coin: Coin,
     payment_public_key: bytes,
+    payment_public_key_kind: str = "raw",
     batch: PurchaseBatchV1,
     terms: Sequence[PrimaryMintTermsV3],
     deed_singleton_structs: Sequence[Program],
@@ -1259,7 +1265,10 @@ def prepare_chia_buyer_batch_offer_v3(
         )
 
     first = artifacts[0]
-    payment_puzzle = puzzle_for_pk(public_key)
+    if payment_public_key_kind not in ("raw", "synthetic"):
+        raise PaymentArtifactError("invalid payment public key kind")
+    payment_puzzle = (puzzle_for_pk(public_key) if payment_public_key_kind == "raw"
+                      else puzzle_for_synthetic_public_key(public_key))
     drivers = {
         artifact.deed_launcher_id: _smart_deed_driver(
             item_terms, deed_singleton_struct
