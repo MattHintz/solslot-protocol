@@ -169,6 +169,8 @@ class GenerationMint:
         edition_hash=edition.commitment
         bindings=self.primary_batch_bindings or Program.to([])
         serialized_bindings=bytes(bindings)
+        from solslot_puzzles.generation_primary_inventory import _inventory_inner_builder
+        build_inventory_inner=_inventory_inner_builder(bindings)
         output=[]
         for row in edition.rows:
             coin=Coin(row.launcher_parent,launcher_hash,uint64(1))
@@ -191,8 +193,7 @@ class GenerationMint:
                 protocol_treasury_puzzle_hash=self.treasury_puzzle_hash,protocol_puzhash=self.protocol_puzzle_hash,
                 validator_pubkeys=self.validator_pubkeys,provider_id=self.provider_id,inventory_version=4,
                 generation_batch_bindings=serialized_bindings)
-            from solslot_puzzles.generation_primary_inventory import inventory_inner
-            inner=inventory_inner(terms,bindings)
+            inner=build_inventory_inner(terms)
             full=SINGLETON_MOD.curry(structure,inner)
             full_hash=full.get_tree_hash()
             solution=Program.to([mint_inner_hash,full_hash,1,
