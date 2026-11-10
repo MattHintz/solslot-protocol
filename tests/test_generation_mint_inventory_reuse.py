@@ -42,3 +42,40 @@ def test_same_call_reuse_never_admits_tampered_or_repeated_issuance(inventory,ch
     elif changed=='allocation':edition=replace(edition,rows=edition.rows[:-1])
     else:mint=mint.minted(edition)
     with pytest.raises(ValueError):mint.inventories(edition)
+
+
+@pytest.mark.parametrize('kernel', [None, 1, 2])
+def test_local_inventory_builder_matches_independent_reconstruction(inventory, kernel):
+    from solslot_puzzles.generation_primary_inventory import inventory_inner
+    mint, edition = inventory
+    if kernel is None:
+        bindings = Program.to([])
+    else:
+        values = list(mint.primary_batch_bindings.as_iter())
+        values[2] = load_puzzle(f'generation_pool_v{kernel}.clsp').get_tree_hash()
+        bindings = Program.to(values)
+    current = replace(mint, primary_batch_bindings=bindings)
+    rows = current.inventories(edition)
+    for row in rows:
+        independent = inventory_inner(row.terms, bindings)
+        assert bytes(row.inner) == bytes(independent)
+        assert row.inner.get_tree_hash() == independent.get_tree_hash()
+
+
+def test_consecutive_editions_do_not_reuse_another_binding(inventory):
+    from solslot_puzzles.generation_primary_inventory import inventory_inner
+    mint, edition = inventory
+    first = mint.inventories(edition)
+    values = list(mint.primary_batch_bindings.as_iter())
+    values[5] = bytes32(b'X' * 32)
+    second_bindings = Program.to(values)
+    second = replace(mint, primary_batch_bindings=second_bindings).inventories(edition)
+    assert first[0].inner.get_tree_hash() != second[0].inner.get_tree_hash()
+    assert bytes(second[0].inner) == bytes(inventory_inner(second[0].terms, second_bindings))
+    assert bytes(mint.inventories(edition)[0].inner) == bytes(first[0].inner)
+
+
+def test_local_builder_rejects_malformed_bindings_before_rows(inventory):
+    mint, edition = inventory
+    with pytest.raises(ValueError, match='exact eight-field contract'):
+        replace(mint, primary_batch_bindings=Program.to([b'bad'])).inventories(edition)

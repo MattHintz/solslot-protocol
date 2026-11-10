@@ -32,6 +32,23 @@ def inventory_inner(terms, bindings):
         *_mint_immutable_args(terms), bindings)
 
 
+def _inventory_inner_builder(bindings):
+    """Derive fixed curry inputs once for a single validated mint invocation.
+
+    The public helper above remains an independent reconstruction path. The
+    closure is never retained between requests or shared across bindings.
+    """
+    module = inventory_module(bindings)
+    module_hash = module.get_tree_hash()
+    delegate_hash = load_puzzle('mint_offer_delegate_v6.clsp').get_tree_hash()
+
+    def build(terms):
+        return module.curry(module_hash, delegate_hash,
+            *_mint_immutable_args(terms), bindings)
+
+    return build
+
+
 def inventory_module(bindings):
     values = list(bindings.as_iter())
     if values and len(values) != 8:
