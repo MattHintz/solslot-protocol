@@ -6,12 +6,12 @@ module is fixed here, never selected by a request or used to upgrade an old coin
 from dataclasses import replace
 from chia.types.blockchain_format.program import Program
 from chia.types.coin_spend import make_spend
-from chia.wallet.puzzles.singleton_top_layer_v1_1 import puzzle_for_singleton,solution_for_singleton
+from chia.wallet.puzzles.singleton_top_layer_v1_1 import solution_for_singleton
 from chia_rs import SpendBundle,G2Element
 from chia_rs.sized_ints import uint64
 from solslot_puzzles import load_puzzle
 from solslot_puzzles.generation_vault import vault_inner
-from solslot_puzzles.vault_driver import DEFAULT_IDENTITY_ATTEST_ROOT
+from solslot_puzzles.vault_driver import DEFAULT_IDENTITY_ATTEST_ROOT, puzzle_for_singleton
 from solslot_puzzles.zkpassport_bridge_driver import build_bridge_and_vault_update_identity_bundle as legacy_bridge_bundle
 
 

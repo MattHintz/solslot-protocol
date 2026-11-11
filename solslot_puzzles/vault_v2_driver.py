@@ -37,14 +37,8 @@ VAULT_SOLS_SWAP_TAG = b"VSOL"
 VAULT_REDEMPTION_ACCEPT_TAG = b"RDA1"
 VAULT_SGT_LOCK_TAG = b"VSGT"
 
-_VAULT_V2_MOD: Program | None = None
-
-
 def vault_v2_inner_mod() -> Program:
-    global _VAULT_V2_MOD
-    if _VAULT_V2_MOD is None:
-        _VAULT_V2_MOD = load_puzzle("vault_singleton_inner_v2.clsp")
-    return _VAULT_V2_MOD
+    return load_puzzle("vault_singleton_inner_v2.clsp")
 
 
 def vault_v2_inner_mod_hash() -> bytes32:
