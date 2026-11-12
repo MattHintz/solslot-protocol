@@ -22,10 +22,11 @@ from chia.wallet.cat_wallet.cat_utils import (
     construct_cat_puzzle,
     unsigned_spend_bundle_for_spendable_cats,
 )
-from chia.wallet.trading.offer import OFFER_MOD_HASH, Offer
+from chia.wallet.trading.offer import OFFER_MOD, OFFER_MOD_HASH, Offer
 from chia.wallet.wallet_spend_bundle import WalletSpendBundle
 from chia.wallet.puzzles.p2_delegated_puzzle_or_hidden_puzzle import (
     puzzle_for_pk,
+    puzzle_for_synthetic_public_key,
     solution_for_conditions,
 )
 from chia_rs import G1Element, G2Element
@@ -152,12 +153,18 @@ class PrimaryMintTermsV3:
     validator_pubkeys: tuple[bytes, bytes, bytes]
     provider_id: bytes32 = PRIMARY_PURCHASE_PROVIDER_ID
     inventory_version: int = 1
+    generation_batch_bindings: bytes | None = None
 
     def __post_init__(self) -> None:
-        if type(self.inventory_version) is not int or self.inventory_version not in (1, 2, 3):
+        if type(self.inventory_version) is not int or self.inventory_version not in (1, 2, 3, 4):
             raise PaymentArtifactError("unsupported inventory puzzle version")
-        if self.inventory_version == 3 and self.network != "testnet11":
+        if self.inventory_version in (3, 4) and self.network != "testnet11":
             raise PaymentArtifactError("alpha test-token inventory requires Chia Testnet11")
+        if self.inventory_version == 4:
+            if (not isinstance(self.generation_batch_bindings, bytes)
+                    or not 0 < len(self.generation_batch_bindings) <= 4096):
+                raise PaymentArtifactError('generation inventory requires its immutable batch bindings')
+            Program.from_bytes(self.generation_batch_bindings)
         if not self.network or len(self.network.encode("ascii")) > 32:
             raise PaymentArtifactError("network must be 1-32 ASCII bytes")
         for name in (
@@ -256,6 +263,58 @@ class ChiaPrimaryBatchOffer:
     issuer_offers: tuple[Offer, ...]
     aggregate_offer: Offer
     deed_spends: tuple[CoinSpend, ...]
+
+    def to_valid_spend(self) -> WalletSpendBundle:
+        """Complete native payouts without duplicate equal-price outputs.
+
+        The standard offer completer puts all payments for an asset under one
+        parent. Equal-priced deeds share their issuer destination, which would
+        create duplicate coins. A chain of ordinary settlement-puzzle coins
+        gives each exact notarized payment its own parent. Every original
+        payment announcement and the buyer's single signed input is preserved.
+        """
+        bundle = self.aggregate_offer.to_valid_spend()
+        native_payments = self.aggregate_offer.requested_payments.get(None)
+        if native_payments is None:
+            # CAT settlement requires its own ring-aware completion; never
+            # pass a duplicate-output bundle off as an executable payment.
+            from chia.wallet.util.compute_additions import compute_additions
+            additions = [c.name() for s in bundle.coin_spends for c in compute_additions(s)]
+            if len(additions) != len(set(additions)):
+                raise PaymentArtifactError("CAT batch settlement has duplicate outputs")
+            return bundle
+        payments = native_payments
+        if len(payments) != len(self.deed_spends):
+            raise PaymentArtifactError("batch completion must retain every exact issuer payment")
+        settlements = [s for s in bundle.coin_spends if s.puzzle_reveal.get_tree_hash() == OFFER_MOD_HASH]
+        if len(settlements) != 1 or len({p.nonce for p in payments}) != len(payments):
+            raise PaymentArtifactError("batch completion requires one native settlement input and unique nonces")
+        original = settlements[0]
+        total = sum(int(p.amount) for p in payments)
+        if int(original.coin.amount) != total or any(int(p.amount) <= 0 for p in payments):
+            raise PaymentArtifactError("batch settlement amount differs from reviewed total")
+        chain = []
+        coin = original.coin
+        remaining = total
+        nonces = {bytes(p.nonce) for p in payments}
+        for index, payment in enumerate(payments):
+            remaining -= int(payment.amount)
+            groups = [(payment.nonce, [payment.as_condition_args()])]
+            if remaining:
+                nonce = hashlib.sha256(b"SOLSLOT_NATIVE_BATCH_COMPLETION_V1" + original.coin.name() + index.to_bytes(4, "big")).digest()
+                if nonce in nonces:
+                    raise PaymentArtifactError("batch settlement nonce collision")
+                nonces.add(nonce)
+                groups.append((nonce, [[OFFER_MOD_HASH, remaining, [OFFER_MOD_HASH]]]))
+            chain.append(make_spend(coin, OFFER_MOD, Program.to(groups)))
+            if remaining:
+                coin = Coin(coin.name(), OFFER_MOD_HASH, uint64(remaining))
+        result = WalletSpendBundle([s for s in bundle.coin_spends if s != original] + chain, bundle.aggregated_signature)
+        from chia.wallet.util.compute_additions import compute_additions
+        additions = [c.name() for s in result.coin_spends for c in compute_additions(s)]
+        if len(additions) != len(set(additions)):
+            raise PaymentArtifactError("batch completion has duplicate outputs")
+        return result
 
 
 ExternalReceiptV1 = StripeSettlementReceiptV1 | ExternalSettlementReceiptV1
@@ -579,6 +638,9 @@ def _mint_immutable_args(terms: PrimaryMintTermsV3) -> tuple[object, ...]:
 
 
 def make_inventory_available_inner(terms: PrimaryMintTermsV3) -> Program:
+    if terms.inventory_version == 4:
+        from .generation_primary_inventory import inventory_inner
+        return inventory_inner(terms, Program.from_bytes(terms.generation_batch_bindings))
     mod = (mint_offer_inventory_available_v1_mod() if terms.inventory_version == 1 else
            Program.from_bytes(_INVENTORY_AVAILABLE_V2_MOD_BYTES if terms.inventory_version == 2
                               else _INVENTORY_AVAILABLE_V3_MOD_BYTES))
@@ -595,7 +657,7 @@ def make_mint_offer_v5_inner(
     reservation: InventoryReservationV1,
 ) -> Program:
     assert_artifact_matches_terms(reservation.artifact, terms)
-    mod = Program.from_bytes(_MINT_OFFER_V6_MOD_BYTES) if terms.inventory_version == 3 else mint_offer_delegate_v5_mod()
+    mod = Program.from_bytes(_MINT_OFFER_V6_MOD_BYTES) if terms.inventory_version in (3, 4) else mint_offer_delegate_v5_mod()
     artifact = reservation.artifact
     return mod.curry(
         bytes32(mod.get_tree_hash()),
@@ -615,7 +677,7 @@ def assert_artifact_matches_terms(
     artifact: PurchaseArtifactV3,
     terms: PrimaryMintTermsV3,
 ) -> None:
-    if terms.inventory_version == 3 and artifact.rail == PaymentRail.EVM_TEST_USD:
+    if terms.inventory_version in (3, 4) and artifact.rail == PaymentRail.EVM_TEST_USD:
         from .alpha_payment_profile import is_alpha_payment_tuple
         if not is_alpha_payment_tuple(artifact.network, artifact.rail_chain_id,
                                       artifact.rail_asset_id, artifact.rail_asset_decimals):
@@ -665,10 +727,10 @@ def inventory_terms_for_puzzle_hash(
     singleton lineage. This never migrates a coin or accepts a custom module.
     """
     _smart_deed_driver(terms, deed_singleton_struct)
-    for version in ((1, 2, 3) if terms.network == "testnet11" else (1, 2)):
+    for version in ((1, 2, 3, 4) if terms.network == "testnet11" and terms.generation_batch_bindings else (1, 2, 3) if terms.network == "testnet11" else (1, 2)):
         candidate = replace(terms, inventory_version=version)
         # A reservation from another network cannot be reinterpreted as V3.
-        if reservation is not None and version == 3 and reservation.artifact.rail == PaymentRail.EVM_TEST_USD:
+        if reservation is not None and version in (3, 4) and reservation.artifact.rail == PaymentRail.EVM_TEST_USD:
             from .alpha_payment_profile import is_alpha_payment_tuple
             a = reservation.artifact
             if not is_alpha_payment_tuple(a.network, a.rail_chain_id, a.rail_asset_id, a.rail_asset_decimals):
@@ -1028,6 +1090,7 @@ def prepare_chia_buyer_offer_v3(
     *,
     payment_coin: Coin,
     payment_public_key: bytes,
+    payment_public_key_kind: str = "raw",
     artifact: PurchaseArtifactV3,
     terms: PrimaryMintTermsV3,
     deed_singleton_struct: Program,
@@ -1053,7 +1116,10 @@ def prepare_chia_buyer_offer_v3(
             "payment coin is smaller than the H-system quote"
         )
 
-    payment_puzzle = puzzle_for_pk(public_key)
+    if payment_public_key_kind not in ("raw", "synthetic"):
+        raise PaymentArtifactError("invalid payment public key kind")
+    payment_puzzle = (puzzle_for_pk(public_key) if payment_public_key_kind == "raw"
+                      else puzzle_for_synthetic_public_key(public_key))
     drivers = {
         artifact.deed_launcher_id: _smart_deed_driver(
             terms, deed_singleton_struct
@@ -1162,6 +1228,7 @@ def prepare_chia_buyer_batch_offer_v3(
     *,
     payment_coin: Coin,
     payment_public_key: bytes,
+    payment_public_key_kind: str = "raw",
     batch: PurchaseBatchV1,
     terms: Sequence[PrimaryMintTermsV3],
     deed_singleton_structs: Sequence[Program],
@@ -1198,7 +1265,10 @@ def prepare_chia_buyer_batch_offer_v3(
         )
 
     first = artifacts[0]
-    payment_puzzle = puzzle_for_pk(public_key)
+    if payment_public_key_kind not in ("raw", "synthetic"):
+        raise PaymentArtifactError("invalid payment public key kind")
+    payment_puzzle = (puzzle_for_pk(public_key) if payment_public_key_kind == "raw"
+                      else puzzle_for_synthetic_public_key(public_key))
     drivers = {
         artifact.deed_launcher_id: _smart_deed_driver(
             item_terms, deed_singleton_struct

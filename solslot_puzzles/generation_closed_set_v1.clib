@@ -1,0 +1,17 @@
+; Sparse authenticated set of finalized proposal IDs. Exact 256-bit paths
+; permit indefinite receipt retention without an ever-growing curried list.
+(
+  (defun closed-root (key node proof depth)
+    (if depth
+      (assert proof (is-size-b32 (f proof))
+        (closed-root (lsh key -1)
+          (if (logand key 1) (sha256 2 (f proof) node) (sha256 2 node (f proof)))
+          (r proof) (- depth 1)))
+      (assert (= key 0) (not proof) node)))
+  (defun-inline is-closed (root proposal proof)
+    (= root (closed-root (concat 0x00 proposal) (sha256 1 proposal) proof 256)))
+  (defun-inline add-closed (root proposal proof)
+    (assert
+      (= root (closed-root (concat 0x00 proposal) (sha256 1) proof 256))
+      (closed-root (concat 0x00 proposal) (sha256 1 proposal) proof 256)))
+)

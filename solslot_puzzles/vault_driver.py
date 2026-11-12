@@ -58,7 +58,6 @@ from chia.wallet.puzzles.singleton_top_layer_v1_1 import (
     SINGLETON_MOD,
     SINGLETON_MOD_HASH,
     lineage_proof_for_coinsol,
-    puzzle_for_singleton,
     solution_for_singleton,
 )
 from chia.wallet.util.curry_and_treehash import (
@@ -66,6 +65,7 @@ from chia.wallet.util.curry_and_treehash import (
     curry_and_treehash,
 )
 from chia_rs import G1Element, G2Element, PrivateKey
+from chia_puzzles_py.programs import SINGLETON_TOP_LAYER_V1_1
 
 from solslot_puzzles import load_puzzle
 from solslot_puzzles.zkpassport_attestation import ZKPASSPORT_EMPTY_ATTEST_ROOT
@@ -75,6 +75,7 @@ logger = logging.getLogger(__name__)
 SINGLETON_AMOUNT = uint64(1)
 
 VAULT_INNER_MOD: Program = load_puzzle("vault_singleton_inner_v2.clsp")
+_VAULT_INNER_MOD_HASH = bytes32(VAULT_INNER_MOD.get_tree_hash())
 P2_VAULT_MOD: Program = load_puzzle("p2_vault.clsp")
 P2_VAULT_MOD_HASH: bytes32 = bytes32(P2_VAULT_MOD.get_tree_hash())
 
@@ -85,6 +86,18 @@ AUTH_TYPE_SECP256K1 = 3  # EVM wallet secp256k1 (EIP-712)
 
 DEFAULT_IDENTITY_ATTEST_ROOT: bytes32 = ZKPASSPORT_EMPTY_ATTEST_ROOT
 DEFAULT_ZKPASSPORT_BRIDGE_POLICY_HASH: bytes32 = bytes32(b"\x00" * 32)
+
+
+def puzzle_for_singleton(
+    launcher_id: bytes32,
+    inner_puz: Program,
+    launcher_hash: bytes32 = SINGLETON_LAUNCHER_HASH,
+    singleton_mod: Program | None = None,
+    singleton_mod_hash: bytes32 = SINGLETON_MOD_HASH,
+) -> Program:
+    """Use the same singleton bytes with a module owned by the caller's thread."""
+    module = Program.from_bytes(SINGLETON_TOP_LAYER_V1_1) if singleton_mod is None else singleton_mod
+    return module.curry((singleton_mod_hash, (launcher_id, launcher_hash)), inner_puz)
 
 
 def validate_owner_pubkey_for_auth_type(owner_pubkey: bytes, auth_type: int) -> bytes:
@@ -210,7 +223,7 @@ def puzzle_for_vault_inner(
     singleton_struct = Program.to(
         (SINGLETON_MOD_HASH, (vault_launcher_id, SINGLETON_LAUNCHER_HASH))
     )
-    return VAULT_INNER_MOD.curry(
+    return load_puzzle("vault_singleton_inner_v2.clsp").curry(
         singleton_struct,
         owner_pubkey_bytes,
         auth_type,
@@ -228,7 +241,7 @@ def parse_vault_inner_puzzle(curried_inner_puzzle: Program) -> VaultInnerState:
     if uncurried is None:
         raise ValueError("puzzle is not curried; cannot parse state")
     mod, args = uncurried
-    if bytes32(mod.get_tree_hash()) != bytes32(VAULT_INNER_MOD.get_tree_hash()):
+    if bytes32(mod.get_tree_hash()) != _VAULT_INNER_MOD_HASH:
         raise ValueError("puzzle reveal does not instantiate vault_singleton_inner_v2.clsp")
     args_list = list(args.as_iter())
     if len(args_list) != 9:
@@ -883,7 +896,7 @@ def build_vault_update_identity_spend(
         my_id=my_id,
         my_inner_puzhash=inner_puzzle.get_tree_hash(),
         my_amount=int(vault_coin.amount),
-        vault_inner_mod_hash=VAULT_INNER_MOD.get_tree_hash(),
+        vault_inner_mod_hash=_VAULT_INNER_MOD_HASH,
         new_identity_attest_root=new_identity_attest_root,
         bridge_parent_id=bridge_parent_id,
         bridge_amount=bridge_amount,

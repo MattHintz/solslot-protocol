@@ -1,0 +1,86 @@
+; Every SGT spend consumes and recreates this stable holdings singleton. The
+; indexer supplies sparse proofs; consensus verifies deletions, insertions,
+; exact output IDs, both sums and each CAT spend in the same transaction.
+; Root: (hash eligible_holder_supply total_supply).
+; No administrator reset, resupply or denominator override exists.
+(mod (SELF BINDINGS SGT_KERNEL ROOT SEQUENCE action args)
+  (include condition_codes.clib)
+  (include utils.clib)
+  (include utility_macros.clib)
+  (include generation_sgt_common_v1.clib)
+  (include sgt_holdings_merkle_v1.clib)
+  (defun-inline state-ph (self bindings kernel root sequence)
+    (curry_hashes self (sha256 1 self) (sha256tree bindings) (sha256 1 kernel)
+      (sha256tree root) (sha256 1 sequence)))
+  (defun insert-outputs (root self bindings parent outputs proofs)
+    (if outputs
+      (assert proofs
+        (insert-outputs (insert-output root self bindings parent (f outputs) (f proofs))
+          self bindings parent (r outputs) (r proofs)))
+      (assert (not proofs) root)))
+  (defun insert-output (root self bindings parent (kind owner lock amount) proof)
+    (assert (valid-descriptor bindings kind owner lock amount)
+      (replace-holding root
+        (sha256 parent (sgt-full-hash self bindings kind owner lock) amount) ()
+        (list (sgt-full-hash self bindings kind owner lock) amount kind owner lock) proof)))
+  (defun transition (root kernel bindings (parent (ph amount kind owner lock) action outputs remove_proof add_proofs))
+    (assert (is-size-b32 parent) (valid-descriptor bindings kind owner lock amount)
+      (= ph (sgt-full-hash kernel bindings kind owner lock))
+      (insert-outputs
+        (replace-holding root (sha256 parent ph amount)
+          (list ph amount kind owner lock) () remove_proof)
+        kernel bindings (sha256 parent ph amount) outputs add_proofs)))
+  (defun process (root kernel bindings requests)
+    (if requests
+      (process (transition root kernel bindings (f requests)) kernel bindings (r requests)) root))
+  (defun messages (bindings requests)
+    (if requests
+      (merge-lists (request-messages bindings (f requests)) (messages bindings (r requests))) ()))
+  (defun request-messages (bindings (parent (ph amount kind owner lock) action outputs remove_proof add_proofs))
+    (list
+      (list RECEIVE_MESSAGE 58 (transfer-message (f bindings) (sha256 parent ph amount) action outputs)
+        (sha256 parent ph amount))
+      (list SEND_MESSAGE 23 (transfer-message (f bindings) (sha256 parent ph amount) action outputs)
+        (sha256 parent ph amount))))
+  (defun finish (self bindings kernel root sequence requests next_root)
+    (assert (= (f (r (r next_root))) 1000000)
+      (not (> (f (r next_root)) 1000000))
+      (c (list CREATE_COIN (state-ph self bindings kernel next_root (+ sequence 1)) 1)
+        (messages bindings requests))))
+  (defun snapshot (self bindings kernel root sequence (gov_inner proposal))
+    (assert (is-size-b32 gov_inner) (is-size-b32 proposal) (> (f (r root)) 0)
+      (list
+        (list CREATE_COIN (state-ph self bindings kernel root sequence) 1)
+        (list RECEIVE_MESSAGE 18 (sha256tree (list "OPEN_SNAPSHOT" (f bindings) proposal))
+          (calculate_full_puzzle_hash (f (r (r bindings))) gov_inner))
+        (list SEND_MESSAGE 18 (sha256tree (list "HOLDINGS_SNAPSHOT" (f bindings) proposal root sequence))
+          (calculate_full_puzzle_hash (f (r (r bindings))) gov_inner)))))
+  (defun initialize (self bindings kernel root sequence (eve_id eve_ph))
+    (assert (= sequence 0) (is-size-b32 eve_id) (is-size-b32 eve_ph)
+      (list
+        ; Only the launch output can authenticate issuance, once. The eve
+        ; independently reconstructs ROOT from its four exact CAT outputs.
+        (list ASSERT_MY_PARENT_ID (f (r (f (r bindings)))))
+        (list CREATE_COIN (state-ph self bindings kernel root sequence) 1)
+        (list RECEIVE_MESSAGE 18 (sha256tree (list "GENESIS_HOLDINGS" (f bindings) eve_id root)) eve_ph)
+        (list SEND_MESSAGE 18 (sha256tree (list "GENESIS_HOLDINGS" (f bindings) eve_id root)) eve_ph))))
+  (defun reward-snapshot (self bindings kernel root sequence (consumer epoch))
+    (assert (is-size-b32 consumer) (is-size-b32 epoch) (> (f (r root)) 0)
+      (list
+        (list CREATE_COIN (state-ph self bindings kernel root sequence) 1)
+        (list RECEIVE_MESSAGE 18 (sha256tree (list "REWARD_SNAPSHOT" (f bindings) epoch)) consumer)
+        (list SEND_MESSAGE 18 (sha256tree (list "REWARD_HOLDINGS" (f bindings) epoch root sequence)) consumer))))
+  (assert
+    (is-size-b32 SELF) (is-size-b32 SGT_KERNEL) (is-uint64 SEQUENCE)
+    (= (f (r (r ROOT))) 1000000)
+    (c (list ASSERT_MY_AMOUNT 1)
+      (if (= action "UPDATE")
+        (assert args
+          (finish SELF BINDINGS SGT_KERNEL ROOT SEQUENCE args (process ROOT SGT_KERNEL BINDINGS args)))
+        (if (= action "SNAPSHOT")
+          (snapshot SELF BINDINGS SGT_KERNEL ROOT SEQUENCE args)
+          (if (= action "INITIALIZE")
+            (initialize SELF BINDINGS SGT_KERNEL ROOT SEQUENCE args)
+            (if (= action "REWARD_SNAPSHOT")
+              (reward-snapshot SELF BINDINGS SGT_KERNEL ROOT SEQUENCE args)
+              (x))))))))

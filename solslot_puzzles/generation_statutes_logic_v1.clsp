@@ -1,0 +1,5 @@
+; Policies cannot return spend conditions or change permanent rules.
+(mod (action request)
+  (if (= action "PARAMETERS") request
+    (if (= action "STATUTES") request
+      (if (all (= action "READ") (= request "VERSION")) 1 (x)))))

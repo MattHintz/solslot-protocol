@@ -1,0 +1,51 @@
+; Atomic multi-deed payout witness. It holds no funds, has no key or expiry,
+; and exists only as a zero-amount ephemeral child of the first real pool input.
+; Every deposit contributes its governed Sols payout; all original notarized
+; buyer groups must be paid, and their sum must equal the entire contribution.
+(mod (SELF GENERATION CAT SOLS OFFER FIRST_POOL PLAN GROUPS)
+  (include condition_codes.clib)
+  (include utils.clib)
+  (include utility_macros.clib)
+  (defun nth (n xs) (if n (nth (- n 1) (r xs)) (f xs)))
+  (defun count (xs) (if xs (+ 1 (count (r xs))) 0))
+  (defconstant MAX_DEEDS 8)
+  (defconstant MAX_GROUPS 33)
+  (defun payments-total (xs)
+    (if xs
+      (assert (= (count (f xs)) 3) (is-size-b32 (f (f xs)))
+        (is-uint64 (nth 1 (f xs))) (> (nth 1 (f xs)) 0)
+        (+ (nth 1 (f xs)) (payments-total (r xs)))) 0))
+  (defun groups-total (xs left)
+    (if xs
+      (assert (> left 0) (= (count (f xs)) 2) (is-size-b32 (f (f xs)))
+        (not (> (count (nth 1 (f xs))) 32))
+        (+ (payments-total (nth 1 (f xs))) (groups-total (r xs) (- left 1)))) 0))
+  (defun plan-total (xs left)
+    (if xs
+      (assert (> left 0) (= (count (f xs)) 4)
+        (is-size-b32 (nth 0 (f xs))) (is-size-b32 (nth 1 (f xs))) (is-size-b32 (nth 2 (f xs)))
+        (is-uint64 (nth 3 (f xs))) (> (nth 3 (f xs)) 0)
+        (+ (nth 3 (f xs)) (plan-total (r xs) (- left 1)))) 0))
+  (defun contributions (gen plan root)
+    (if plan
+      (c (list RECEIVE_MESSAGE 18
+        (sha256tree (list "SOLS_BATCH_CONTRIBUTION" gen (nth 2 (f plan)) root (nth 3 (f plan))))
+        (nth 1 (f plan)))
+        (c (list SEND_MESSAGE 18
+          (sha256tree (list "SOLS_BATCH_ACCEPTED" gen (nth 2 (f plan)) root (nth 3 (f plan))))
+          (nth 1 (f plan))) (contributions gen (r plan) root))) ()))
+  (defun buyer-assertions (cat sols offer groups)
+    (if groups
+      (c (list ASSERT_PUZZLE_ANNOUNCEMENT
+        (sha256 (curry_hashes cat (sha256 1 cat) (sha256 1 sols) offer)
+          (sha256tree (c (f (f groups)) (nth 1 (f groups))))))
+        (buyer-assertions cat sols offer (r groups))) ()))
+  ; The standard Offer program hash is committed as part of the first pool
+  ; plan entry's metadata via the fixed argument below (not supplied conditions).
+  (assert (is-size-b32 SELF) (is-size-b32 GENERATION) (is-size-b32 CAT) (is-size-b32 SOLS)
+    PLAN GROUPS (= FIRST_POOL (f (f PLAN))) (has-no-duplicate-firsts PLAN ())
+    (= (plan-total PLAN MAX_DEEDS) (groups-total GROUPS MAX_GROUPS))
+    (is-uint64 (plan-total PLAN MAX_DEEDS))
+    (merge-lists (list (list ASSERT_MY_PARENT_ID FIRST_POOL) (list ASSERT_MY_AMOUNT 0))
+      (merge-lists (contributions GENERATION PLAN (sha256tree GROUPS))
+        (buyer-assertions CAT SOLS OFFER GROUPS)))))

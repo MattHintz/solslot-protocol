@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import importlib.metadata
+import hashlib
 import json
+from pathlib import Path
 
 from chia.types.blockchain_format.program import Program
 from chia.wallet.puzzles.custody import custody_architecture
@@ -43,16 +45,25 @@ def test_rc23_recovery_dependency_manifest_is_exactly_pinned() -> None:
     assert compute_recovery_dependency_manifest_hash() == (
         RECOVERY_DEPENDENCY_MANIFEST_HASH
     )
-    assert importlib.metadata.version("chia-blockchain") == (
-        runtime["chiaBlockchainVersion"]
-    )
-    assert importlib.metadata.version("chia-puzzles-py") == (
-        runtime["chiaPuzzlesPyVersion"]
-    )
+    # RC23 is retained evidence, not permission to relabel its old runtime
+    # after a generation upgrade. Current runtime admission is checked below.
+    assert runtime["chiaBlockchainVersion"] == "2.7.2"
+    assert runtime["chiaPuzzlesPyVersion"] == "0.20.3"
     assert browser["recoveryAuthority"] is False
     assert browser["purpose"].endswith(
         "this artifact is not recovery authority"
     )
+
+
+def test_generation_runtime_matches_its_exact_lock_and_retained_recovery() -> None:
+    root = Path(__file__).resolve().parents[1]
+    manifest = json.loads((root / "release-manifests" / "generation-runtime-dependencies-v1.json").read_text())
+    assert manifest["schema"] == "solslot.generation-runtime-dependencies.v1"
+    assert manifest["network"] == "testnet11"
+    assert manifest["retainedRecoveryManifestHash"] == compute_recovery_dependency_manifest_hash()
+    assert hashlib.sha256((root / "requirements-test.lock").read_bytes()).hexdigest() == manifest["requirementsLockSha256"]
+    for package, version in manifest["runtimeVersions"].items():
+        assert importlib.metadata.version(package) == version, package
 
 
 def test_installed_mips_modules_match_pinned_upstream_tree_hashes() -> None:

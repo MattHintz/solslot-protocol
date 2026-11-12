@@ -1,0 +1,118 @@
+; Permanent protocol Sols custody. No administrator withdrawal, free solution
+; conditions, expiry or mutable policy. An actual stable pool deposit must
+; authorize every payout. All listed reserve inputs co-spend and reproduce
+; the exact remaining reserve; a matcher cannot take a surplus.
+(mod (SELF GENERATION REGISTRY POOL COMPONENT POOL_KERNEL CAT_MOD TAIL_MOD OFFER_MOD
+      action state logic version compat pool_id my_id my_amount group params tail)
+  (include condition_codes.clib)
+  (include utils.clib)
+  (include utility_macros.clib)
+  (defun nth (n xs) (if n (nth (- n 1) (r xs)) (f xs)))
+  (defun length (xs) (if xs (+ 1 (length (r xs))) 0))
+  (defun-inline own-ph (self gen registry pool component kernel cat tail offer)
+    (curry_hashes self (sha256 1 self) (sha256 1 gen) (sha256tree registry) (sha256tree pool)
+      (sha256 1 component) (sha256 1 kernel) (sha256 1 cat) (sha256 1 tail) (sha256 1 offer)))
+  (defun-inline tail-ph (tail pool)
+    (curry_hashes tail (sha256 1 (f pool)) (sha256 1 (f (r pool))) (sha256 1 (r (r pool)))))
+  (defun-inline cat-ph (cat tail inner)
+    (curry_hashes cat (sha256 1 cat) (sha256 1 tail) inner))
+  (defun valid-group (group full previous count total)
+    (if group
+      (assert (= (length (f group)) 2) (is-size-b32 (f (f group)))
+        (>s (coin-id (f group) full) previous) (is-uint64 (f (r (f group)))) (> (f (r (f group))) 0)
+        (not (> count 63))
+        (valid-group (r group) full (coin-id (f group) full) (+ count 1) (+ total (f (r (f group))))))
+      (assert count (is-uint64 total) total)))
+  (defun coin-id (entry full) (sha256 (f entry) full (f (r entry))))
+  (defun group-conditions (group full message)
+    (if group (c (list ASSERT_COIN_ANNOUNCEMENT (sha256 (coin-id (f group) full) message))
+      (group-conditions (r group) full message)) ()))
+  (defun member (group full id amount)
+    (if group (if (= id (coin-id (f group) full)) (= amount (f (r (f group))))
+      (member (r group) full id amount)) ()))
+  (defun-inline state-hash (state)
+    (sha256tree (list (nth 4 state) (nth 5 state) (nth 6 state) (nth 7 state)
+      (nth 8 state) (nth 9 state) (nth 10 state) (nth 11 state) (nth 12 state))))
+  (defun-inline next-hash (state params)
+    (sha256tree (list (nth 34 params) 1 (+ (nth 6 state) (nth 29 params))
+      (nth 7 state) (nth 8 state) (+ (nth 9 state) 1) (+ (nth 10 state) (nth 33 params))
+      (- (nth 11 state) (nth 32 params)) (+ (nth 12 state) 1))))
+  (defun-inline operation (pool_id params)
+    (sha256tree (list 0x50534f4c 1 pool_id (nth 35 params) (nth 36 params) (nth 30 params)
+      (nth 21 params) (nth 22 params) (nth 19 params) (nth 31 params) 0 0
+      (nth 28 params) (nth 37 params) (nth 10 params))))
+  (defun-inline pool-inner (kernel gen registry component logic version compat state)
+    (curry_hashes kernel (sha256 1 kernel) (sha256 1 gen) (sha256tree registry)
+      (sha256 1 component) (sha256 1 logic) (sha256 1 version) (sha256 1 compat) (sha256tree state)))
+  (defun-inline announcement (op)
+    (concat PROTOCOL_PREFIX (sha256tree (list 0x50534f4c op))))
+  (defun outputs (own offer tail inner full pool_id my_id reserve params)
+    (c (list CREATE_COIN offer (nth 31 params) (list offer))
+      (c (list CREATE_COIN own (- reserve (nth 32 params)) (list own))
+        (if (nth 33 params)
+          (list (list CREATE_COIN () -113 tail
+            (list full inner pool_id my_id 1 (nth 33 params)))) ()))))
+  (defun spend (self gen registry pool component kernel cat tail_mod offer state logic version compat
+                pool_id my_id amount group params own tail full_inner full_pool full_cat)
+    (assert (= (length state) 13) (= (length params) 39)
+      (= (sha256tree (f state)) (sha256tree pool))
+      (= (nth 8 (nth 1 state)) gen)
+      (= (nth 5 (nth 1 state)) (tail-ph tail_mod pool))
+      (= (nth 0 (nth 2 state)) cat) (= (nth 1 (nth 2 state)) offer)
+      (= (nth 6 (nth 2 state)) own)
+      (> (nth 12 state) 1)
+      (= (valid-group group full_cat () 0 0) (nth 11 state))
+      (member group full_cat my_id amount)
+      (= (state-hash state) (nth 35 params)) (= (next-hash state params) (nth 36 params))
+      (= (operation pool_id params) (nth 38 params))
+      (is-uint64 (nth 31 params)) (> (nth 31 params) 0)
+      (is-uint64 (nth 32 params))
+      (= (nth 32 params) (if (> (nth 31 params) (- (nth 11 state) 1))
+        (- (nth 11 state) 1) (nth 31 params)))
+      (= (nth 33 params) (- (nth 31 params) (nth 32 params)))
+      (if (nth 33 params) (= (nth 20 params) (coin-id (f group) full_cat)) (not (nth 20 params)))
+      (is-uint64 (+ (nth 10 state) (nth 33 params)))
+      (= (sha256tree tail) (tail-ph tail_mod pool))
+      (merge-lists
+        (list (list ASSERT_MY_COIN_ID my_id) (list ASSERT_MY_AMOUNT amount)
+          (list ASSERT_PUZZLE_ANNOUNCEMENT (sha256 full_pool (announcement (nth 38 params))))
+          (list ASSERT_COIN_ANNOUNCEMENT (sha256 pool_id (announcement (nth 38 params))))
+          (list CREATE_COIN_ANNOUNCEMENT
+            (sha256tree (list "GENERATION_RESERVE_GROUP" gen pool_id (nth 38 params) group)))
+          (list REMARK "SOLSLOT_RESERVE_PAYOUT" gen pool_id (nth 38 params)))
+        (merge-lists
+          (group-conditions group full_cat
+            (sha256tree (list "GENERATION_RESERVE_GROUP" gen pool_id (nth 38 params) group)))
+          (if (= my_id (coin-id (f group) full_cat))
+            (outputs own offer tail full_inner full_pool pool_id my_id (nth 11 state) params) ())))))
+  ; The supplied tail reveal must reproduce the immutable pool token identity.
+  (defun execute (self gen registry pool component kernel cat tail_mod offer state logic version compat
+                  pool_id my_id amount group params own inner tail)
+    (spend self gen registry pool component kernel cat tail_mod offer state logic version compat
+      pool_id my_id amount group params own tail inner (calculate_full_puzzle_hash pool inner)
+      (cat-ph cat (tail-ph tail_mod pool) own)))
+  (defun merge-reserve (gen my_id amount group own full total message)
+    (assert (member group full my_id amount)
+      (merge-lists
+        (list (list ASSERT_MY_COIN_ID my_id) (list ASSERT_MY_AMOUNT amount)
+          (list CREATE_COIN_ANNOUNCEMENT message)
+          (list REMARK "SOLSLOT_RESERVE_MERGE" gen (sha256tree group)))
+        (merge-lists (group-conditions group full message)
+          (if (= my_id (coin-id (f group) full))
+            (list (list CREATE_COIN own total (list own))) ())))))
+  (defun run (self gen registry pool component kernel cat tail_mod offer action state logic version compat
+               pool_id my_id amount group params tail own)
+    (if (= action "MERGE")
+      (assert (not state) (not logic) (not version) (not compat) (not pool_id) (not params) (not tail)
+        (merge-reserve gen my_id amount group own (cat-ph cat (tail-ph tail_mod pool) own)
+          (valid-group group (cat-ph cat (tail-ph tail_mod pool) own) () 0 0) (sha256tree (list "GENERATION_RESERVE_MERGE" gen group))))
+      (assert (= action "PAYOUT") (is-size-b32 logic) (is-size-b32 pool_id)
+        (is-uint64 version) (> version 0) (is-uint64 compat) (> compat 0)
+        (execute self gen registry pool component kernel cat tail_mod offer state logic version compat
+          pool_id my_id amount group params own
+          (pool-inner kernel gen registry component logic version compat state) tail))))
+  (assert (is-size-b32 GENERATION) (is-size-b32 COMPONENT) (is-size-b32 my_id)
+    (is-uint64 my_amount) (> my_amount 0)
+    (run SELF GENERATION REGISTRY POOL COMPONENT POOL_KERNEL CAT_MOD TAIL_MOD OFFER_MOD
+      action state logic version compat pool_id my_id my_amount group params tail
+      (own-ph SELF GENERATION REGISTRY POOL COMPONENT POOL_KERNEL CAT_MOD TAIL_MOD OFFER_MOD))))

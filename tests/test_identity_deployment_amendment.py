@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import copy
 import json
-from pathlib import Path
 
 import pytest
+
+from .identity_amendment_fixtures import SYNTHETIC_PLAN_HASH, synthetic_identity_records
 
 from solslot_puzzles.identity_deployment_amendment import (
     ConfirmedAmendmentAnchor,
@@ -19,17 +20,12 @@ from solslot_puzzles.identity_deployment_amendment import (
 )
 
 
-BASE_PATH = Path("/home/hiram/solslot-work/e2e-audit-draft144/evidence/public-artifact.json")
-DEPLOYMENT_PATH = Path(
-    "/home/hiram/secure/solslot-deployments/"
-    "AE-SOLSLOT-IDENTITY-COMPATIBILITY-20260928-148/deployment.json"
-)
-PLAN_HASH = "0xdb9912f4e47ec349d6fb67aa95f78058f8c64c757a22a2244af8f0d9a73a381b"
+PLAN_HASH = SYNTHETIC_PLAN_HASH
 
 
 @pytest.fixture()
 def records():
-    return json.loads(BASE_PATH.read_text()), json.loads(DEPLOYMENT_PATH.read_text())
+    return synthetic_identity_records()
 
 
 @pytest.fixture()

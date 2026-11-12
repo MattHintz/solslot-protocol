@@ -1,0 +1,48 @@
+; Stable singleton boundary for a read-only extension component. It owns only
+; its singleton mojo. Asset-bearing components must use their own immutable
+; economic kernel; this module cannot stand in for a CAT or SmartDeed kernel.
+; State and compatibility are unchanged by code replacement. The registry
+; must atomically acknowledge every affected component in an upgrade.
+(mod (SELF GENERATION REGISTRY_STRUCT COMPONENT_ID LOGIC_HASH VERSION COMPAT STATE
+      action args)
+  (include condition_codes.clib)
+  (include utils.clib)
+  (include utility_macros.clib)
+  (defun-inline next-ph (self generation registry id logic version compat state)
+    (curry_hashes self (sha256 1 self) (sha256 1 generation)
+      (sha256tree registry) (sha256 1 id) (sha256 1 logic)
+      (sha256 1 version) (sha256 1 compat) (sha256tree state)))
+  (defun upgrade (self generation registry id logic version compat state
+                  (registry_inner plan new_logic new_version new_compat))
+    (assert
+      (is-size-b32 plan) (is-size-b32 registry_inner) (is-size-b32 new_logic)
+      (not (= logic new_logic))
+      (= new_version (+ version 1)) (= new_compat compat)
+      (list
+        (list ASSERT_MY_AMOUNT 1)
+        (list RECEIVE_MESSAGE 18
+          (sha256tree (list "COMPONENT_UPGRADE" generation plan id logic new_logic new_version compat))
+          (calculate_full_puzzle_hash registry registry_inner))
+        (list SEND_MESSAGE 18
+          (sha256tree (list "COMPONENT_READY" generation plan id (sha256tree state)))
+          (calculate_full_puzzle_hash registry registry_inner))
+        (list CREATE_COIN (next-ph self generation registry id new_logic new_version compat state) 1))))
+  (defun read-state (self generation registry id logic version compat state (program request))
+    (assert
+      (= (sha256tree program) logic)
+      ; Logic can authorize only a read. It cannot return spend conditions,
+      ; replace the boundary, mutate state, or escape the registry upgrade.
+      (= (a program (list request)) 1)
+      (list
+        (list ASSERT_MY_AMOUNT 1)
+        (list CREATE_COIN (next-ph self generation registry id logic version compat state) 1)
+        (list REMARK "SOLSLOT_COMPONENT_STATE" generation id version (sha256tree state)))))
+  (assert
+    (is-size-b32 SELF) (is-size-b32 GENERATION) (is-size-b32 COMPONENT_ID)
+    (is-size-b32 LOGIC_HASH) (is-uint64 VERSION) (> VERSION 0)
+    (is-uint64 COMPAT) (> COMPAT 0)
+    (if (= action "UPGRADE")
+      (upgrade SELF GENERATION REGISTRY_STRUCT COMPONENT_ID LOGIC_HASH VERSION COMPAT STATE args)
+      (if (= action "READ")
+        (read-state SELF GENERATION REGISTRY_STRUCT COMPONENT_ID LOGIC_HASH VERSION COMPAT STATE args)
+        (x)))))

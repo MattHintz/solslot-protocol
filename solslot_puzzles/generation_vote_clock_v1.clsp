@@ -1,0 +1,17 @@
+; Created when a proposal opens. Anchor once after confirmation to bind its
+; actual birth timestamp into governance state. Votes cannot reset this time.
+(mod (GENERATION GOVERNANCE_STRUCT PROPOSAL gov_inner born)
+  (include condition_codes.clib)
+  (include utils.clib)
+  (include utility_macros.clib)
+  (assert (is-size-b32 GENERATION) (is-size-b32 PROPOSAL)
+    (is-size-b32 gov_inner) (is-uint64 born) (> born 0)
+    (list
+      (list ASSERT_MY_AMOUNT 0)
+      (list 74 born) ; ASSERT_MY_BIRTH_SECONDS (CHIP-0011)
+      (list RECEIVE_MESSAGE 18
+        (sha256tree (list "ANCHOR_OPENING" GENERATION PROPOSAL born))
+        (calculate_full_puzzle_hash GOVERNANCE_STRUCT gov_inner))
+      (list SEND_MESSAGE 58
+        (sha256tree (list "OPENED_AT" GENERATION PROPOSAL born))
+        (calculate_full_puzzle_hash GOVERNANCE_STRUCT gov_inner)))))

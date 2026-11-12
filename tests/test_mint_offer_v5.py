@@ -47,6 +47,7 @@ from solslot_puzzles.stripe_settlement_v1_driver import (
     curry_stripe_settlement_receipt,
     make_mint_offer_v5_inner,
     prepare_chia_buyer_batch_offer_v3,
+    prepare_chia_buyer_offer_v3,
     prepare_purchase_batch_receipt_offer,
     prepare_stripe_receipt_offer,
     purchase_batch_child_settlement_message,
@@ -283,7 +284,8 @@ def test_v5_external_result_rules_fail_closed() -> None:
         )
 
 
-def test_v5_native_batch_bundles_two_exact_smartdeeds_in_one_offer() -> None:
+@pytest.mark.parametrize('quantity', [2, 3])
+def test_v5_native_batch_bundles_two_exact_smartdeeds_in_one_offer(quantity) -> None:
     observations = tuple(
         OracleObservationV1(
             source_id=b32(seed),
@@ -323,7 +325,7 @@ def test_v5_native_batch_bundles_two_exact_smartdeeds_in_one_offer() -> None:
             quote_expires_at=1_700_000_500,
             oracle_round=oracle,
         )
-        for seed in (101, 102)
+        for seed in range(101, 101+quantity)
     )
     batch = build_purchase_batch_v1(
         batch_nonce=b32(103),
@@ -353,6 +355,24 @@ def test_v5_native_batch_bundles_two_exact_smartdeeds_in_one_offer() -> None:
         terms=item_terms,
         deed_singleton_structs=structs,
     )
+    # Sage exposes the already-synthetic public key; it must prepare exactly
+    # the same standard-wallet spend as the original key, with no extra input.
+    from chia.wallet.puzzles.p2_delegated_puzzle_or_hidden_puzzle import calculate_synthetic_public_key, DEFAULT_HIDDEN_PUZZLE_HASH
+    sage = bytes(calculate_synthetic_public_key(payment_key.get_g1(), DEFAULT_HIDDEN_PUZZLE_HASH))
+    sage_buyer = prepare_chia_buyer_batch_offer_v3(payment_coin=payment_coin, payment_public_key=sage,
+        payment_public_key_kind="synthetic", batch=batch, terms=item_terms, deed_singleton_structs=structs)
+    assert bytes(sage_buyer.coin_spend) == bytes(buyer.coin_spend)
+    with pytest.raises(ValueError):
+        prepare_chia_buyer_batch_offer_v3(payment_coin=payment_coin, payment_public_key=sage,
+            payment_public_key_kind="raw", batch=batch, terms=item_terms, deed_singleton_structs=structs)
+    raw_single = prepare_chia_buyer_offer_v3(payment_coin=payment_coin, payment_public_key=bytes(payment_key.get_g1()),
+        artifact=artifacts[0], terms=item_terms[0], deed_singleton_struct=structs[0])
+    sage_single = prepare_chia_buyer_offer_v3(payment_coin=payment_coin, payment_public_key=sage,
+        payment_public_key_kind="synthetic", artifact=artifacts[0], terms=item_terms[0], deed_singleton_struct=structs[0])
+    assert bytes(sage_single.coin_spend) == bytes(raw_single.coin_spend)
+    with pytest.raises(ValueError):
+        prepare_chia_buyer_offer_v3(payment_coin=payment_coin, payment_public_key=sage,
+            payment_public_key_kind="raw", artifact=artifacts[0], terms=item_terms[0], deed_singleton_struct=structs[0])
     reservations = tuple(
         InventoryReservationV1(
             artifact=item,
@@ -386,18 +406,32 @@ def test_v5_native_batch_bundles_two_exact_smartdeeds_in_one_offer() -> None:
         deed_coins=deed_coins,
         deed_singleton_structs=structs,
         lineage_proofs=lineages,
-        signer_indices_by_artifact=((0, 2), (1, 2)),
+        signer_indices_by_artifact=tuple((0, 2) for _ in artifacts),
         terms=item_terms,
         reservations=reservations,
     )
 
-    assert len(purchase.deed_spends) == 2
-    assert len(purchase.issuer_offers) == 2
+    assert len(purchase.deed_spends) == quantity
+    assert len(purchase.issuer_offers) == quantity
     assert purchase.aggregate_offer.is_valid()
     assert set(purchase.aggregate_offer.arbitrage().values()) == {0}
     assert set(purchase.buyer_offer.requested_payments) == {
         item.deed_launcher_id for item in artifacts
     }
+    from chia.wallet.util.compute_additions import compute_additions
+    completed=purchase.to_valid_spend()
+    outputs=[coin for spend in completed.coin_spends for coin in compute_additions(spend)]
+    assert len(outputs)==len({coin.name() for coin in outputs})
+    # Check native announcement dependencies, not just Offer.is_valid() which
+    # measures amounts and missed the equal-price duplicate-output regression.
+    created=set();required=set()
+    for spend in completed.coin_spends:
+        _,conditions=Program.from_bytes(bytes(spend.puzzle_reveal)).run_with_cost(100_000_000,Program.from_bytes(bytes(spend.solution)))
+        for condition in conditions.as_iter():
+            fields=list(condition.as_iter());opcode=fields[0].as_int()
+            if opcode==62:created.add(hashlib.sha256(spend.coin.puzzle_hash+fields[1].as_atom()).digest())
+            if opcode==63:required.add(fields[1].as_atom())
+    assert required<=created
 
 
 def test_v5_stripe_batch_delivers_two_exact_smartdeeds_atomically() -> None:
