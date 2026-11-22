@@ -8,7 +8,7 @@ from typing import Sequence
 from chia.types.blockchain_format.coin import Coin
 from chia.types.blockchain_format.program import Program
 from chia.types.coin_spend import CoinSpend, make_spend
-from chia.wallet.conditions import CreateCoin
+from chia.wallet.conditions import CreateCoin, ReserveFee
 from chia.wallet.lineage_proof import LineageProof
 from chia.wallet.puzzles.singleton_top_layer_v1_1 import (
     SINGLETON_LAUNCHER_HASH,
@@ -1086,6 +1086,17 @@ def build_inventory_extension_spend(
     )
 
 
+def _buyer_change(coin: Coin, price: int, fee: int, rail: PaymentRail) -> int:
+    if type(fee) is not int or not 0 <= fee < 2**64:
+        raise PaymentArtifactError("network fee must be an unsigned mojo amount")
+    if fee and rail != PaymentRail.CHIA_XCH:
+        raise PaymentArtifactError("network fee requires a native XCH input")
+    change = int(coin.amount) - price - fee
+    if change < 0:
+        raise PaymentArtifactError("payment coin is smaller than the quote and network fee")
+    return change
+
+
 def prepare_chia_buyer_offer_v3(
     *,
     payment_coin: Coin,
@@ -1095,6 +1106,7 @@ def prepare_chia_buyer_offer_v3(
     terms: PrimaryMintTermsV3,
     deed_singleton_struct: Program,
     cat_lineage_proof: LineageProof | None = None,
+    network_fee_mojos: int = 0,
 ) -> PreparedChiaBuyerOffer:
     """Build the existing one-signature XCH/CAT offer for a V3 reservation."""
 
@@ -1111,10 +1123,7 @@ def prepare_chia_buyer_offer_v3(
         raise PaymentArtifactError(
             "payment_public_key is not valid BLS"
         ) from exc
-    if int(payment_coin.amount) < artifact.rail_amount:
-        raise PaymentArtifactError(
-            "payment coin is smaller than the H-system quote"
-        )
+    change = _buyer_change(payment_coin, artifact.rail_amount, network_fee_mojos, artifact.rail)
 
     if payment_public_key_kind not in ("raw", "synthetic"):
         raise PaymentArtifactError("invalid payment public key kind")
@@ -1150,7 +1159,8 @@ def prepare_chia_buyer_offer_v3(
         ).to_program(),
         *(announcement.to_program() for announcement in announcements),
     ]
-    change = int(payment_coin.amount) - artifact.rail_amount
+    if network_fee_mojos:
+        conditions.append(ReserveFee(uint64(network_fee_mojos)).to_program())
     if change:
         conditions.append(
             CreateCoin(
@@ -1233,6 +1243,7 @@ def prepare_chia_buyer_batch_offer_v3(
     terms: Sequence[PrimaryMintTermsV3],
     deed_singleton_structs: Sequence[Program],
     cat_lineage_proof: LineageProof | None = None,
+    network_fee_mojos: int = 0,
 ) -> PreparedChiaBuyerOffer:
     """Build one wallet signature requesting every deed in a native batch."""
 
@@ -1259,10 +1270,7 @@ def prepare_chia_buyer_batch_offer_v3(
         raise PaymentArtifactError(
             "payment_public_key is not valid BLS"
         ) from exc
-    if int(payment_coin.amount) < batch.total_rail_amount:
-        raise PaymentArtifactError(
-            "payment coin is smaller than the batched H-system quote"
-        )
+    change = _buyer_change(payment_coin, batch.total_rail_amount, network_fee_mojos, artifacts[0].rail)
 
     first = artifacts[0]
     if payment_public_key_kind not in ("raw", "synthetic"):
@@ -1306,7 +1314,8 @@ def prepare_chia_buyer_batch_offer_v3(
         ).to_program(),
         *(announcement.to_program() for announcement in announcements),
     ]
-    change = int(payment_coin.amount) - batch.total_rail_amount
+    if network_fee_mojos:
+        conditions.append(ReserveFee(uint64(network_fee_mojos)).to_program())
     if change:
         conditions.append(
             CreateCoin(
