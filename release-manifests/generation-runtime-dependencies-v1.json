@@ -3,7 +3,7 @@
   "network": "testnet11",
   "purpose": "Exact AE302 Testnet generation dependency amendment; historical RC23 and AE238 evidence remains unchanged",
   "retainedRecoveryManifestHash": "66c4d3c002311ef964e3326cafc87922e277babbf1c1dba8888c980b4cf8d1a1",
-  "requirementsLockSha256": "be95f442105fc83ad187159aa25e06f2a6c22263bce790a23d01729a1f0ba6e2",
+  "requirementsLockSha256": "d0a60b3efd786f9840b2f3fc7f8979703d44491feaea1a82d1085b8d6e52b48d",
   "runtimeVersions": {
     "chia-blockchain": "2.7.4",
     "chia_rs": "0.48.0",
