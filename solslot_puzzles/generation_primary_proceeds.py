@@ -8,12 +8,12 @@ No hosted SplitXCH API, extra service charge, custody key or standing withdrawal
 from dataclasses import dataclass
 from math import gcd
 from chia.types.blockchain_format.program import Program
-from chia.types.coin_spend import make_spend
+from chia.wallet.lineage_proof import LineageProof
 from chia.wallet.util.compute_additions import compute_additions
 from chia_rs import Coin
 from chia_rs.sized_bytes import bytes32
 from solslot_puzzles import load_puzzle
-from solslot_puzzles.generation_revenue import PrimaryFeeSplitter, nonzero
+from solslot_puzzles.generation_revenue import PrimaryFeeSplitter, asset_puzzle, nonzero, single_asset_spend
 from solslot_puzzles.generation_transactions import NativeOperation
 
 
@@ -61,18 +61,21 @@ class PrimaryProceedsSplitter:
         company=(fee*70+99)//100
         return principal,company,fee-company
 
-    def operation(self,coin):
+    def operation(self,coin,asset=bytes32.zeros,*,lineage=None):
         if not isinstance(coin,Coin):
             raise ValueError('primary proceeds input must be an exact native coin')
         principal,company,rewards=self.allocations(int(coin.amount))
-        if coin.puzzle_hash!=self.inner().get_tree_hash():
+        inner = self.inner()
+        if coin.puzzle_hash!=asset_puzzle(inner, asset).get_tree_hash():
             raise ValueError('primary proceeds input differs from the reviewed contract destination')
-        spend=make_spend(coin,self.inner(),Program.to([int(coin.amount)]))
+        spend = single_asset_spend(coin, inner, Program.to([int(coin.amount)]), asset, lineage)
         fee_outputs=[value for value in compute_additions(spend)
-            if value.puzzle_hash==self.fees.inner().get_tree_hash()]
+            if value.puzzle_hash==asset_puzzle(self.fees.inner(), asset).get_tree_hash()]
         if len(fee_outputs)!=1 or int(fee_outputs[0].amount)!=company+rewards:
             raise ValueError('native primary proceeds split differs from the exact fee')
-        fee_operation=self.fees.operation(fee_outputs[0])
+        fee_lineage = None if asset == bytes32.zeros else LineageProof(
+            coin.parent_coin_info, inner.get_tree_hash(), coin.amount)
+        fee_operation=self.fees.operation(fee_outputs[0], asset, lineage=fee_lineage)
         return NativeOperation(self.generation,'ROUTE_PRIMARY_PROCEEDS',
             (spend,*fee_operation.spends),())
 

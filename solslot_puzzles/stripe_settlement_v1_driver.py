@@ -8,7 +8,7 @@ from typing import Sequence
 from chia.types.blockchain_format.coin import Coin
 from chia.types.blockchain_format.program import Program
 from chia.types.coin_spend import CoinSpend, make_spend
-from chia.wallet.conditions import CreateCoin, ReserveFee
+from chia.wallet.conditions import CreateCoin, CreateCoinAnnouncement, ReserveFee
 from chia.wallet.lineage_proof import LineageProof
 from chia.wallet.puzzles.singleton_top_layer_v1_1 import (
     SINGLETON_LAUNCHER_HASH,
@@ -274,25 +274,31 @@ class ChiaPrimaryBatchOffer:
         payment announcement and the buyer's single signed input is preserved.
         """
         bundle = self.aggregate_offer.to_valid_spend()
-        native_payments = self.aggregate_offer.requested_payments.get(None)
-        if native_payments is None:
-            # CAT settlement requires its own ring-aware completion; never
-            # pass a duplicate-output bundle off as an executable payment.
-            from chia.wallet.util.compute_additions import compute_additions
-            additions = [c.name() for s in bundle.coin_spends for c in compute_additions(s)]
-            if len(additions) != len(set(additions)):
-                raise PaymentArtifactError("CAT batch settlement has duplicate outputs")
-            return bundle
-        payments = native_payments
-        if len(payments) != len(self.deed_spends):
-            raise PaymentArtifactError("batch completion must retain every exact issuer payment")
-        settlements = [s for s in bundle.coin_spends if s.puzzle_reveal.get_tree_hash() == OFFER_MOD_HASH]
-        if len(settlements) != 1 or len({p.nonce for p in payments}) != len(payments):
-            raise PaymentArtifactError("batch completion requires one native settlement input and unique nonces")
+        # The buyer offers one payment asset. Deed settlement inputs belong to
+        # a different singleton driver and must never be replaced here.
+        offered = self.buyer_offer.get_offered_amounts()
+        if len(offered) != 1:
+            raise PaymentArtifactError("batch requires one payment asset")
+        asset, = offered
+        payments = self.aggregate_offer.requested_payments[asset]
+        settlement_puzzle = OFFER_MOD if asset is None else construct_cat_puzzle(CAT_MOD, asset, OFFER_MOD)
+        settlement_hash = settlement_puzzle.get_tree_hash()
+        settlements = [s for s in bundle.coin_spends if s.coin.puzzle_hash == settlement_hash]
+        if len(payments) != len(self.deed_spends) or len(settlements) != 1 or len({p.nonce for p in payments}) != len(payments):
+            raise PaymentArtifactError("batch completion requires one settlement input and distinct issuer payments")
         original = settlements[0]
         total = sum(int(p.amount) for p in payments)
         if int(original.coin.amount) != total or any(int(p.amount) <= 0 for p in payments):
             raise PaymentArtifactError("batch settlement amount differs from reviewed total")
+        lineage = None
+        if asset is not None:
+            parent = next((s for s in self.buyer_offer.coin_spends() if s.coin.name() == original.coin.parent_coin_info), None)
+            if parent is None:
+                raise PaymentArtifactError("batch settlement parent missing from buyer offer")
+            parent_mod, args = Program.from_bytes(bytes(parent.puzzle_reveal)).uncurry()
+            if parent_mod != CAT_MOD or args.at("rf").as_atom() != asset:
+                raise PaymentArtifactError("batch settlement parent differs from payment CAT")
+            lineage = LineageProof(parent.coin.parent_coin_info, args.at("rrf").get_tree_hash(), parent.coin.amount)
         chain = []
         coin = original.coin
         remaining = total
@@ -306,9 +312,15 @@ class ChiaPrimaryBatchOffer:
                     raise PaymentArtifactError("batch settlement nonce collision")
                 nonces.add(nonce)
                 groups.append((nonce, [[OFFER_MOD_HASH, remaining, [OFFER_MOD_HASH]]]))
-            chain.append(make_spend(coin, OFFER_MOD, Program.to(groups)))
+            solution = Program.to(groups)
+            if asset is None:
+                chain.append(make_spend(coin, OFFER_MOD, solution))
+            else:
+                cat = SpendableCAT(coin, asset, OFFER_MOD, solution, lineage_proof=lineage)
+                chain.extend(unsigned_spend_bundle_for_spendable_cats(CAT_MOD, [cat]).coin_spends)
+                lineage = LineageProof(coin.parent_coin_info, OFFER_MOD_HASH, coin.amount)
             if remaining:
-                coin = Coin(coin.name(), OFFER_MOD_HASH, uint64(remaining))
+                coin = Coin(coin.name(), settlement_hash, uint64(remaining))
         result = WalletSpendBundle([s for s in bundle.coin_spends if s != original] + chain, bundle.aggregated_signature)
         from chia.wallet.util.compute_additions import compute_additions
         additions = [c.name() for s in result.coin_spends for c in compute_additions(s)]
@@ -1086,15 +1098,42 @@ def build_inventory_extension_spend(
     )
 
 
-def _buyer_change(coin: Coin, price: int, fee: int, rail: PaymentRail) -> int:
+@dataclass(frozen=True)
+class CatNetworkFeeInput:
+    coin: Coin
+    synthetic_public_key: G1Element
+
+
+def _buyer_funding(payment_coin, price, rail, commitment, fee, fee_input):
+    """Keep CAT value and the native network fee in their own denominations."""
     if type(fee) is not int or not 0 <= fee < 2**64:
         raise PaymentArtifactError("network fee must be an unsigned mojo amount")
-    if fee and rail != PaymentRail.CHIA_XCH:
-        raise PaymentArtifactError("network fee requires a native XCH input")
-    change = int(coin.amount) - price - fee
-    if change < 0:
-        raise PaymentArtifactError("payment coin is smaller than the quote and network fee")
-    return change
+    if fee_input is None:
+        if fee and rail != PaymentRail.CHIA_XCH:
+            raise PaymentArtifactError("network fee requires a native XCH input")
+        change = int(payment_coin.amount) - price - fee
+        if change < 0:
+            raise PaymentArtifactError("payment coin is smaller than the quote and network fee")
+        return change, [ReserveFee(uint64(fee)).to_program()] if fee else [], None
+
+    if rail != PaymentRail.CHIA_CAT or not fee or not isinstance(fee_input, CatNetworkFeeInput):
+        raise PaymentArtifactError("separate network fee input requires a CAT purchase and positive fee")
+    if not isinstance(fee_input.synthetic_public_key, G1Element) or fee_input.synthetic_public_key == G1Element():
+        raise PaymentArtifactError("invalid network fee public key")
+    coin = fee_input.coin
+    puzzle = puzzle_for_synthetic_public_key(fee_input.synthetic_public_key)
+    if coin.puzzle_hash != puzzle.get_tree_hash() or coin.name() == payment_coin.name():
+        raise PaymentArtifactError("network fee input must belong to its native wallet key")
+    if coin.amount < fee or payment_coin.amount < price:
+        raise PaymentArtifactError("insufficient CAT payment or native network fee balance")
+    message = Program.to([b"SOLSLOT_BUYER_CAT_FEE_V1", commitment, payment_coin.name(), coin.name(), fee]).get_tree_hash()
+    payer_notice = CreateCoinAnnouncement(message, payment_coin.name())
+    fee_notice = CreateCoinAnnouncement(message, coin.name())
+    fee_conditions = [ReserveFee(uint64(fee)).to_program(), fee_notice.to_program(), payer_notice.corresponding_assertion().to_program()]
+    if coin.amount > fee:
+        fee_conditions.append(CreateCoin(coin.puzzle_hash, uint64(coin.amount - fee), [coin.puzzle_hash]).to_program())
+    spend = make_spend(coin, puzzle, solution_for_conditions([condition.as_python() for condition in fee_conditions]))
+    return int(payment_coin.amount) - price, [payer_notice.to_program(), fee_notice.corresponding_assertion().to_program()], spend
 
 
 def prepare_chia_buyer_offer_v3(
@@ -1107,6 +1146,7 @@ def prepare_chia_buyer_offer_v3(
     deed_singleton_struct: Program,
     cat_lineage_proof: LineageProof | None = None,
     network_fee_mojos: int = 0,
+    fee_input: CatNetworkFeeInput | None = None,
 ) -> PreparedChiaBuyerOffer:
     """Build the existing one-signature XCH/CAT offer for a V3 reservation."""
 
@@ -1123,7 +1163,8 @@ def prepare_chia_buyer_offer_v3(
         raise PaymentArtifactError(
             "payment_public_key is not valid BLS"
         ) from exc
-    change = _buyer_change(payment_coin, artifact.rail_amount, network_fee_mojos, artifact.rail)
+    change, fee_conditions, fee_spend = _buyer_funding(payment_coin, artifact.rail_amount, artifact.rail,
+        artifact.artifact_hash, network_fee_mojos, fee_input)
 
     if payment_public_key_kind not in ("raw", "synthetic"):
         raise PaymentArtifactError("invalid payment public key kind")
@@ -1159,8 +1200,7 @@ def prepare_chia_buyer_offer_v3(
         ).to_program(),
         *(announcement.to_program() for announcement in announcements),
     ]
-    if network_fee_mojos:
-        conditions.append(ReserveFee(uint64(network_fee_mojos)).to_program())
+    conditions.extend(fee_conditions)
     if change:
         conditions.append(
             CreateCoin(
@@ -1220,6 +1260,8 @@ def prepare_chia_buyer_offer_v3(
         )
         coin_spend = bundle.coin_spends[0]
 
+    if fee_spend is not None:
+        bundle = WalletSpendBundle([*bundle.coin_spends, fee_spend], bundle.aggregated_signature)
     offer = Offer(notarized, bundle, drivers)
     validate_chia_buyer_offer_v3(
         buyer_offer=offer,
@@ -1244,6 +1286,7 @@ def prepare_chia_buyer_batch_offer_v3(
     deed_singleton_structs: Sequence[Program],
     cat_lineage_proof: LineageProof | None = None,
     network_fee_mojos: int = 0,
+    fee_input: CatNetworkFeeInput | None = None,
 ) -> PreparedChiaBuyerOffer:
     """Build one wallet signature requesting every deed in a native batch."""
 
@@ -1270,7 +1313,8 @@ def prepare_chia_buyer_batch_offer_v3(
         raise PaymentArtifactError(
             "payment_public_key is not valid BLS"
         ) from exc
-    change = _buyer_change(payment_coin, batch.total_rail_amount, network_fee_mojos, artifacts[0].rail)
+    change, fee_conditions, fee_spend = _buyer_funding(payment_coin, batch.total_rail_amount, artifacts[0].rail,
+        batch.batch_hash, network_fee_mojos, fee_input)
 
     first = artifacts[0]
     if payment_public_key_kind not in ("raw", "synthetic"):
@@ -1314,8 +1358,7 @@ def prepare_chia_buyer_batch_offer_v3(
         ).to_program(),
         *(announcement.to_program() for announcement in announcements),
     ]
-    if network_fee_mojos:
-        conditions.append(ReserveFee(uint64(network_fee_mojos)).to_program())
+    conditions.extend(fee_conditions)
     if change:
         conditions.append(
             CreateCoin(
@@ -1369,6 +1412,8 @@ def prepare_chia_buyer_batch_offer_v3(
         )
         coin_spend = bundle.coin_spends[0]
 
+    if fee_spend is not None:
+        bundle = WalletSpendBundle([*bundle.coin_spends, fee_spend], bundle.aggregated_signature)
     offer = Offer(notarized, bundle, drivers)
     validate_chia_buyer_batch_offer_v3(
         buyer_offer=offer,
