@@ -44,15 +44,7 @@ class PrimaryFeeSplitter:
         if coin.puzzle_hash != full.get_tree_hash() or coin.amount <= 0:
             raise ValueError('primary fee differs from the exact asset and splitter custody')
         solution = Program.to([asset, coin.name(), int(coin.amount)])
-        if asset == bytes32.zeros:
-            if lineage is not None:
-                raise ValueError('native fees cannot supply CAT lineage')
-            spends = (make_spend(coin, full, solution),)
-        else:
-            if type(lineage) is not LineageProof:
-                raise ValueError('CAT fees require their exact lineage')
-            spends = tuple(unsigned_spend_bundle_for_spendable_cats(CAT_MOD,
-                [SpendableCAT(coin, asset, self.inner(), solution, lineage_proof=lineage)]).coin_spends)
+        spends = (single_asset_spend(coin, self.inner(), solution, asset, lineage),)
         return NativeOperation(self.revenue.generation, 'SPLIT_PRIMARY_FEE', spends, ())
 
 
@@ -66,6 +58,21 @@ def asset_puzzle(inner, asset):
     if not isinstance(asset, bytes32):
         raise ValueError('asset must be exact bytes32; zero denotes native XCH')
     return inner if asset == bytes32.zeros else construct_cat_puzzle(CAT_MOD, asset, inner)
+
+
+def single_asset_spend(coin, inner, solution, asset, lineage):
+    if coin.puzzle_hash != asset_puzzle(inner, asset).get_tree_hash():
+        raise ValueError('input differs from the reviewed asset and inner puzzle')
+    if asset == bytes32.zeros:
+        if lineage is not None:
+            raise ValueError('native input cannot supply CAT lineage')
+        return make_spend(coin, inner, solution)
+    if type(lineage) is not LineageProof:
+        raise ValueError('CAT input requires its exact lineage')
+    spend, = unsigned_spend_bundle_for_spendable_cats(CAT_MOD, [
+        SpendableCAT(coin, asset, inner, solution, lineage_proof=lineage)
+    ]).coin_spends
+    return spend
 
 
 @dataclass(frozen=True)

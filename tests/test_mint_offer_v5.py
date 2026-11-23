@@ -285,12 +285,19 @@ def test_v5_external_result_rules_fail_closed() -> None:
 
 
 @pytest.mark.parametrize('quantity', [2, 3])
-def test_v5_native_batch_bundles_two_exact_smartdeeds_in_one_offer(quantity) -> None:
+@pytest.mark.parametrize('cat_asset,fee', [(None, 0), (b32(85), 0), (b32(85), 137)], ids=['xch', 'cat', 'cat-and-fee'])
+def test_v5_native_batch_bundles_two_exact_smartdeeds_in_one_offer(quantity, cat_asset, fee) -> None:
+    from chia.wallet.cat_wallet.cat_utils import CAT_MOD, construct_cat_puzzle
+    from solslot_puzzles.payment_artifacts_v3 import build_cat_purchase_artifact_v3
+    asset = cat_asset or bytes32.zeros
+    decimals = 3 if cat_asset else XCH_ASSET_DECIMALS
+    build_artifact = build_cat_purchase_artifact_v3 if cat_asset else build_xch_purchase_artifact_v3
+    asset_fields = dict(cat_asset_id=asset, cat_decimals=decimals) if cat_asset else {}
     observations = tuple(
         OracleObservationV1(
             source_id=b32(seed),
-            asset_id=bytes32.zeros,
-            asset_decimals=XCH_ASSET_DECIMALS,
+            asset_id=asset,
+            asset_decimals=decimals,
             price_usd_minor_per_asset=2_100 + (seed - 31) * 25,
             observed_at=1_700_000_000 + seed - 31,
             valid_until=1_700_000_600 + seed - 31,
@@ -301,13 +308,14 @@ def test_v5_native_batch_bundles_two_exact_smartdeeds_in_one_offer(quantity) -> 
     oracle = build_oracle_round(
         network="testnet11",
         sequence=1,
-        asset_id=bytes32.zeros,
-        asset_decimals=XCH_ASSET_DECIMALS,
+        asset_id=asset,
+        asset_decimals=decimals,
         operator_set_root=b32(60),
         observations=observations,
     )
     artifacts = tuple(
-        build_xch_purchase_artifact_v3(
+        build_artifact(
+            **asset_fields,
             network="testnet11",
             collection_id=b32(1),
             deed_launcher_id=b32(seed),
@@ -334,9 +342,12 @@ def test_v5_native_batch_bundles_two_exact_smartdeeds_in_one_offer(quantity) -> 
     item_terms = tuple(mint_terms(item) for item in artifacts)
     payment_key = AugSchemeMPL.key_gen(bytes([104]) * 32)
     payment_puzzle = puzzle_for_pk(payment_key.get_g1())
+    payment_outer = construct_cat_puzzle(CAT_MOD, asset, payment_puzzle) if cat_asset else payment_puzzle
+    parent = Coin(b32(105), payment_outer.get_tree_hash(), uint64(batch.total_rail_amount + 1_000))
+    wallet_lineage = LineageProof(parent.parent_coin_info, payment_puzzle.get_tree_hash(), parent.amount) if cat_asset else None
     payment_coin = Coin(
-        b32(105),
-        bytes32(payment_puzzle.get_tree_hash()),
+        parent.name(),
+        payment_outer.get_tree_hash(),
         uint64(batch.total_rail_amount + 1_000),
     )
     structs = tuple(
@@ -348,8 +359,13 @@ def test_v5_native_batch_bundles_two_exact_smartdeeds_in_one_offer(quantity) -> 
         )
         for item in artifacts
     )
+    from solslot_puzzles.stripe_settlement_v1_driver import CatNetworkFeeInput
+    from chia.wallet.puzzles.p2_delegated_puzzle_or_hidden_puzzle import puzzle_for_synthetic_public_key
+    fee_key = AugSchemeMPL.key_gen(bytes([151]) * 32).get_g1()
+    fee_coin = Coin(b32(152), puzzle_for_synthetic_public_key(fee_key).get_tree_hash(), uint64(150))
+    fee_args = {'network_fee_mojos': fee, 'fee_input': CatNetworkFeeInput(fee_coin, fee_key)} if fee else {}
     buyer = prepare_chia_buyer_batch_offer_v3(
-        payment_coin=payment_coin,
+        payment_coin=payment_coin, cat_lineage_proof=wallet_lineage, **fee_args,
         payment_public_key=bytes(payment_key.get_g1()),
         batch=batch,
         terms=item_terms,
@@ -359,19 +375,19 @@ def test_v5_native_batch_bundles_two_exact_smartdeeds_in_one_offer(quantity) -> 
     # the same standard-wallet spend as the original key, with no extra input.
     from chia.wallet.puzzles.p2_delegated_puzzle_or_hidden_puzzle import calculate_synthetic_public_key, DEFAULT_HIDDEN_PUZZLE_HASH
     sage = bytes(calculate_synthetic_public_key(payment_key.get_g1(), DEFAULT_HIDDEN_PUZZLE_HASH))
-    sage_buyer = prepare_chia_buyer_batch_offer_v3(payment_coin=payment_coin, payment_public_key=sage,
+    sage_buyer = prepare_chia_buyer_batch_offer_v3(payment_coin=payment_coin, cat_lineage_proof=wallet_lineage, **fee_args, payment_public_key=sage,
         payment_public_key_kind="synthetic", batch=batch, terms=item_terms, deed_singleton_structs=structs)
     assert bytes(sage_buyer.coin_spend) == bytes(buyer.coin_spend)
     with pytest.raises(ValueError):
-        prepare_chia_buyer_batch_offer_v3(payment_coin=payment_coin, payment_public_key=sage,
+        prepare_chia_buyer_batch_offer_v3(payment_coin=payment_coin, cat_lineage_proof=wallet_lineage, **fee_args, payment_public_key=sage,
             payment_public_key_kind="raw", batch=batch, terms=item_terms, deed_singleton_structs=structs)
-    raw_single = prepare_chia_buyer_offer_v3(payment_coin=payment_coin, payment_public_key=bytes(payment_key.get_g1()),
+    raw_single = prepare_chia_buyer_offer_v3(payment_coin=payment_coin, cat_lineage_proof=wallet_lineage, **fee_args, payment_public_key=bytes(payment_key.get_g1()),
         artifact=artifacts[0], terms=item_terms[0], deed_singleton_struct=structs[0])
-    sage_single = prepare_chia_buyer_offer_v3(payment_coin=payment_coin, payment_public_key=sage,
+    sage_single = prepare_chia_buyer_offer_v3(payment_coin=payment_coin, cat_lineage_proof=wallet_lineage, **fee_args, payment_public_key=sage,
         payment_public_key_kind="synthetic", artifact=artifacts[0], terms=item_terms[0], deed_singleton_struct=structs[0])
     assert bytes(sage_single.coin_spend) == bytes(raw_single.coin_spend)
     with pytest.raises(ValueError):
-        prepare_chia_buyer_offer_v3(payment_coin=payment_coin, payment_public_key=sage,
+        prepare_chia_buyer_offer_v3(payment_coin=payment_coin, cat_lineage_proof=wallet_lineage, **fee_args, payment_public_key=sage,
             payment_public_key_kind="raw", artifact=artifacts[0], terms=item_terms[0], deed_singleton_struct=structs[0])
     reservations = tuple(
         InventoryReservationV1(
@@ -386,7 +402,7 @@ def test_v5_native_batch_bundles_two_exact_smartdeeds_in_one_offer(quantity) -> 
     )
     deed_coins = tuple(
         Coin(
-            b32(110 + index),
+            Coin(b32(120 + index), SINGLETON_MOD.curry(struct, inner).get_tree_hash(), uint64(1)).name(),
             bytes32(
                 SINGLETON_MOD.curry(struct, inner).get_tree_hash()
             ),
@@ -432,6 +448,26 @@ def test_v5_native_batch_bundles_two_exact_smartdeeds_in_one_offer(quantity) -> 
             if opcode==62:created.add(hashlib.sha256(spend.coin.puzzle_hash+fields[1].as_atom()).digest())
             if opcode==63:required.add(fields[1].as_atom())
     assert required<=created
+    from chia.consensus.default_constants import DEFAULT_CONSTANTS
+    from chia_rs import get_conditions_from_spendbundle
+    conditions = get_conditions_from_spendbundle(completed, DEFAULT_CONSTANTS.MAX_BLOCK_COST_CLVM, DEFAULT_CONSTANTS, 10_000_000)
+    assert conditions.cost > 0
+    assert conditions.reserve_fee == fee
+    if fee:
+        assert sum(c.amount for c in outputs if c.puzzle_hash == fee_coin.puzzle_hash) == fee_coin.amount - fee
+        assert len(buyer.offer.coin_spends()) == 2
+        for spend in buyer.offer.coin_spends():
+            from chia_rs import SpendBundle
+            stripped = SpendBundle([s for s in completed.coin_spends if s != spend], completed.aggregated_signature)
+            with pytest.raises(ValueError):
+                get_conditions_from_spendbundle(stripped, DEFAULT_CONSTANTS.MAX_BLOCK_COST_CLVM, DEFAULT_CONSTANTS, 10_000_000)
+        assert raw_single.offer.fees() == sage_single.offer.fees() == fee
+
+    if cat_asset:
+        payout_hash = construct_cat_puzzle(CAT_MOD, asset, item_terms[0].protocol_puzhash).get_tree_hash_precalc(item_terms[0].protocol_puzhash)
+        issuer_payouts = [coin for coin in outputs if coin.puzzle_hash == payout_hash]
+        assert sorted(c.amount for c in issuer_payouts) == sorted(a.rail_amount for a in artifacts)
+        assert len({c.parent_coin_info for c in issuer_payouts}) == quantity
 
 
 def test_v5_stripe_batch_delivers_two_exact_smartdeeds_atomically() -> None:

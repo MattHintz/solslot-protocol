@@ -234,3 +234,57 @@ async def test_primary_fee_split_pays_only_company_and_sgt_then_company_approval
     await c.sim.farm_block()
     for coin in rewards:
         assert not (await c.client.get_coin_record_by_name(coin.name())).spent
+
+
+@pytest.mark.asyncio
+async def test_funded_cat_offer_forwards_the_exact_asset_to_issuer_company_and_rewards(revenue):
+    from chia.wallet.puzzles.p2_delegated_puzzle_or_hidden_puzzle import puzzle_for_synthetic_public_key
+    from chia.wallet.trading.offer import OFFER_MOD
+    from solslot_puzzles.generation_rewards import RewardCustody
+    from solslot_puzzles.generation_sgt import GenesisIssuancePlan
+    from solslot_puzzles.generation_revenue import single_asset_spend
+    from solslot_puzzles.payment_artifacts_v2 import OracleObservationV1, build_oracle_round
+    from solslot_puzzles.payment_artifacts_v3 import build_cat_purchase_artifact
+    from solslot_puzzles.testnet_primary_forwarding import build_testnet_primary_forwarding
+    from tests.test_generation_primary_batch_native import sign_bundle
+    from tests.test_mint_offer_v5 import mint_terms, VAULT_P2, VAULT_LAUNCHER
+
+    c = revenue
+    issuer = AugSchemeMPL.key_gen(b'I' * 32)
+    wallet = puzzle_for_synthetic_public_key(issuer.get_g1())
+    bindings = GenesisIssuancePlan(b32(40), c.custody.generation, b32(41), b32(42), b32(43),
+        (b32(44), b32(45), b32(46)), b32(47)).bindings()
+    fees = PrimaryFeeSplitter(bindings, b32(48), c.custody)
+    _, coins, asset, lineages = await fund(c, cat=True, destination=SimpleNamespace(inner=lambda: OFFER_MOD))
+    now = int(c.sim.timestamp)
+    observations = tuple(OracleObservationV1(b32(i), asset, 3, 100, now, now + 600, b32(i+30))
+                         for i in (1, 2, 3))
+    price = build_oracle_round(network='testnet11', sequence=1, asset_id=asset, asset_decimals=3,
+                               operator_set_root=b32(85), observations=observations)
+    quote = build_cat_purchase_artifact(network='testnet11', collection_id=b32(1), deed_launcher_id=b32(2),
+        metadata_root=b32(3), metadata_anchor_id=b32(4), share_ppm=100_000, base_amount_minor=300_000,
+        technology_fee_bps=100, protocol_treasury_puzzle_hash=fees.inner().get_tree_hash(),
+        zkpassport_root=b32(6), vault_launcher_id=VAULT_LAUNCHER, vault_p2_puzzle_hash=VAULT_P2,
+        cat_asset_id=asset, cat_asset_decimals=3, authorization_nonce=b32(9), oracle_round=price,
+        authorization_expires_at=now + 300, quote_expires_at=now + 300)
+    terms = replace(mint_terms(quote), inventory_version=4, protocol_puzhash=wallet.get_tree_hash(),
+                    generation_batch_bindings=bytes(Program.to([c.custody.generation] + [0] * 7)))
+    solution = Program.to([(b32(50), [[wallet.get_tree_hash(), quote.rail_amount,
+        [quote.purchase_id, quote.artifact_hash]], [b32(51), coins[0].amount - quote.rail_amount, []]])])
+    settlement = single_asset_spend(coins[0], OFFER_MOD, solution, asset, lineages[0])
+    args = dict(bundle=SpendBundle([settlement], G2Element()), artifact=quote, terms=terms,
+                issuer_public_key=bytes(issuer.get_g1()), fees=fees)
+    for disallowed in (None, bytes32.zeros, b32(200)):
+        with pytest.raises(ValueError, match='reviewed Testnet'):
+            build_testnet_primary_forwarding(**args, approved_cat_asset=disallowed)
+    forwarding = build_testnet_primary_forwarding(**args, approved_cat_asset=asset)
+    unsigned = SpendBundle([settlement, *forwarding.operation.spends], G2Element())
+    assert (await c.client.push_tx(unsigned))[0] == MempoolInclusionStatus.FAILED
+    signed = sign_bundle(unsigned, [issuer])
+    assert await c.client.push_tx(signed) == (MempoolInclusionStatus.SUCCESS, None)
+    await c.sim.farm_block()
+    for puzzle, amount in ((asset_puzzle(wallet, asset), 3_000_000),
+                           (asset_puzzle(c.custody.inner(), asset), 21_000),
+                           (RewardCustody(bindings, fees.statutes_id, asset).full(), 9_000)):
+        records = await c.client.get_coin_records_by_puzzle_hash(puzzle.get_tree_hash(), include_spent_coins=False)
+        assert [int(record.coin.amount) for record in records] == [amount]
